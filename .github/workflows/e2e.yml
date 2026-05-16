@@ -36,7 +36,7 @@ jobs:
     outputs:
       has_pw: ${{ steps.check.outputs.has_pw }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: check
         # hashFiles() can only be called inside a step, not in a job-level if:
         # Skip not just when config is missing, but when no .spec/.test files
@@ -67,9 +67,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@d15e628ca66d93ee5f352c71671a7bc6a97af5c9 # v6.0.8
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -89,7 +89,7 @@ jobs:
             console.log(v.replace(/^[\^~]/, ''));
           " 2>/dev/null || echo "unknown")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         id: pw-cache
         with:
           path: ~/.cache/ms-playwright
@@ -109,7 +109,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: apps/dashboard/playwright-report/
