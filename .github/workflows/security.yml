@@ -59,6 +59,11 @@ jobs:
     name: gitleaks
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      # gitleaks-action lists PR commits via /repos/.../pulls/{n}/commits.
+      # Without this scope, the API call fails with 403.
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -92,6 +97,13 @@ jobs:
     if: needs.dependency-review-preflight.outputs.has_pkg == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Advisory only: dependency-review-action requires GitHub Advanced Security
+    # on private repos. This repo is private without GHAS, so the job fails
+    # with "Dependency review is not supported on this repository". Marked
+    # advisory so it surfaces the message without blocking PRs. Once the repo
+    # is made public (free) or GHAS is enabled (paid on private), remove this
+    # line to make the job blocking.
+    continue-on-error: true
     permissions:
       contents: read
       pull-requests: write
