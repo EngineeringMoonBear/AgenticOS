@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import { Suspense } from "react";
 import "./globals.css";
 import { Header } from "@/components/layout/header";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
+import { Toaster } from "@/components/ui/sonner";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -32,10 +34,13 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col" style={{ backgroundColor: "var(--bg)", color: "var(--text)" }}>
-        <NuqsAdapter>
-          <Header />
-          <main className="flex-1 flex flex-col">{children}</main>
-        </NuqsAdapter>
+        <Suspense>
+          <NuqsAdapter>
+            <Header />
+            <main className="flex-1 flex flex-col">{children}</main>
+            <Toaster position="bottom-right" />
+          </NuqsAdapter>
+        </Suspense>
       </body>
     </html>
   );
