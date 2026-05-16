@@ -92,7 +92,7 @@ jobs:
         run: pnpm --filter dashboard exec playwright install-deps chromium
 
       - name: Run E2E
-        run: pnpm -w e2e
+        run: pnpm --filter dashboard test:e2e
         env:
           CI: 'true'
 
