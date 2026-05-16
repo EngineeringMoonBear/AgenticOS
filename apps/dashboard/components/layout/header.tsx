@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { SlidersHorizontal, Command } from "lucide-react";
 import { HeaderTabs } from "./header-tabs";
