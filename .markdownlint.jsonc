@@ -1,0 +1,23 @@
+{
+  // Phase 0 docs lean heavily on long lines, inline JSON, and HTML for
+  // diagrams. These relaxations keep the lint useful (catches bad list
+  // syntax, broken headings) without flagging every plan doc.
+  "default": true,
+
+  // Long lines are fine — `phase-1-mvp-foundation.md` has prose runs and
+  // example JSON that wraps awkwardly otherwise.
+  "MD013": false,
+
+  // Inline HTML is needed for diagrams (<br>, <details>, etc.).
+  "MD033": false,
+
+  // Some docs intentionally start with a blockquote or HR rather than H1.
+  "MD041": false,
+
+  // Allow duplicate headings if they're in different sections (e.g. multiple
+  // "Why" subsections under different parent headings).
+  "MD024": { "siblings_only": true },
+
+  // Allow the same emphasis to be used as a heading marker — common in plans.
+  "MD036": false
+}
