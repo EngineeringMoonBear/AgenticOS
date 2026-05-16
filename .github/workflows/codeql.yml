@@ -47,6 +47,13 @@ jobs:
     if: needs.preflight.outputs.has_jsts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Advisory only: CodeQL on private repos requires GitHub Advanced
+    # Security (paid). This repo is private without GHAS, so the analyze
+    # step fails with "Code scanning is not enabled for this repository".
+    # Marked advisory so it surfaces the message without blocking PRs.
+    # Once the repo is made public (free) or GHAS is enabled (paid),
+    # remove this line to make CodeQL gating.
+    continue-on-error: true
     permissions:
       contents: read
       security-events: write
