@@ -1,0 +1,246 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ═══════════════════════════════════════════════════════════
+   AgenticOS Brand Tokens — v1.0 (docs/brand.md)
+   Dark mode is primary (default); light mode via .light class.
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Surfaces ───────────────────────────────── */
+  --bg:                  #0f0d0c;   /* page background — near-black, warm-brown tint */
+  --surface:             #1a1714;   /* cards, panels */
+  --surface-elevated:    #221e1b;   /* drawers, modals, popovers */
+  --surface-muted:       #141210;   /* inset zones, code blocks, recessed areas */
+
+  /* ── Borders ────────────────────────────────── */
+  --border-brand:        #2e2925;   /* standard card border */
+  --border-subtle:       #201d1a;   /* hairline separators, dividers */
+  --border-strong:       #453e38;   /* focused inputs, emphasized edges */
+
+  /* ── Text ───────────────────────────────────── */
+  --text:                #f0ebe4;   /* primary readable text */
+  --text-secondary:      #b5aa9e;   /* supporting copy, metadata */
+  --text-muted:          #6b6157;   /* timestamps, placeholders, disabled */
+  --text-inverse:        #0f0d0c;   /* text on light/gold surfaces */
+
+  /* ── Accent: Plum ───────────────────────────── */
+  --accent-plum-50:      #f3f0fb;
+  --accent-plum-100:     #e3dcf6;
+  --accent-plum-200:     #c8baed;
+  --accent-plum-300:     #a990df;
+  --accent-plum-400:     #8c6bce;   /* ★ CANONICAL BRAND PLUM */
+  --accent-plum-500:     #7452b8;
+  --accent-plum-600:     #5e3e9a;
+  --accent-plum-700:     #4a2f7d;
+  --accent-plum-800:     #362063;
+  --accent-plum-900:     #25144a;
+  --accent-plum-950:     #160b30;
+
+  /* ── Accent: Gold ───────────────────────────── */
+  --accent-gold-50:      #fdfbf0;
+  --accent-gold-100:     #f9f3d0;
+  --accent-gold-200:     #f2e49f;
+  --accent-gold-300:     #e6ce6a;
+  --accent-gold-400:     #c9a227;   /* ★ CANONICAL BRAND GOLD */
+  --accent-gold-500:     #a8831a;
+  --accent-gold-600:     #876411;
+  --accent-gold-700:     #66490c;
+  --accent-gold-800:     #4a3208;
+  --accent-gold-900:     #2e1e04;
+  --accent-gold-950:     #1a1002;
+
+  /* ── Semantic ───────────────────────────────── */
+  --success:             #4ade80;
+  --success-bg:          #0d2218;
+  --success-border:      #1a4a2e;
+
+  --warning:             #fbbf24;
+  --warning-bg:          #221800;
+  --warning-border:      #4a3500;
+
+  --error:               #f87171;
+  --error-bg:            #2a0f0f;
+  --error-border:        #5a1e1e;
+
+  --info:                #60a5fa;
+  --info-bg:             #0d1a2e;
+  --info-border:         #1a3358;
+
+  /* ── Lane Accents ───────────────────────────── */
+  --lane-hermes:         #4db6ac;
+  --lane-sandcastle:     #7986cb;
+
+  /* ── Motion ─────────────────────────────────── */
+  --motion-instant:      80ms;
+  --motion-fast:         140ms;
+  --motion-base:         240ms;
+  --motion-slow:         400ms;
+
+  --ease-standard:       cubic-bezier(0.4, 0.0, 0.2, 1);
+  --ease-emphasized:     cubic-bezier(0.2, 0.0, 0.0, 1.0);
+  --ease-decelerate:     cubic-bezier(0.0, 0.0, 0.2, 1);
+}
+
+/* Light mode overrides (apply .light class to <html>) */
+.light {
+  --bg:                  #f7f4f0;
+  --surface:             #ffffff;
+  --surface-elevated:    #f0ece6;
+  --surface-muted:       #e8e3dc;
+
+  --border-brand:        #d6cfc6;
+  --border-subtle:       #e8e2da;
+  --border-strong:       #b5a898;
+
+  --text:                #1a1512;
+  --text-secondary:      #5c5148;
+  --text-muted:          #9e9088;
+  --text-inverse:        #f0ebe4;
+
+  --success-bg:          #e8f9ef;
+  --success-border:      #b8e8cb;
+  --warning-bg:          #fef9e6;
+  --warning-border:      #f0d678;
+  --error-bg:            #fef0f0;
+  --error-border:        #f8c4c4;
+  --info-bg:             #eef5ff;
+  --info-border:         #b8d4f8;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Tailwind v4 @theme — maps brand tokens to Tailwind utilities
+   and wires shadcn CSS variable conventions to brand palette.
+   ═══════════════════════════════════════════════════════════ */
+
+@theme inline {
+  /* Fonts */
+  --font-sans: var(--font-inter), 'Inter', 'Inter Variable', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), 'JetBrains Mono', 'JetBrains Mono Variable', ui-monospace, 'Cascadia Code', 'Fira Code', Menlo, monospace;
+  --font-serif: 'Lora', 'Lora Variable', Georgia, 'Times New Roman', serif;
+  --font-heading: var(--font-inter), 'Inter', ui-sans-serif, sans-serif;
+
+  /* Shadcn/ui variable bridge — dark mode (primary) defaults */
+  --color-background:    var(--bg);
+  --color-foreground:    var(--text);
+  --color-card:          var(--surface);
+  --color-card-foreground: var(--text);
+  --color-popover:       var(--surface-elevated);
+  --color-popover-foreground: var(--text);
+  --color-primary:       var(--accent-plum-400);
+  --color-primary-foreground: var(--text-inverse);
+  --color-secondary:     var(--surface);
+  --color-secondary-foreground: var(--text-secondary);
+  --color-muted:         var(--surface-muted);
+  --color-muted-foreground: var(--text-muted);
+  --color-accent:        var(--accent-plum-800);
+  --color-accent-foreground: var(--accent-plum-300);
+  --color-destructive:   var(--error);
+  --color-border:        var(--border-brand);
+  --color-input:         var(--surface-muted);
+  --color-ring:          var(--accent-plum-400);
+
+  /* Sidebar tokens */
+  --color-sidebar:                   var(--surface);
+  --color-sidebar-foreground:        var(--text);
+  --color-sidebar-primary:           var(--accent-plum-400);
+  --color-sidebar-primary-foreground: var(--text-inverse);
+  --color-sidebar-accent:            var(--accent-plum-800);
+  --color-sidebar-accent-foreground: var(--accent-plum-300);
+  --color-sidebar-border:            var(--border-brand);
+  --color-sidebar-ring:              var(--accent-plum-400);
+
+  /* Brand surfaces as Tailwind color utilities */
+  --color-bg:              var(--bg);
+  --color-surface:         var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-surface-muted:   var(--surface-muted);
+
+  /* Brand borders */
+  --color-border-brand:    var(--border-brand);
+  --color-border-subtle:   var(--border-subtle);
+  --color-border-strong:   var(--border-strong);
+
+  /* Brand text */
+  --color-text:            var(--text);
+  --color-text-secondary:  var(--text-secondary);
+  --color-text-muted:      var(--text-muted);
+  --color-text-inverse:    var(--text-inverse);
+
+  /* Plum accent scale */
+  --color-plum-50:   var(--accent-plum-50);
+  --color-plum-100:  var(--accent-plum-100);
+  --color-plum-200:  var(--accent-plum-200);
+  --color-plum-300:  var(--accent-plum-300);
+  --color-plum-400:  var(--accent-plum-400);
+  --color-plum-500:  var(--accent-plum-500);
+  --color-plum-600:  var(--accent-plum-600);
+  --color-plum-700:  var(--accent-plum-700);
+  --color-plum-800:  var(--accent-plum-800);
+  --color-plum-900:  var(--accent-plum-900);
+  --color-plum-950:  var(--accent-plum-950);
+
+  /* Gold accent scale */
+  --color-gold-50:   var(--accent-gold-50);
+  --color-gold-100:  var(--accent-gold-100);
+  --color-gold-200:  var(--accent-gold-200);
+  --color-gold-300:  var(--accent-gold-300);
+  --color-gold-400:  var(--accent-gold-400);
+  --color-gold-500:  var(--accent-gold-500);
+  --color-gold-600:  var(--accent-gold-600);
+  --color-gold-700:  var(--accent-gold-700);
+  --color-gold-800:  var(--accent-gold-800);
+  --color-gold-900:  var(--accent-gold-900);
+  --color-gold-950:  var(--accent-gold-950);
+
+  /* Semantic */
+  --color-success:         var(--success);
+  --color-success-bg:      var(--success-bg);
+  --color-success-border:  var(--success-border);
+  --color-warning:         var(--warning);
+  --color-warning-bg:      var(--warning-bg);
+  --color-warning-border:  var(--warning-border);
+  --color-error:           var(--error);
+  --color-error-bg:        var(--error-bg);
+  --color-error-border:    var(--error-border);
+  --color-info:            var(--info);
+  --color-info-bg:         var(--info-bg);
+  --color-info-border:     var(--info-border);
+
+  /* Lane accents */
+  --color-lane-hermes:     var(--lane-hermes);
+  --color-lane-sandcastle: var(--lane-sandcastle);
+
+  /* Border radius — brand scale */
+  --radius-sm:  4px;
+  --radius-md:  6px;
+  --radius-lg:  10px;
+  --radius-xl:  14px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+  --radius:     6px;
+
+  /* Chart tokens (kept for shadcn chart compat) */
+  --color-chart-1: var(--accent-plum-400);
+  --color-chart-2: var(--accent-gold-400);
+  --color-chart-3: var(--lane-hermes);
+  --color-chart-4: var(--lane-sandcastle);
+  --color-chart-5: var(--text-muted);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    background-color: var(--bg);
+    color: var(--text);
+  }
+  html {
+    @apply font-sans;
+  }
+}
