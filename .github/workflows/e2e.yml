@@ -39,11 +39,22 @@ jobs:
       - uses: actions/checkout@v4
       - id: check
         # hashFiles() can only be called inside a step, not in a job-level if:
+        # Skip not just when config is missing, but when no .spec/.test files
+        # exist in any common testDir — Playwright exits 1 on "No tests found"
+        # otherwise, breaking CI while you're still scaffolding suites.
         run: |
           if [ -f apps/dashboard/playwright.config.ts ] \
              || [ -f apps/dashboard/playwright.config.js ] \
              || [ -f apps/dashboard/playwright.config.mjs ]; then
-            echo "has_pw=true" >> "$GITHUB_OUTPUT"
+            if find apps/dashboard/e2e apps/dashboard/tests apps/dashboard/playwright \
+                    -type f \( -name '*.spec.ts' -o -name '*.spec.tsx' -o -name '*.spec.js' \
+                              -o -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.test.js' \) \
+                    2>/dev/null | head -1 | grep -q .; then
+              echo "has_pw=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "has_pw=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::Playwright config present but no *.spec/*.test files — skipping E2E."
+            fi
           else
             echo "has_pw=false" >> "$GITHUB_OUTPUT"
             echo "::notice::No playwright config found — skipping E2E."
@@ -92,7 +103,7 @@ jobs:
         run: pnpm --filter dashboard exec playwright install-deps chromium
 
       - name: Run E2E
-        run: pnpm -w e2e
+        run: pnpm --filter dashboard test:e2e
         env:
           CI: 'true'
 

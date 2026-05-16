@@ -34,7 +34,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run actionlint
         run: |
-          docker run --rm -v "${{ github.workspace }}:/repo" \
+          # -w /repo so actionlint runs INSIDE the mounted repo; without it,
+          # actionlint launches in / and can't find .github/ or the git project.
+          docker run --rm -v "${{ github.workspace }}:/repo" -w /repo \
             rhysd/actionlint:1.7.7 -color
 
   markdownlint:
@@ -57,6 +59,11 @@ jobs:
     name: gitleaks
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      # gitleaks-action lists PR commits via /repos/.../pulls/{n}/commits.
+      # Without this scope, the API call fails with 403.
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -87,7 +94,14 @@ jobs:
   dependency-review:
     name: Dependency review
     needs: dependency-review-preflight
-    if: needs.dependency-review-preflight.outputs.has_pkg == 'true'
+    # Skip on private repos without GitHub Advanced Security: the
+    # dependency-review-action requires Dependency Graph + GHAS to read the
+    # snapshot for diffing. Private repos without GHAS get "Dependency
+    # review is not supported on this repository". Gating with `if:` makes
+    # the check render as "Skipped" (gray) instead of "Failed" (red).
+    # When the repo is made public, or GHAS is enabled, this activates
+    # automatically.
+    if: needs.dependency-review-preflight.outputs.has_pkg == 'true' && github.event.repository.private == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
