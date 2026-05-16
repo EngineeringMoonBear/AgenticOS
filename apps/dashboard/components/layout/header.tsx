@@ -4,6 +4,7 @@ import Link from "next/link";
 import { SlidersHorizontal, Command } from "lucide-react";
 import { HeaderTabs } from "./header-tabs";
 import { FilterChip } from "@/components/filter/filter-chip";
+import { usePaletteStore } from "@/lib/palette/use-palette-store";
 
 /** AgenticOS logo mark — plum ring with gold inner dot at 2-o'clock position */
 function LogoMark() {
@@ -37,6 +38,7 @@ function LogoMark() {
 }
 
 export function Header() {
+  const openPalette = usePaletteStore((s) => s.open);
   return (
     <header
       className="sticky top-0 z-50 flex items-center border-b"
@@ -81,9 +83,7 @@ export function Header() {
             style={{
               color: "var(--text-muted)",
             }}
-            onClick={() => {
-              /* Task 8 will wire the command palette open action */
-            }}
+            onClick={openPalette}
             aria-label="Open command palette (⌘K)"
           >
             <Command size={12} strokeWidth={1.5} aria-hidden="true" />
