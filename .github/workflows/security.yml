@@ -34,7 +34,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run actionlint
         run: |
-          docker run --rm -v "${{ github.workspace }}:/repo" \
+          # -w /repo so actionlint runs INSIDE the mounted repo; without it,
+          # actionlint launches in / and can't find .github/ or the git project.
+          docker run --rm -v "${{ github.workspace }}:/repo" -w /repo \
             rhysd/actionlint:1.7.7 -color
 
   markdownlint:

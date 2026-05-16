@@ -58,6 +58,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@d15e628ca66d93ee5f352c71671a7bc6a97af5c9 # v6.0.8
+        with:
+          version: '9'   # matches engines.pnpm in root package.json
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
