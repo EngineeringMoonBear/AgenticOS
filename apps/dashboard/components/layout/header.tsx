@@ -1,10 +1,8 @@
-"use client";
-
 import Link from "next/link";
-import { SlidersHorizontal, Command } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
 import { HeaderTabs } from "./header-tabs";
+import { PaletteTrigger } from "./palette-trigger";
 import { FilterChip } from "@/components/filter/filter-chip";
-import { usePaletteStore } from "@/lib/palette/use-palette-store";
 
 /** AgenticOS logo mark — plum ring with gold inner dot at 2-o'clock position */
 function LogoMark() {
@@ -38,7 +36,6 @@ function LogoMark() {
 }
 
 export function Header() {
-  const openPalette = usePaletteStore((s) => s.open);
   return (
     <header
       className="sticky top-0 z-50 flex items-center border-b"
@@ -76,24 +73,8 @@ export function Header() {
           {/* Global filter chip */}
           <FilterChip />
 
-          {/* Command palette trigger — wired in Task 8 */}
-          <button
-            type="button"
-            className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors"
-            style={{
-              color: "var(--text-muted)",
-            }}
-            onClick={openPalette}
-            aria-label="Open command palette (⌘K)"
-          >
-            <Command size={12} strokeWidth={1.5} aria-hidden="true" />
-            <kbd
-              className="font-mono text-[11px]"
-              style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}
-            >
-              K
-            </kbd>
-          </button>
+          {/* Command palette trigger — client island wires Zustand store */}
+          <PaletteTrigger />
 
           {/* Settings */}
           <Link

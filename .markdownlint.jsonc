@@ -1,0 +1,48 @@
+{
+  // Phase 0 docs lean heavily on long lines, inline JSON, and HTML for
+  // diagrams. These relaxations keep the lint useful (catches bad list
+  // syntax, broken headings) without flagging every plan doc.
+  "default": true,
+
+  // Long lines are fine — `phase-1-mvp-foundation.md` has prose runs and
+  // example JSON that wraps awkwardly otherwise.
+  "MD013": false,
+
+  // Inline HTML is needed for diagrams (<br>, <details>, etc.).
+  "MD033": false,
+
+  // Some docs intentionally start with a blockquote or HR rather than H1.
+  "MD041": false,
+
+  // Allow duplicate headings if they're in different sections (e.g. multiple
+  // "Why" subsections under different parent headings).
+  "MD024": { "siblings_only": true },
+
+  // Allow the same emphasis to be used as a heading marker — common in plans.
+  "MD036": false,
+
+  // The following are relaxed because the existing docs (brand.md,
+  // information-architecture.md, plans/*) trip them ~200 times and the
+  // value-to-friction ratio doesn't justify a doc-wide reformat right now.
+  // Re-enable later when those docs get touched.
+
+  // Headings should have blank lines around them. Compact TOC-style sections
+  // in the brand spec deliberately omit these.
+  "MD022": false,
+
+  // Fenced code blocks should declare a language. Some plan docs use bare
+  // ``` for ASCII diagrams where no language applies.
+  "MD040": false,
+
+  // Aligned-table-pipe style — far too strict for handwritten markdown tables
+  // in design docs.
+  "MD060": false,
+
+  // Fenced code blocks should be surrounded by blank lines. Adjacent-fence
+  // style is common in plan docs where each section ends with a code example.
+  "MD031": false,
+
+  // Lists should be surrounded by blank lines. GitHub renders compact lists
+  // fine; the rule matters for Pandoc but not for our use case.
+  "MD032": false
+}

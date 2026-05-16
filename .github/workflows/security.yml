@@ -1,0 +1,118 @@
+name: Security
+
+# Always-on security checks that work even on the current Phase 0 doc-only
+# state of the repo:
+#
+#   actionlint        - lints workflows for injection bugs and bad expressions
+#   markdownlint      - keeps docs/ readable
+#   gitleaks          - scans for committed secrets
+#   dependency-review - blocks PRs that introduce CVE-laden npm packages
+#                       (no-op until package.json + pnpm-lock.yaml exist)
+#
+# gitleaks-action v2 requires a paid license for orgs with 25+ users; this
+# repo is under a personal account so no GITLEAKS_LICENSE secret is needed.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run actionlint
+        run: |
+          # -w /repo so actionlint runs INSIDE the mounted repo; without it,
+          # actionlint launches in / and can't find .github/ or the git project.
+          docker run --rm -v "${{ github.workspace }}:/repo" -w /repo \
+            rhysd/actionlint:1.7.7 -color
+
+  markdownlint:
+    name: markdownlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DavidAnson/markdownlint-cli2-action@ded1f9488f68a970bc66ea5619e13e9b52e601cd # v23.2.0
+        with:
+          globs: |
+            **/*.md
+            !node_modules
+            !.next
+            !dist
+            !build
+            !**/CHANGELOG.md
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # gitleaks-action lists PR commits via /repos/.../pulls/{n}/commits.
+      # Without this scope, the API call fails with 403.
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # gitleaks needs full git history to scan past commits, not just the
+          # diff. Without this it only sees the shallow clone (1 commit).
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependency-review-preflight:
+    name: Detect package manifest
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      has_pkg: ${{ steps.check.outputs.has_pkg }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: check
+        # hashFiles() can only be called inside a step, not in a job-level if:
+        run: |
+          if [ -f package.json ] && [ -f pnpm-lock.yaml ]; then
+            echo "has_pkg=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_pkg=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  dependency-review:
+    name: Dependency review
+    needs: dependency-review-preflight
+    # Skip on private repos without GitHub Advanced Security: the
+    # dependency-review-action requires Dependency Graph + GHAS to read the
+    # snapshot for diffing. Private repos without GHAS get "Dependency
+    # review is not supported on this repository". Gating with `if:` makes
+    # the check render as "Skipped" (gray) instead of "Failed" (red).
+    # When the repo is made public, or GHAS is enabled, this activates
+    # automatically.
+    if: needs.dependency-review-preflight.outputs.has_pkg == 'true' && github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+          # License gate — fail on copyleft licenses incompatible with MIT.
+          # Tune as needed; remove the line entirely to skip license checks.
+          deny-licenses: AGPL-1.0-or-later, AGPL-3.0-or-later, GPL-2.0-or-later, GPL-3.0-or-later

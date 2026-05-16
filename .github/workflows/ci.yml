@@ -1,0 +1,103 @@
+name: CI
+
+# Lint, typecheck, unit-test, and build the monorepo on every PR to main and
+# every push to main. Jobs are gated on the presence of `package.json` so this
+# workflow is a no-op while the repo is in Phase 0 and activates automatically
+# the moment Task 1 (`Bootstrap monorepo`) lands.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  setup:
+    name: Detect monorepo
+    runs-on: ubuntu-latest
+    outputs:
+      has_package_json: ${{ steps.check.outputs.has_package_json }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: check
+        run: |
+          if [ -f package.json ]; then
+            echo "has_package_json=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_package_json=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No package.json yet — CI jobs will skip until Task 1 merges."
+          fi
+
+  lint:
+    name: Lint
+    needs: setup
+    if: needs.setup.outputs.has_package_json == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -w lint
+
+  typecheck:
+    name: Typecheck
+    needs: setup
+    if: needs.setup.outputs.has_package_json == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -w typecheck
+
+  test:
+    name: Unit tests
+    needs: [setup, lint, typecheck]
+    if: needs.setup.outputs.has_package_json == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -w test
+
+  build:
+    name: Build
+    needs: [setup, lint, typecheck]
+    if: needs.setup.outputs.has_package_json == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -w build

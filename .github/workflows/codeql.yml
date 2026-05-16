@@ -1,0 +1,80 @@
+name: CodeQL
+
+# Static analysis for JavaScript/TypeScript. Free for public repos. Self-skips
+# until TS/JS source files exist in the repo, so the Phase 0 doc-only state
+# doesn't produce empty CodeQL DBs every Monday.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly off-peak run catches advisories on dependencies that didn't change
+    # since the last PR. 07:23 UTC Monday — early morning US east coast.
+    - cron: '23 7 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: Detect JS/TS sources
+    runs-on: ubuntu-latest
+    outputs:
+      has_jsts: ${{ steps.check.outputs.has_jsts }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: check
+        # hashFiles() can only be called inside a step, not in a job-level if:
+        run: |
+          if find . -type d \( -name node_modules -o -name .next -o -name dist -o -name build \) -prune \
+             -o -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o -name '*.mjs' -o -name '*.cjs' \) -print \
+             | head -1 | grep -q .; then
+            echo "has_jsts=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_jsts=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No JS/TS sources yet — skipping CodeQL."
+          fi
+
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    needs: preflight
+    # Skip on private repos without GitHub Advanced Security: CodeQL's
+    # SARIF upload step requires Code Scanning to be enabled, which is
+    # bundled with GHAS (paid on private repos, free on public). Gating
+    # with `if:` makes the check render as "Skipped" (gray) instead of
+    # "Failed" (red), keeping the PR UI clean. When the repo is made
+    # public, or GHAS is enabled, the job activates automatically.
+    if: needs.preflight.outputs.has_jsts == 'true' && github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+      packages: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript-typescript']
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          # security-and-quality is the broader query set; security-extended is
+          # the security-only subset. Pick the broader one for a new repo so
+          # quality smells get caught alongside CVEs.
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: '/language:${{ matrix.language }}'
