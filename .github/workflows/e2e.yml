@@ -1,0 +1,105 @@
+name: E2E
+
+# Playwright browser tests for the dashboard app. Triggered only when files
+# under `apps/dashboard/**` (or shared packages / lockfile) change, so doc PRs
+# and Hermes-only PRs don't burn ~5 minutes on irrelevant browser tests.
+# Self-skips until a `playwright.config.*` exists in the dashboard app.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/dashboard/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'turbo.json'
+      - '.github/workflows/e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/dashboard/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: Detect Playwright config
+    runs-on: ubuntu-latest
+    outputs:
+      has_pw: ${{ steps.check.outputs.has_pw }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        # hashFiles() can only be called inside a step, not in a job-level if:
+        run: |
+          if [ -f apps/dashboard/playwright.config.ts ] \
+             || [ -f apps/dashboard/playwright.config.js ] \
+             || [ -f apps/dashboard/playwright.config.mjs ]; then
+            echo "has_pw=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_pw=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No playwright config found — skipping E2E."
+          fi
+
+  playwright:
+    name: Playwright
+    needs: preflight
+    if: needs.preflight.outputs.has_pw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@d15e628ca66d93ee5f352c71671a7bc6a97af5c9 # v6.0.8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      # Cache Playwright browser binaries (~150MB) keyed on the installed
+      # @playwright/test version so cache invalidates on Playwright bumps.
+      - name: Get Playwright version
+        id: pw
+        run: |
+          VERSION=$(node -e "
+            const pkg = require('./apps/dashboard/package.json');
+            const v = (pkg.devDependencies && pkg.devDependencies['@playwright/test'])
+                   || (pkg.dependencies && pkg.dependencies['@playwright/test'])
+                   || 'unknown';
+            console.log(v.replace(/^[\^~]/, ''));
+          " 2>/dev/null || echo "unknown")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter dashboard exec playwright install --with-deps chromium
+      - name: Install Playwright system deps (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: pnpm --filter dashboard exec playwright install-deps chromium
+
+      - name: Run E2E
+        run: pnpm -w e2e
+        env:
+          CI: 'true'
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/dashboard/playwright-report/
+          retention-days: 7
