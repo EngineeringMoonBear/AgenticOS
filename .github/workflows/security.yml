@@ -94,16 +94,16 @@ jobs:
   dependency-review:
     name: Dependency review
     needs: dependency-review-preflight
-    if: needs.dependency-review-preflight.outputs.has_pkg == 'true'
+    # Skip on private repos without GitHub Advanced Security: the
+    # dependency-review-action requires Dependency Graph + GHAS to read the
+    # snapshot for diffing. Private repos without GHAS get "Dependency
+    # review is not supported on this repository". Gating with `if:` makes
+    # the check render as "Skipped" (gray) instead of "Failed" (red).
+    # When the repo is made public, or GHAS is enabled, this activates
+    # automatically.
+    if: needs.dependency-review-preflight.outputs.has_pkg == 'true' && github.event.repository.private == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Advisory only: dependency-review-action requires GitHub Advanced Security
-    # on private repos. This repo is private without GHAS, so the job fails
-    # with "Dependency review is not supported on this repository". Marked
-    # advisory so it surfaces the message without blocking PRs. Once the repo
-    # is made public (free) or GHAS is enabled (paid on private), remove this
-    # line to make the job blocking.
-    continue-on-error: true
     permissions:
       contents: read
       pull-requests: write

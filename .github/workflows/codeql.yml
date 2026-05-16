@@ -44,16 +44,15 @@ jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     needs: preflight
-    if: needs.preflight.outputs.has_jsts == 'true'
+    # Skip on private repos without GitHub Advanced Security: CodeQL's
+    # SARIF upload step requires Code Scanning to be enabled, which is
+    # bundled with GHAS (paid on private repos, free on public). Gating
+    # with `if:` makes the check render as "Skipped" (gray) instead of
+    # "Failed" (red), keeping the PR UI clean. When the repo is made
+    # public, or GHAS is enabled, the job activates automatically.
+    if: needs.preflight.outputs.has_jsts == 'true' && github.event.repository.private == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Advisory only: CodeQL on private repos requires GitHub Advanced
-    # Security (paid). This repo is private without GHAS, so the analyze
-    # step fails with "Code scanning is not enabled for this repository".
-    # Marked advisory so it surfaces the message without blocking PRs.
-    # Once the repo is made public (free) or GHAS is enabled (paid),
-    # remove this line to make CodeQL gating.
-    continue-on-error: true
     permissions:
       contents: read
       security-events: write
