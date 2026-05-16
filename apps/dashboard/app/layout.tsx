@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import "./globals.css";
 import { Header } from "@/components/layout/header";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
+import { Toaster } from "@/components/ui/sonner";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -37,6 +38,7 @@ export default function RootLayout({
           <NuqsAdapter>
             <Header />
             <main className="flex-1 flex flex-col">{children}</main>
+            <Toaster position="bottom-right" />
           </NuqsAdapter>
         </Suspense>
       </body>
