@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { SlidersHorizontal, Command, ChevronDown } from "lucide-react";
+import { SlidersHorizontal, Command } from "lucide-react";
 import { HeaderTabs } from "./header-tabs";
+import { FilterChip } from "@/components/filter/filter-chip";
 
 /** AgenticOS logo mark — plum ring with gold inner dot at 2-o'clock position */
 function LogoMark() {
@@ -68,21 +69,8 @@ export function Header() {
 
         {/* Right: Filter chip placeholder + command palette trigger + settings */}
         <div className="flex items-center gap-1 ml-4 shrink-0">
-          {/* Global filter chip — placeholder, wired in Task 3 */}
-          <button
-            type="button"
-            disabled
-            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors cursor-not-allowed"
-            style={{
-              backgroundColor: "var(--surface-muted)",
-              color: "var(--text-secondary)",
-              border: "1px solid var(--border-brand)",
-            }}
-            aria-label="Global filter — coming in Task 3"
-          >
-            Filter: All
-            <ChevronDown size={12} strokeWidth={1.5} aria-hidden="true" />
-          </button>
+          {/* Global filter chip */}
+          <FilterChip />
 
           {/* Command palette trigger — wired in Task 8 */}
           <button
