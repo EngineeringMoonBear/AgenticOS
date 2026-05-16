@@ -73,7 +73,7 @@ export function Header() {
           {/* Global filter chip */}
           <FilterChip />
 
-          {/* Command palette trigger — client island; Task 8 wires the open action */}
+          {/* Command palette trigger — client island wires Zustand store */}
           <PaletteTrigger />
 
           {/* Settings */}

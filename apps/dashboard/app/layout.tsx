@@ -5,6 +5,8 @@ import "./globals.css";
 import { Header } from "@/components/layout/header";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { Toaster } from "@/components/ui/sonner";
+import { CommandPalette } from "@/components/palette/command-palette";
+import { PaletteHotkey } from "@/components/palette/palette-hotkey";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -39,6 +41,8 @@ export default function RootLayout({
             <Header />
             <main className="flex-1 flex flex-col">{children}</main>
             <Toaster position="bottom-right" />
+            <CommandPalette />
+            <PaletteHotkey />
           </NuqsAdapter>
         </Suspense>
       </body>

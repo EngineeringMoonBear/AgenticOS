@@ -1,26 +1,22 @@
 "use client";
 
 import { Command } from "lucide-react";
+import { usePaletteStore } from "@/lib/palette/use-palette-store";
 
 /**
  * Cmd-K command palette trigger button.
  *
- * Phase 1 status (on chore/ci-fixes): visual-only. The button has no onClick
- * so the component is trivially safe across the server/client boundary, but
- * carrying the `"use client"` directive establishes the boundary now. Task 8
- * (command palette, on feat/phase-1-integration) wires this to the Zustand
- * palette store via `usePaletteStore.open()` — when integration merges to
- * main, the wiring lands inside this already-client component with no
- * boundary changes needed.
- *
- * Why a client island? Server Components cannot pass event handlers across
- * the server/client boundary. The Header itself stays server-rendered; this
- * is the smallest possible client carve-out.
+ * Client island: the Header component stays server-rendered while this small
+ * island carries the `"use client"` directive needed to bind the onClick
+ * handler. Selects `open` from the Zustand palette store via a selector so
+ * the component doesn't re-render on unrelated state changes.
  */
 export function PaletteTrigger() {
+  const open = usePaletteStore((s) => s.open);
   return (
     <button
       type="button"
+      onClick={open}
       className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-[--surface-muted]"
       style={{ color: "var(--text-muted)" }}
       aria-label="Open command palette (⌘K)"
