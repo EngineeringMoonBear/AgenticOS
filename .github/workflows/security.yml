@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run actionlint
         run: |
           # -w /repo so actionlint runs INSIDE the mounted repo; without it,
@@ -44,8 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: DavidAnson/markdownlint-cli2-action@fa0cd0f1a052f54da593c83860f2292982f5d142 # v23.2.0
+      - uses: actions/checkout@v6
+      - uses: DavidAnson/markdownlint-cli2-action@ded1f9488f68a970bc66ea5619e13e9b52e601cd # v23.2.0
         with:
           globs: |
             **/*.md
@@ -65,7 +65,7 @@ jobs:
       # Without this scope, the API call fails with 403.
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # gitleaks needs full git history to scan past commits, not just the
           # diff. Without this it only sees the shallow clone (1 commit).
@@ -81,7 +81,7 @@ jobs:
     outputs:
       has_pkg: ${{ steps.check.outputs.has_pkg }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: check
         # hashFiles() can only be called inside a step, not in a job-level if:
         run: |
@@ -108,8 +108,8 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/checkout@v6
+      - uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
