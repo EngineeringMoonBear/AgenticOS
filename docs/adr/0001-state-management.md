@@ -113,6 +113,6 @@ If none of the above apply, re-examine whether the state is real — it may be d
 
 - Information Architecture spec: [`docs/information-architecture.md`](../information-architecture.md) — Section 5 (Cross-View Patterns) for filter URL semantics and SSE choice
 - Phase 1 implementation plan: [`docs/plans/phase-1-mvp-foundation.md`](../plans/phase-1-mvp-foundation.md) — explicit tech stack declaration
-- nuqs v2 docs: https://nuqs.47ng.com
-- Zustand docs: https://zustand.docs.pmnd.rs
-- TanStack Query v5 docs: https://tanstack.com/query/v5/docs
+- nuqs v2 docs: <https://nuqs.47ng.com>
+- Zustand docs: <https://zustand.docs.pmnd.rs>
+- TanStack Query v5 docs: <https://tanstack.com/query/v5/docs>

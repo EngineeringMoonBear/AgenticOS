@@ -1,7 +1,36 @@
 import { z } from "zod";
 
+/**
+ * Fix 2: Path traversal prevention (VibeSec finding)
+ *
+ * Reusable Zod refinement for filesystem paths accepted by the config.
+ * Blocks paths that could be used for directory traversal when Phase 2's
+ * vault reader consumes these fields.
+ *
+ * Rules:
+ *   - Non-empty
+ *   - Must start with `/` (POSIX absolute) or `~` (tilde-prefixed home)
+ *   - No `..` path segments anywhere (prevents traversal)
+ *   - No NUL bytes (prevents null-byte injection)
+ */
+const absolutePath = z
+  .string()
+  .min(1, "Path must not be empty")
+  .refine(
+    (p) => p.startsWith("/") || p.startsWith("~"),
+    "Path must be absolute (starting with / or ~)"
+  )
+  .refine(
+    (p) =>
+      !p
+        .split(/[/\\]/)
+        .some((segment) => segment === ".."),
+    "Path must not contain .. segments"
+  )
+  .refine((p) => !p.includes("\0"), "Path must not contain NUL bytes");
+
 export const ProjectRootSchema = z.object({
-  path: z.string(),
+  path: absolutePath,
   tags: z.array(z.string()),
 });
 
@@ -17,7 +46,7 @@ export const ConnectorConfigSchema = z.object({
 
 export const AgenticOSConfigSchema = z.object({
   projectRoots: z.array(ProjectRootSchema),
-  vaultPath: z.string(),
+  vaultPath: absolutePath,
   modelDefaults: z.object({
     haiku: z.string(),
     sonnet: z.string(),

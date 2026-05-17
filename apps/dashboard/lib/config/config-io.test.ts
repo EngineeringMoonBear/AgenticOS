@@ -8,6 +8,7 @@ import crypto from "crypto";
 vi.mock("server-only", () => ({}));
 
 import { readConfig, writeConfig, DEFAULT_CONFIG } from "./config-io";
+import { AgenticOSConfigSchema } from "./schema";
 
 let tmpDir: string;
 
@@ -82,6 +83,64 @@ describe("readConfig", () => {
     // vaultPath must be a string, not a number
     await writeTmpConfig(JSON.stringify({ vaultPath: 12345 }));
     await expect(readConfig()).rejects.toThrow(/schema validation/);
+  });
+});
+
+/**
+ * Fix 2 path validator tests — these exercise the absolutePath Zod refinement
+ * applied to vaultPath and ProjectRootSchema.path.
+ */
+describe("path validators (Fix 2)", () => {
+  const baseConfig = {
+    projectRoots: [],
+    modelDefaults: {
+      haiku: "claude-haiku-4-5",
+      sonnet: "claude-sonnet-4-7",
+      opus: "claude-opus-4-7",
+    },
+    connectors: [],
+  };
+
+  it("accepts an absolute POSIX path (starting with /)", () => {
+    const result = AgenticOSConfigSchema.safeParse({
+      ...baseConfig,
+      vaultPath: "/home/user/vault",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a tilde-prefixed home path (starting with ~)", () => {
+    const result = AgenticOSConfigSchema.safeParse({
+      ...baseConfig,
+      vaultPath: "~/Documents/Dev Projects/vault",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a relative path (no leading / or ~)", () => {
+    const result = AgenticOSConfigSchema.safeParse({
+      ...baseConfig,
+      vaultPath: "relative/path/vault",
+    });
+    expect(result.success).toBe(false);
+    expect(
+      result.error?.issues.some((i) =>
+        i.message.includes("absolute")
+      )
+    ).toBe(true);
+  });
+
+  it("rejects a path containing .. segments", () => {
+    const result = AgenticOSConfigSchema.safeParse({
+      ...baseConfig,
+      vaultPath: "/home/user/../etc/passwd",
+    });
+    expect(result.success).toBe(false);
+    expect(
+      result.error?.issues.some((i) =>
+        i.message.includes("..")
+      )
+    ).toBe(true);
   });
 });
 
