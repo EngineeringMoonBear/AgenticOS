@@ -15,5 +15,11 @@
     "node": ">=20",
     "pnpm": ">=9"
   },
-  "packageManager": "pnpm@9.15.4"
+  "packageManager": "pnpm@9.15.4",
+  "pnpm": {
+    "overrides": {
+      "postcss@<8.5.10": ">=8.5.10",
+      "esbuild@<0.25.0": ">=0.25.0"
+    }
+  }
 }
