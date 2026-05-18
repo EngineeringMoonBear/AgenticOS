@@ -7,7 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./parse": "./src/parse/pipeline.ts",
-    "./store": "./src/store/vault-store.ts"
+    "./store": "./src/store/in-memory.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
