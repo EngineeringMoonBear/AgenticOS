@@ -1,41 +1,139 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, FileText, FolderOpen, Folder, Inbox, ChevronUp } from "lucide-react";
-import { WIKI_PAGES, WIKI_FOLDERS, INBOX_NOTES, groupPagesByFolder } from "@/lib/fixtures/wiki";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  FolderOpen,
+  Folder,
+  Inbox,
+  ChevronUp,
+  Loader2,
+  AlertCircle,
+} from "lucide-react";
+import { useVaultTree } from "@/lib/vault/hooks/use-vault-tree";
 import { useFilter } from "@/lib/filter/use-filter";
 import { toast } from "sonner";
+import type { TreeNode } from "@agenticos/vault-core";
 
 interface MemoryTreeProps {
   selectedPath: string | null;
   onSelect: (path: string) => void;
 }
 
+interface TreeFolderNodeProps {
+  node: TreeNode;
+  selectedPath: string | null;
+  onSelect: (path: string) => void;
+  activeTags: string[];
+  depth: number;
+}
+
+function TreeFolderNode({
+  node,
+  selectedPath,
+  onSelect,
+  activeTags,
+  depth,
+}: TreeFolderNodeProps) {
+  const [isOpen, setIsOpen] = useState(depth === 0);
+
+  if (node.kind === "page") {
+    const isSelected = selectedPath === node.path;
+    return (
+      <li key={node.path}>
+        <button
+          type="button"
+          onClick={() => onSelect(node.path)}
+          className="flex items-center gap-1.5 w-full rounded-md px-2 py-1 text-left transition-colors"
+          style={{
+            fontSize: "13px",
+            backgroundColor: isSelected ? "var(--accent-plum-950)" : "transparent",
+            color: isSelected ? "var(--accent-plum-300)" : "var(--text-secondary)",
+            borderLeft: isSelected
+              ? "2px solid var(--accent-plum-400)"
+              : "2px solid transparent",
+          }}
+          onMouseEnter={(e) => {
+            if (!isSelected)
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                "var(--surface-elevated)";
+          }}
+          onMouseLeave={(e) => {
+            if (!isSelected)
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor = "transparent";
+          }}
+        >
+          <FileText size={12} strokeWidth={1.5} aria-hidden="true" />
+          <span className="truncate">{node.name}</span>
+        </button>
+      </li>
+    );
+  }
+
+  // Folder node
+  const children = node.children ?? [];
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setIsOpen((v) => !v)}
+        className="flex items-center gap-1.5 w-full rounded-md px-2 py-1.5 text-left transition-colors"
+        style={{
+          color: "var(--text-secondary)",
+          fontSize: "13px",
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.backgroundColor = "var(--surface-elevated)";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.backgroundColor = "transparent";
+        }}
+      >
+        {isOpen ? (
+          <ChevronDown size={12} strokeWidth={1.5} aria-hidden="true" />
+        ) : (
+          <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" />
+        )}
+        {isOpen ? (
+          <FolderOpen size={14} strokeWidth={1.5} aria-hidden="true" />
+        ) : (
+          <Folder size={14} strokeWidth={1.5} aria-hidden="true" />
+        )}
+        <span className="flex-1 font-medium">{node.name}</span>
+      </button>
+
+      {isOpen && (
+        <ul className="ml-3 border-l pl-2" style={{ borderColor: "var(--border-subtle)" }}>
+          {children.map((child) => (
+            <TreeFolderNode
+              key={child.path}
+              node={child}
+              selectedPath={selectedPath}
+              onSelect={onSelect}
+              activeTags={activeTags}
+              depth={depth + 1}
+            />
+          ))}
+          {children.length === 0 && (
+            <li className="px-2 py-1 text-[12px]" style={{ color: "var(--text-muted)" }}>
+              Empty folder
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function MemoryTree({ selectedPath, onSelect }: MemoryTreeProps) {
   const { tags: activeTags } = useFilter();
-  const [openFolders, setOpenFolders] = useState<Set<string>>(
-    new Set(WIKI_FOLDERS as unknown as string[])
-  );
+  const { data, isLoading, isError } = useVaultTree();
   const [inboxOpen, setInboxOpen] = useState(false);
 
-  const grouped = groupPagesByFolder(WIKI_PAGES);
-
-  function toggleFolder(folder: string) {
-    setOpenFolders((prev) => {
-      const next = new Set(prev);
-      if (next.has(folder)) {
-        next.delete(folder);
-      } else {
-        next.add(folder);
-      }
-      return next;
-    });
-  }
-
-  function pageMatchesFilter(pageTags: string[]): boolean {
-    if (activeTags.length === 0) return true;
-    return activeTags.some((t) => pageTags.includes(t));
-  }
+  const rootChildren = data?.tree.children ?? [];
 
   return (
     <aside
@@ -56,111 +154,43 @@ export function MemoryTree({ selectedPath, onSelect }: MemoryTreeProps) {
         </p>
       </div>
 
-      <nav className="flex-1 px-2 pb-2">
-        {WIKI_FOLDERS.map((folder) => {
-          const pages = grouped[folder] ?? [];
-          const visiblePages = pages.filter((p) => pageMatchesFilter(p.tags));
-          const isOpen = openFolders.has(folder);
+      <nav className="flex-1 px-2 pb-2" aria-label="Wiki pages">
+        {isLoading && (
+          <div className="flex items-center gap-2 px-2 py-3">
+            <Loader2 size={14} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+            <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+              Loading…
+            </span>
+          </div>
+        )}
 
-          // If filter is active and no pages match, dim or skip the folder
-          const hasVisiblePages = visiblePages.length > 0;
-          const folderDimmed = activeTags.length > 0 && !hasVisiblePages;
+        {isError && (
+          <div className="flex items-center gap-2 px-2 py-3">
+            <AlertCircle size={14} style={{ color: "var(--error)" }} />
+            <span className="text-[12px]" style={{ color: "var(--error)" }}>
+              Failed to load vault
+            </span>
+          </div>
+        )}
 
-          return (
-            <div key={folder} className={folderDimmed ? "opacity-30" : ""}>
-              <button
-                type="button"
-                onClick={() => toggleFolder(folder)}
-                className="flex items-center gap-1.5 w-full rounded-md px-2 py-1.5 text-left transition-colors"
-                style={{
-                  color: "var(--text-secondary)",
-                  fontSize: "13px",
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
-                    "var(--surface-elevated)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.backgroundColor = "transparent";
-                }}
-              >
-                {isOpen ? (
-                  <ChevronDown size={12} strokeWidth={1.5} aria-hidden="true" />
-                ) : (
-                  <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" />
-                )}
-                {isOpen ? (
-                  <FolderOpen size={14} strokeWidth={1.5} aria-hidden="true" />
-                ) : (
-                  <Folder size={14} strokeWidth={1.5} aria-hidden="true" />
-                )}
-                <span className="flex-1 font-medium">{folder}</span>
-                {activeTags.length > 0 && hasVisiblePages && (
-                  <span
-                    className="text-[11px] tabular-nums rounded-sm px-1"
-                    style={{
-                      color: "var(--accent-plum-400)",
-                      backgroundColor: "var(--accent-plum-950)",
-                    }}
-                  >
-                    {visiblePages.length}
-                  </span>
-                )}
-              </button>
+        {!isLoading &&
+          !isError &&
+          rootChildren.map((child) => (
+            <TreeFolderNode
+              key={child.path}
+              node={child}
+              selectedPath={selectedPath}
+              onSelect={onSelect}
+              activeTags={activeTags}
+              depth={0}
+            />
+          ))}
 
-              {isOpen && (
-                <ul className="ml-3 border-l pl-2" style={{ borderColor: "var(--border-subtle)" }}>
-                  {visiblePages.map((page) => {
-                    const isSelected = selectedPath === page.path;
-                    return (
-                      <li key={page.id}>
-                        <button
-                          type="button"
-                          onClick={() => onSelect(page.path)}
-                          className="flex items-center gap-1.5 w-full rounded-md px-2 py-1 text-left transition-colors"
-                          style={{
-                            fontSize: "13px",
-                            backgroundColor: isSelected
-                              ? "var(--accent-plum-950)"
-                              : "transparent",
-                            color: isSelected
-                              ? "var(--accent-plum-300)"
-                              : "var(--text-secondary)",
-                            borderLeft: isSelected
-                              ? "2px solid var(--accent-plum-400)"
-                              : "2px solid transparent",
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!isSelected)
-                              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
-                                "var(--surface-elevated)";
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!isSelected)
-                              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
-                                "transparent";
-                          }}
-                        >
-                          <FileText size={12} strokeWidth={1.5} aria-hidden="true" />
-                          <span className="truncate">{page.title}</span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                  {/* Empty folder message when filter hides all pages */}
-                  {isOpen && visiblePages.length === 0 && activeTags.length === 0 && (
-                    <li
-                      className="px-2 py-1 text-[12px]"
-                      style={{ color: "var(--text-muted)" }}
-                    >
-                      Empty folder
-                    </li>
-                  )}
-                </ul>
-              )}
-            </div>
-          );
-        })}
+        {!isLoading && !isError && rootChildren.length === 0 && (
+          <p className="px-2 py-2 text-[13px]" style={{ color: "var(--text-muted)" }}>
+            No pages found.
+          </p>
+        )}
       </nav>
 
       {/* Divider */}
@@ -185,15 +215,6 @@ export function MemoryTree({ selectedPath, onSelect }: MemoryTreeProps) {
         >
           <Inbox size={14} strokeWidth={1.5} aria-hidden="true" />
           <span className="flex-1 font-medium">Inbox</span>
-          <span
-            className="text-[11px] tabular-nums rounded-sm px-1 mr-1"
-            style={{
-              color: "var(--warning)",
-              backgroundColor: "var(--warning-bg)",
-            }}
-          >
-            {INBOX_NOTES.length}
-          </span>
           {inboxOpen ? (
             <ChevronUp size={12} strokeWidth={1.5} />
           ) : (
@@ -202,75 +223,29 @@ export function MemoryTree({ selectedPath, onSelect }: MemoryTreeProps) {
         </button>
 
         {inboxOpen && (
-          <ul className="mt-1 space-y-2">
-            {INBOX_NOTES.map((note) => (
-              <li
-                key={note.id}
-                className="rounded-lg p-2.5 border"
-                style={{
-                  backgroundColor: "var(--surface-muted)",
-                  borderColor: "var(--border-subtle)",
-                }}
-              >
-                <p
-                  className="text-[12px] font-medium mb-1"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  📝 {note.title}
-                </p>
-                <p
-                  className="text-[12px] mb-2 line-clamp-2"
-                  style={{
-                    color: "var(--text-muted)",
-                    fontFamily: "var(--font-serif, Georgia, serif)",
-                    lineHeight: 1.5,
-                  }}
-                >
-                  {note.snippet}
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="text-[11px] font-medium transition-colors"
-                    style={{ color: "var(--accent-plum-400)" }}
-                    onClick={() =>
-                      toast.info("Inbox processing wires up in Phase 2.", {
-                        description: `"${note.title}" queued for promotion.`,
-                      })
-                    }
-                    onMouseEnter={(e) =>
-                      ((e.currentTarget as HTMLButtonElement).style.color =
-                        "var(--accent-plum-300)")
-                    }
-                    onMouseLeave={(e) =>
-                      ((e.currentTarget as HTMLButtonElement).style.color =
-                        "var(--accent-plum-400)")
-                    }
-                  >
-                    Promote ↑
-                  </button>
-                  <button
-                    type="button"
-                    className="text-[11px] font-medium transition-colors"
-                    style={{ color: "var(--text-muted)" }}
-                    onClick={() =>
-                      toast.info("Inbox processing wires up in Phase 2.", {
-                        description: `"${note.title}" marked for discard.`,
-                      })
-                    }
-                    onMouseEnter={(e) =>
-                      ((e.currentTarget as HTMLButtonElement).style.color = "var(--error)")
-                    }
-                    onMouseLeave={(e) =>
-                      ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")
-                    }
-                  >
-                    Discard ×
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <div className="mt-1 px-2 py-2">
+            <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+              Inbox processing wires up in Phase 2 T5.
+            </p>
+            <button
+              type="button"
+              className="mt-1 text-[11px] font-medium transition-colors"
+              style={{ color: "var(--accent-plum-400)" }}
+              onClick={() =>
+                toast.info("Inbox queue coming in Phase 2 T5.", {
+                  description: "Promote and discard will be wired up.",
+                })
+              }
+              onMouseEnter={(e) =>
+                ((e.currentTarget as HTMLButtonElement).style.color = "var(--accent-plum-300)")
+              }
+              onMouseLeave={(e) =>
+                ((e.currentTarget as HTMLButtonElement).style.color = "var(--accent-plum-400)")
+              }
+            >
+              Browse inbox →
+            </button>
+          </div>
         )}
       </div>
     </aside>

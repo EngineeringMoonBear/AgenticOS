@@ -14,18 +14,18 @@ import type {
   TreeNode,
   TagInfo,
   VaultStats,
-} from "../types.js";
-import type { VaultStore } from "./vault-store.js";
-import { safeResolve } from "../path/safe-resolve.js";
-import { parseFrontmatter } from "../parse/frontmatter.js";
-import { extractWikilinks, resolveWikilinks } from "../parse/wikilinks.js";
-import { extractTags, mergeTags } from "../parse/tags.js";
-import { processMarkdown } from "../parse/pipeline.js";
-import { detectBrokenLinks } from "../lint/broken-links.js";
-import { detectOrphans } from "../lint/orphans.js";
-import { detectTodos } from "../lint/todos.js";
+} from "../types";
+import type { VaultStore } from "./vault-store";
+import { safeResolve } from "../path/safe-resolve";
+import { parseFrontmatter } from "../parse/frontmatter";
+import { extractWikilinks, resolveWikilinks } from "../parse/wikilinks";
+import { extractTags, mergeTags } from "../parse/tags";
+import { processMarkdown } from "../parse/pipeline";
+import { detectBrokenLinks } from "../lint/broken-links";
+import { detectOrphans } from "../lint/orphans";
+import { detectTodos } from "../lint/todos";
 // VaultPathError imported for external callers; thrown via safeResolve
-import type { VaultPathError as _VaultPathError } from "./errors.js";
+import type { VaultPathError as _VaultPathError } from "./errors";
 
 const TTL_MS = 30_000;
 

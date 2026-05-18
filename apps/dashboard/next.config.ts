@@ -35,6 +35,26 @@ const CSP_DIRECTIVES = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
+  // vault-core is a local workspace package with "type": "module" and raw TS
+  // exports. transpilePackages handles the TypeScript transpilation; Turbopack
+  // (the Next 16 default) infers the .js → .ts resolution from this without
+  // additional config. The webpack block below is only consulted when building
+  // with --webpack (kept as a fallback for environments where Turbopack hangs).
+  transpilePackages: ["@agenticos/vault-core"],
+  // Empty turbopack block: silences Next 16's validator, which errors when a
+  // webpack block is present without an accompanying turbopack block. The
+  // builder doesn't actually need any options — defaults work.
+  turbopack: {},
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  webpack(config: any) {
+    config.resolve = config.resolve ?? {};
+    config.resolve.extensionAlias = {
+      ...config.resolve.extensionAlias,
+      ".js": [".ts", ".tsx", ".js"],
+      ".mjs": [".mts", ".mjs"],
+    };
+    return config;
+  },
   async headers() {
     return [
       {

@@ -1,4 +1,4 @@
-import type { VaultIndex, LintIssue, WikiPath } from "../types.js";
+import type { VaultIndex, LintIssue, WikiPath } from "../types";
 
 const TODO_PATTERNS = [
   /\bTODO\b/,
