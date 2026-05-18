@@ -1,4 +1,4 @@
-import type { WikiPath } from "../types.js";
+import type { WikiPath } from "../types";
 
 export interface WikilinkRef {
   /** The raw path as written inside [[ ]] */

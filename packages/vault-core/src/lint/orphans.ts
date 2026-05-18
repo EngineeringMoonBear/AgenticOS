@@ -1,4 +1,4 @@
-import type { VaultIndex, LintIssue, WikiPath } from "../types.js";
+import type { VaultIndex, LintIssue, WikiPath } from "../types";
 
 /**
  * Detect orphan pages: pages with no incoming links AND no outgoing links.

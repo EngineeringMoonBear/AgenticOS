@@ -7,7 +7,7 @@ import type {
   TreeNode,
   TagInfo,
   VaultStats,
-} from "../types.js";
+} from "../types";
 
 /**
  * The single contract consumers depend on.

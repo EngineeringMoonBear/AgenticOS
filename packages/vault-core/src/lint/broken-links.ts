@@ -1,4 +1,4 @@
-import type { VaultIndex, LintIssue, WikiPath } from "../types.js";
+import type { VaultIndex, LintIssue, WikiPath } from "../types";
 
 /**
  * Detect broken wikilinks: pages that reference paths which don't exist in the index.

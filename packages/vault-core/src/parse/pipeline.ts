@@ -2,7 +2,7 @@ import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import type { Root } from "mdast";
-import remarkCallouts from "./callouts.js";
+import remarkCallouts from "./callouts";
 
 /**
  * Build the unified processor used by vault-core.
