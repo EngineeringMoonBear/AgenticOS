@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Tag } from "lucide-react";
 import { useVaultPage } from "@/lib/vault/hooks/use-vault-page";
 import { useVaultBacklinks } from "@/lib/vault/hooks/use-vault-backlinks";
 import { useFilter } from "@/lib/filter/use-filter";
+import { LintPanel } from "./LintPanel";
 
 interface MemoryRailProps {
   path: string | null;
@@ -187,18 +188,7 @@ export function MemoryRail({ path, onNavigate }: MemoryRailProps) {
         </div>
       </section>
 
-      {/* Lint panel stub */}
-      <section className="px-4 py-4 mt-auto">
-        <p
-          className="text-[11px] font-medium tracking-widest uppercase mb-2"
-          style={{ color: "var(--text-muted)" }}
-        >
-          Lint
-        </p>
-        <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-          Lint panel coming in Phase 2 T6.
-        </p>
-      </section>
+      <LintPanel onNavigate={onNavigate} />
     </aside>
   );
 }
