@@ -35,6 +35,20 @@ const CSP_DIRECTIVES = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
+  // vault-core is a local workspace package with "type": "module" and raw TS
+  // exports. transpilePackages handles the TypeScript transpilation; the webpack
+  // extensionAlias config resolves `.js` imports to `.ts` sources (ESM convention).
+  transpilePackages: ["@agenticos/vault-core"],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  webpack(config: any) {
+    config.resolve = config.resolve ?? {};
+    config.resolve.extensionAlias = {
+      ...config.resolve.extensionAlias,
+      ".js": [".ts", ".tsx", ".js"],
+      ".mjs": [".mts", ".mjs"],
+    };
+    return config;
+  },
   async headers() {
     return [
       {
