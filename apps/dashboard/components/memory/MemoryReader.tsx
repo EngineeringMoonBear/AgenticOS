@@ -6,6 +6,8 @@ import { RenderPageBody } from "@/lib/markdown/render-page";
 
 interface MemoryReaderProps {
   path: string | null;
+  graphMode?: boolean;
+  onToggleGraph?: () => void;
 }
 
 const VAULT_WIKI_ROOT =
@@ -16,7 +18,7 @@ function buildObsidianUrl(pagePath: string): string {
   return "obsidian://open?path=" + encodeURIComponent(absolutePath);
 }
 
-export function MemoryReader({ path }: MemoryReaderProps) {
+export function MemoryReader({ path, graphMode = false, onToggleGraph }: MemoryReaderProps) {
   const { data: page, isLoading, isError } = useVaultPage(path);
 
   if (!path) {
@@ -109,9 +111,20 @@ export function MemoryReader({ path }: MemoryReaderProps) {
           </div>
         </div>
 
-        {/* Open in Obsidian */}
-        <a
-          href={obsidianUrl}
+        {/* Header actions */}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={onToggleGraph ?? undefined}
+            className="text-xs px-2 py-1 rounded"
+            style={{ color: graphMode ? "var(--accent-plum-400)" : "var(--text-muted)" }}
+            aria-label="Toggle graph view"
+          >
+            Graph view
+          </button>
+
+          {/* Open in Obsidian */}
+          <a
+            href={obsidianUrl}
           className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium border transition-colors shrink-0"
           style={{
             color: "var(--text-secondary)",
@@ -130,11 +143,12 @@ export function MemoryReader({ path }: MemoryReaderProps) {
             el.style.borderColor = "var(--border-brand)";
             el.style.backgroundColor = "var(--surface)";
           }}
-          title={obsidianUrl}
-        >
-          <ExternalLink size={14} strokeWidth={1.5} aria-hidden="true" />
-          Open in Obsidian
-        </a>
+            title={obsidianUrl}
+          >
+            <ExternalLink size={14} strokeWidth={1.5} aria-hidden="true" />
+            Open in Obsidian
+          </a>
+        </div>
       </div>
 
       {/* Page body */}
