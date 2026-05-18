@@ -1,0 +1,14 @@
+<inbox note>
+{{inbox_body}}
+</inbox note>
+
+<existing wiki index>
+{{flat_index}}
+</existing wiki index>
+
+<existing tags>
+{{all_tags}}
+</existing tags>
+
+Output strict JSON matching this schema:
+{ "destination": "Farm/...", "title": "...", "tags": [...], "body": "...", "confidence": 0.0-1.0, "reasoning": "..." }
