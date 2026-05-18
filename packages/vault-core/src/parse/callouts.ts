@@ -1,15 +1,23 @@
 import type { Plugin } from "unified";
-import type { Root, Blockquote, Paragraph, Text, Data } from "mdast";
+import type { Root, Blockquote, Paragraph, Text } from "mdast";
 import { visit } from "unist-util-visit";
 
 const SUPPORTED_KINDS = new Set(["note", "info", "warning", "danger", "tip"]);
 const CALLOUT_RE = /^\[!(\w+)\]\s*(.*)?$/;
 
-/** Extended Data interface that includes hast bridge properties */
-interface HastData extends Data {
+/**
+ * mdast→hast bridge fields written into `node.data` so rehype renders the
+ * blockquote as a custom element. We use a structural anonymous type for the
+ * cast rather than a named interface that extends `mdast.Data` — downstream
+ * consumers that pull `mdast-util-to-hast` augment `Data` with their own
+ * stricter `Properties` type, and an extending interface causes TS2430 in
+ * those projects. The shape here is intentionally narrow (only the fields we
+ * set) and structurally compatible with both upstream variants.
+ */
+type CalloutBridgeData = {
   hName?: string;
-  hProperties?: Record<string, unknown>;
-}
+  hProperties?: { className?: string[] };
+};
 
 /**
  * Remark plugin: transform Obsidian-style callout blockquotes.
@@ -39,14 +47,9 @@ const remarkCallouts: Plugin<[], Root> = () => {
       if (!SUPPORTED_KINDS.has(kind)) return;
 
       // Mutate the blockquote to carry hast metadata for rehype
-      const data = (node.data ??= {}) as HastData;
+      const data = (node.data ??= {}) as CalloutBridgeData;
       data.hName = "div";
-      data.hProperties = {
-        className: ["callout", `callout-${kind}`],
-        ...(typeof data.hProperties === "object" && data.hProperties !== null
-          ? data.hProperties
-          : {}),
-      };
+      data.hProperties = { className: ["callout", `callout-${kind}`] };
 
       // Strip the [!kind] marker from the first text node
       const afterMarker = text.value.slice(firstLine.length);
