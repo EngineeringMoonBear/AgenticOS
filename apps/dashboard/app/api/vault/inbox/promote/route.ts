@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { z } from "zod";
+import type Anthropic from "@anthropic-ai/sdk";
 import { getVaultStore } from "@/lib/vault/store-singleton";
 import { getAnthropic, getSonnetModelId } from "@/lib/llm/anthropic";
+
+type ContentBlock = Anthropic.Messages.ContentBlock;
 
 const BODY_LIMIT = 64 * 1024; // 64 KiB
 
@@ -109,7 +112,7 @@ export async function POST(req: Request): Promise<NextResponse> {
         messages: [{ role: "user", content: userPrompt }],
       });
 
-      const textBlock = response.content.find((c) => c.type === "text");
+      const textBlock = response.content.find((c: ContentBlock) => c.type === "text");
       if (!textBlock || textBlock.type !== "text") {
         return NextResponse.json(
           { error: "LLM returned no text content" },
