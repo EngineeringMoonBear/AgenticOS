@@ -1,0 +1,38 @@
+{
+  "name": "@agenticos/vault-core",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Vault parsing, indexing, and store semantics for AgenticOS",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./parse": "./src/parse/pipeline.ts",
+    "./store": "./src/store/vault-store.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3",
+    "mdast-util-from-markdown": "^2.0.2",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-stringify": "^11.0.0",
+    "server-only": "^0.0.1",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.0.0",
+    "vfile": "^6.0.3",
+    "yaml": "^2.7.1",
+    "zod": "^3.25.20"
+  },
+  "devDependencies": {
+    "@agenticos/tsconfig": "workspace:*",
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^25",
+    "@types/unist": "^3.0.3",
+    "typescript": "^6",
+    "vitest": "^4.1.6"
+  }
+}
