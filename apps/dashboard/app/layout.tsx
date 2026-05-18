@@ -7,6 +7,7 @@ import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { Toaster } from "@/components/ui/sonner";
 import { CommandPalette } from "@/components/palette/command-palette";
 import { PaletteHotkey } from "@/components/palette/palette-hotkey";
+import { QueryProvider } from "@/components/providers/QueryProvider";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -38,11 +39,13 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col" style={{ backgroundColor: "var(--bg)", color: "var(--text)" }}>
         <Suspense>
           <NuqsAdapter>
-            <Header />
-            <main className="flex-1 flex flex-col">{children}</main>
-            <Toaster position="bottom-right" />
-            <CommandPalette />
-            <PaletteHotkey />
+            <QueryProvider>
+              <Header />
+              <main className="flex-1 flex flex-col">{children}</main>
+              <Toaster position="bottom-right" />
+              <CommandPalette />
+              <PaletteHotkey />
+            </QueryProvider>
           </NuqsAdapter>
         </Suspense>
       </body>

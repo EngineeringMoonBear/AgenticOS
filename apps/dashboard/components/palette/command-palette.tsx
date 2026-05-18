@@ -15,7 +15,7 @@ import {
 import { usePaletteStore } from "@/lib/palette/use-palette-store";
 import { useFilter } from "@/lib/filter/use-filter";
 import { SKILL_FIXTURES } from "@/lib/fixtures/skills";
-import { WIKI_PAGES } from "@/lib/fixtures/wiki";
+import { useVaultTree } from "@/lib/vault/hooks/use-vault-tree";
 import { RUN_FIXTURES } from "@/lib/fixtures/runs";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -46,6 +46,8 @@ export function CommandPalette() {
   const close = usePaletteStore((s) => s.close);
   const router = useRouter();
   const { clear: clearFilter } = useFilter();
+  const { data: vaultTree } = useVaultTree();
+  const wikiPaths = vaultTree?.flatPaths.slice(0, 5) ?? [];
 
   function handleOpenChange(open: boolean) {
     if (!open) close();
@@ -121,33 +123,36 @@ export function CommandPalette() {
 
         {/* ── Wiki Pages ───────────────────────────────────────── */}
         <CommandGroup heading="Wiki Pages">
-          {WIKI_PAGES.slice(0, 5).map((page) => (
-            <CommandItem
-              key={page.id}
-              value={`wiki ${page.title} ${page.path} ${page.tags.join(" ")}`}
-              onSelect={() => handleWikiNavigate(page.path)}
-              className="gap-2.5"
-            >
-              <BookOpen
-                size={14}
-                className="shrink-0"
-                style={{ color: "var(--accent-gold-400)" }}
-                aria-hidden="true"
-              />
-              <span className="flex flex-col min-w-0">
-                <span className="text-sm font-medium truncate">{page.title}</span>
-                <span
-                  className="text-xs truncate font-mono"
-                  style={{
-                    color: "var(--text-muted)",
-                    fontFamily: "var(--font-jetbrains-mono, monospace)",
-                  }}
-                >
-                  {page.path}
+          {wikiPaths.map((pagePath) => {
+            const title = pagePath.split("/").pop() ?? pagePath;
+            return (
+              <CommandItem
+                key={pagePath}
+                value={`wiki ${title} ${pagePath}`}
+                onSelect={() => handleWikiNavigate(pagePath)}
+                className="gap-2.5"
+              >
+                <BookOpen
+                  size={14}
+                  className="shrink-0"
+                  style={{ color: "var(--accent-gold-400)" }}
+                  aria-hidden="true"
+                />
+                <span className="flex flex-col min-w-0">
+                  <span className="text-sm font-medium truncate">{title}</span>
+                  <span
+                    className="text-xs truncate font-mono"
+                    style={{
+                      color: "var(--text-muted)",
+                      fontFamily: "var(--font-jetbrains-mono, monospace)",
+                    }}
+                  >
+                    {pagePath}
+                  </span>
                 </span>
-              </span>
-            </CommandItem>
-          ))}
+              </CommandItem>
+            );
+          })}
         </CommandGroup>
 
         <CommandSeparator />
