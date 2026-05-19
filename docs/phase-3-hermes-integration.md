@@ -326,8 +326,8 @@ All routes under `apps/dashboard/app/api/hermes/`. All state-changing routes inh
 
 Rate-limit route (lives outside the `/api/hermes/` namespace):
 
-| Method | Path | Purpose |
-|--------|------|---------|
+| Method | Path | Purpose | Notes |
+|--------|------|---------|-------|
 | `GET` | `/api/limits` | Rate-limit state | Returns `{ current, history }` from `rate-limits.jsonl` |
 
 ### 4.2 Caching / Freshness
