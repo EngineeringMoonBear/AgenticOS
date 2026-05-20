@@ -1,90 +1,141 @@
 "use client";
 
-import { RefreshCw, Container, MoreHorizontal } from "lucide-react";
+import { RefreshCw, MoreHorizontal } from "lucide-react";
 import Link from "next/link";
-import type { Run } from "@/lib/fixtures/runs";
+import { useState, useEffect } from "react";
+import type { HermesRun } from "@agenticos/hermes-client";
+import { useRunVitalSigns } from "@/lib/hooks/use-run-vital-signs";
 import { cn } from "@/lib/utils";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+function formatDuration(ms: number | undefined): string {
+  if (ms === undefined) return "—";
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
 }
 
-function formatCost(cost: number): string {
+function formatCost(cost: number | undefined): string {
+  if (cost === undefined) return "—";
   return `$${cost.toFixed(2)}`;
 }
 
-function modelLabel(model: Run["model"]): string {
-  const map: Record<Run["model"], string> = {
-    haiku: "claude-haiku-4-5",
-    sonnet: "claude-sonnet-4-6",
-    opus: "claude-opus-4-5",
-  };
-  return map[model];
-}
+// ── Status chip ───────────────────────────────────────────────────────────────
 
-// ── Status pill ───────────────────────────────────────────────────────────────
+function StatusChip({
+  run,
+  vitals,
+  nowMs,
+}: {
+  run: HermesRun;
+  vitals: ReturnType<typeof useRunVitalSigns>;
+  nowMs: number;
+}) {
+  if (vitals?.throttledUntil) {
+    const mins = Math.max(
+      0,
+      Math.floor(
+        (new Date(vitals.throttledUntil).getTime() - nowMs) / 60_000
+      )
+    );
+    return (
+      <span
+        className="shrink-0 rounded-sm px-1.5 py-px text-[11px] font-medium tracking-wide uppercase"
+        style={{
+          background: "var(--warning-bg, #3a2e1c)",
+          color: "var(--accent-gold-400, #c9a227)",
+        }}
+      >
+        THROTTLED · {mins}m
+      </span>
+    );
+  }
+  if (vitals?.isStale) {
+    return (
+      <span
+        className="shrink-0 rounded-sm px-1.5 py-px text-[11px] font-medium tracking-wide uppercase"
+        style={{
+          background: "var(--warning-bg, #3a2e1c)",
+          color: "var(--accent-gold-400, #c9a227)",
+        }}
+      >
+        STALE
+      </span>
+    );
+  }
 
-const STATUS_MAP: Record<
-  Run["status"],
-  { label: string; style: React.CSSProperties }
-> = {
-  running: {
-    label: "RUNNING",
-    style: {
-      background: "var(--info-bg)",
-      border: "1px solid var(--info-border)",
+  const statusStyles: Record<
+    string,
+    { bg: string; border: string; color: string }
+  > = {
+    running: {
+      bg: "var(--info-bg)",
+      border: "var(--info-border)",
       color: "var(--info)",
     },
-  },
-  done: {
-    label: "DONE",
-    style: {
-      background: "var(--success-bg)",
-      border: "1px solid var(--success-border)",
+    completed: {
+      bg: "var(--success-bg)",
+      border: "var(--success-border)",
       color: "var(--success)",
     },
-  },
-  failed: {
-    label: "FAILED",
-    style: {
-      background: "var(--error-bg)",
-      border: "1px solid var(--error-border)",
+    failed: {
+      bg: "var(--error-bg)",
+      border: "var(--error-border)",
       color: "var(--error)",
     },
-  },
-  "awaiting-approval": {
-    label: "AWAITING APPROVAL",
-    style: {
-      background: "var(--warning-bg)",
-      border: "1px solid var(--warning-border)",
+    canceled: {
+      bg: "var(--surface-muted)",
+      border: "var(--border-subtle)",
+      color: "var(--text-muted)",
+    },
+    queued: {
+      bg: "var(--warning-bg)",
+      border: "var(--warning-border)",
       color: "var(--warning)",
     },
-  },
-};
+  };
+
+  const style = statusStyles[run.status] ?? statusStyles["queued"]!;
+  return (
+    <span
+      className="shrink-0 rounded-sm px-1.5 py-px text-[11px] font-medium tracking-wide uppercase"
+      style={{
+        background: style.bg,
+        border: `1px solid ${style.border}`,
+        color: style.color,
+      }}
+    >
+      {run.status}
+    </span>
+  );
+}
 
 // ── RunCard ───────────────────────────────────────────────────────────────────
 
 interface RunCardProps {
-  run: Run;
+  run: HermesRun;
 }
 
 export function RunCard({ run }: RunCardProps) {
+  const vitals = useRunVitalSigns(run);
+  const [nowMs, setNowMs] = useState(() => new Date().getTime());
   const isRunning = run.status === "running";
-  const laneColor =
-    run.lane === "hermes" ? "var(--lane-hermes)" : "var(--lane-sandcastle)";
-  const { label: statusLabel, style: statusStyle } = STATUS_MAP[run.status];
+  const stale = vitals?.isStale ?? false;
+  const throttled = !!vitals?.throttledUntil;
 
-  const LaneIcon = run.lane === "hermes" ? RefreshCw : Container;
+  // Keep nowMs current when there's a throttle timer showing
+  useEffect(() => {
+    if (!throttled) return;
+    const interval = setInterval(() => setNowMs(new Date().getTime()), 30_000);
+    return () => clearInterval(interval);
+  }, [throttled]);
 
-  const primaryAction = (() => {
-    if (run.status === "running") return "Cancel";
-    if (run.status === "awaiting-approval") return "Approve";
-    return "View";
-  })();
+  const stripeColor =
+    stale || throttled
+      ? "var(--accent-gold-400, #c9a227)"
+      : "var(--lane-hermes, #4db6ac)";
+  const pulseDuration = stale || throttled ? "4s" : "2s";
 
   return (
     <article
@@ -99,7 +150,10 @@ export function RunCard({ run }: RunCardProps) {
         className={cn("run-card__stripe shrink-0 w-0.5", {
           "run-stripe-pulse": isRunning,
         })}
-        style={{ backgroundColor: laneColor }}
+        style={{
+          backgroundColor: stripeColor,
+          animationDuration: isRunning ? pulseDuration : undefined,
+        }}
         aria-hidden
       />
 
@@ -107,19 +161,19 @@ export function RunCard({ run }: RunCardProps) {
       <div className="flex flex-col gap-2 px-4 py-3 flex-1 min-w-0">
         {/* Header row */}
         <div className="flex items-start gap-2">
-          {/* Lane icon + title */}
-          <LaneIcon
+          {/* Lane icon + skill id */}
+          <RefreshCw
             className="mt-0.5 shrink-0"
             size={16}
             strokeWidth={1.5}
-            style={{ color: laneColor }}
-            aria-label={run.lane === "hermes" ? "Hermes lane" : "Sandcastle lane"}
+            style={{ color: "var(--lane-hermes)" }}
+            aria-label="Hermes lane"
           />
           <span
             className="flex-1 min-w-0 truncate text-sm font-medium leading-5"
             style={{ color: "var(--text)" }}
           >
-            {run.title}
+            {run.skillId}
           </span>
 
           {/* Tags */}
@@ -138,13 +192,8 @@ export function RunCard({ run }: RunCardProps) {
             ))}
           </div>
 
-          {/* Status pill */}
-          <span
-            className="shrink-0 rounded-sm px-1.5 py-px text-[11px] font-medium tracking-wide uppercase"
-            style={statusStyle}
-          >
-            {statusLabel}
-          </span>
+          {/* Status chip */}
+          <StatusChip run={run} vitals={vitals} nowMs={nowMs} />
         </div>
 
         {/* Meta row */}
@@ -152,8 +201,11 @@ export function RunCard({ run }: RunCardProps) {
           className="flex items-center gap-2 text-[12px]"
           style={{ color: "var(--text-muted)" }}
         >
-          <span className="font-mono" style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}>
-            {formatDuration(run.durationSeconds)}
+          <span
+            className="font-mono"
+            style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}
+          >
+            {formatDuration(run.durationMs)}
           </span>
           <span aria-hidden>·</span>
           <span
@@ -165,30 +217,24 @@ export function RunCard({ run }: RunCardProps) {
               fontSize: "11px",
             }}
           >
-            {modelLabel(run.model)}
+            {run.model}
+          </span>
+          <span aria-hidden>·</span>
+          <span
+            style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}
+          >
+            {isRunning ? "~" : ""}
+            {formatCost(run.costUsd)}
           </span>
           <span aria-hidden>·</span>
           <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)" }}>
-            {isRunning ? "~" : ""}{formatCost(run.cost)}
+            {run.inputTokens + run.outputTokens} tok
           </span>
         </div>
 
         {/* Actions row */}
         <div className="flex items-center gap-2">
-          {primaryAction === "View" && (
-            <Link
-              href={`/observability/run/${run.id}`}
-              className="rounded-md px-2.5 py-1 text-xs font-medium border transition-colors"
-              style={{
-                borderColor: "var(--border-brand)",
-                color: "var(--text-secondary)",
-                background: "transparent",
-              }}
-            >
-              View
-            </Link>
-          )}
-          {primaryAction === "Cancel" && (
+          {isRunning ? (
             <button
               type="button"
               className="rounded-md px-2.5 py-1 text-xs font-medium border transition-colors"
@@ -201,32 +247,19 @@ export function RunCard({ run }: RunCardProps) {
             >
               Cancel
             </button>
-          )}
-          {primaryAction === "Approve" && (
-            <button
-              type="button"
-              className="rounded-md px-2.5 py-1 text-xs font-medium border transition-colors"
-              style={{
-                borderColor: "var(--accent-gold-400)",
-                color: "var(--accent-gold-400)",
-                background: "transparent",
-              }}
-              onClick={() => {}}
-            >
-              Approve
-            </button>
-          )}
+          ) : null}
 
-          {/* Always-visible View link for non-view primary actions */}
-          {primaryAction !== "View" && (
-            <Link
-              href={`/observability/run/${run.id}`}
-              className="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-              style={{ color: "var(--text-muted)" }}
-            >
-              View
-            </Link>
-          )}
+          <Link
+            href={`/observability/run/${run.id}`}
+            className="rounded-md px-2.5 py-1 text-xs font-medium border transition-colors"
+            style={{
+              borderColor: "var(--border-brand)",
+              color: "var(--text-secondary)",
+              background: "transparent",
+            }}
+          >
+            View
+          </Link>
 
           {/* Kebab */}
           <button

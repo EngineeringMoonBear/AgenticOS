@@ -16,19 +16,7 @@ import { usePaletteStore } from "@/lib/palette/use-palette-store";
 import { useFilter } from "@/lib/filter/use-filter";
 import { SKILL_FIXTURES } from "@/lib/fixtures/skills";
 import { useVaultTree } from "@/lib/vault/hooks/use-vault-tree";
-import { RUN_FIXTURES } from "@/lib/fixtures/runs";
-
-const STATUS_LABELS: Record<string, string> = {
-  running: "Running",
-  done: "Done",
-  failed: "Failed",
-  "awaiting-approval": "Awaiting approval",
-};
-
-const LANE_LABELS: Record<string, string> = {
-  hermes: "Hermes",
-  sandcastle: "Sandcastle",
-};
+import { useRunFeed } from "@/lib/hooks/use-run-feed";
 
 /**
  * CommandPalette — opened by ⌘K, the header button, or usePaletteStore.open().
@@ -48,6 +36,7 @@ export function CommandPalette() {
   const { clear: clearFilter } = useFilter();
   const { data: vaultTree } = useVaultTree();
   const wikiPaths = vaultTree?.flatPaths.slice(0, 5) ?? [];
+  const { data: recentRuns } = useRunFeed({ limit: 5 });
 
   function handleOpenChange(open: boolean) {
     if (!open) close();
@@ -159,10 +148,10 @@ export function CommandPalette() {
 
         {/* ── Recent Runs ──────────────────────────────────────── */}
         <CommandGroup heading="Recent Runs">
-          {RUN_FIXTURES.slice(0, 5).map((run) => (
+          {(recentRuns ?? []).slice(0, 5).map((run) => (
             <CommandItem
               key={run.id}
-              value={`run ${run.title} ${run.lane} ${run.status} ${run.tags.join(" ")}`}
+              value={`run ${run.skillId} ${run.status} ${run.tags.join(" ")}`}
               onSelect={() => handleRunNavigate(run.id)}
               className="gap-2.5"
             >
@@ -173,12 +162,12 @@ export function CommandPalette() {
                 aria-hidden="true"
               />
               <span className="flex flex-col min-w-0">
-                <span className="text-sm font-medium truncate">{run.title}</span>
+                <span className="text-sm font-medium truncate">{run.skillId}</span>
                 <span
                   className="text-xs"
                   style={{ color: "var(--text-muted)" }}
                 >
-                  {LANE_LABELS[run.lane] ?? run.lane} · {STATUS_LABELS[run.status] ?? run.status}
+                  Hermes · {run.status}
                 </span>
               </span>
             </CommandItem>
