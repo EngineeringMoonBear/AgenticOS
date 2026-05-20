@@ -48,6 +48,7 @@ export const AgenticOSConfigSchema = z.object({
   projectRoots: z.array(ProjectRootSchema),
   vaultPath: absolutePath,
   hermesUrl: z.string().url().default("http://127.0.0.1:7600"),
+  mcpServerUrl: z.string().url().default("http://127.0.0.1:7610"),
   modelDefaults: z.object({
     haiku: z.string(),
     sonnet: z.string(),
@@ -74,6 +75,7 @@ export const DEFAULT_CONFIG: AgenticOSConfig = {
   projectRoots: [],
   vaultPath: "~/Documents/Dev Projects/vault",
   hermesUrl: "http://127.0.0.1:7600",
+  mcpServerUrl: "http://127.0.0.1:7610",
   modelDefaults: {
     haiku: "claude-haiku-4-5",
     sonnet: "claude-sonnet-4-7",
