@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRunFeed } from "@/lib/hooks/use-run-feed";
 import { useHermesCron } from "@/lib/hooks/use-hermes-cron";
 import { RateLimitsPanel } from "./RateLimitsPanel";
@@ -162,14 +163,13 @@ export function MetricsSidebar({ filterActive, filteredCount }: MetricsSidebarPr
             No schedules configured.
           </p>
         )}
-        <button
-          type="button"
-          className="mt-3 text-xs underline transition-colors"
+        <Link
+          href="/observability/schedules"
+          className="mt-3 text-xs underline transition-colors inline-block"
           style={{ color: "var(--accent-plum-400)" }}
-          onClick={() => {}}
         >
           Manage schedules →
-        </button>
+        </Link>
       </section>
 
       {/* Rate limits panel */}
