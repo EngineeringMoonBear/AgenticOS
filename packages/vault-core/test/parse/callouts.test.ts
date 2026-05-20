@@ -6,11 +6,6 @@ import remarkCallouts from "../../src/parse/callouts.js";
 import type { Root, Blockquote } from "mdast";
 import { visit } from "unist-util-visit";
 
-function parseWithCallouts(markdown: string): Root {
-  const processor = unified().use(remarkParse).use(remarkGfm).use(remarkCallouts);
-  return processor.run(processor.parse(markdown)) as unknown as Root;
-}
-
 async function buildTree(markdown: string): Promise<Root> {
   const processor = unified().use(remarkParse).use(remarkGfm).use(remarkCallouts);
   const tree = processor.parse(markdown);

@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
-import crypto from "crypto";
 
 // Mock 'server-only' so it doesn't throw in the test environment
 vi.mock("server-only", () => ({}));
@@ -13,9 +12,12 @@ import { AgenticOSConfigSchema } from "./schema";
 let tmpDir: string;
 
 beforeEach(async () => {
-  // Each test gets a unique temp directory — never touches ~/.agenticos
-  tmpDir = path.join(os.tmpdir(), `agenticos-test-${crypto.randomUUID()}`);
-  await fs.mkdir(tmpDir, { recursive: true });
+  // Each test gets a unique temp directory — never touches ~/.agenticos.
+  // mkdtemp is atomic + OS-randomized suffix + 0700 perms (Unix default);
+  // resolves CodeQL js/insecure-temporary-file by removing the
+  // `os.tmpdir() + manually-named + mkdir` pattern the analyzer can't prove
+  // safe from local-attacker pre-creation races.
+  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "agenticos-test-"));
 });
 
 afterEach(async () => {
