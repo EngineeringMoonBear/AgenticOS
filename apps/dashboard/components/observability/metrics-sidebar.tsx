@@ -1,24 +1,17 @@
 "use client";
 
-import type { Run } from "@/lib/fixtures/runs";
-import { RUN_FIXTURES } from "@/lib/fixtures/runs";
+import Link from "next/link";
+import { useRunFeed } from "@/lib/hooks/use-run-feed";
+import { useHermesCron } from "@/lib/hooks/use-hermes-cron";
+import { RateLimitsPanel } from "./RateLimitsPanel";
 
 interface MetricsSidebarProps {
-  /** Filtered runs — used to show (filtered) indicator */
-  filteredRuns: Run[];
   filterActive: boolean;
+  filteredCount?: number;
 }
 
-// Static schedule fixture — Phase 2 will wire to real cron data
-const SCHEDULE = [
-  { label: "Farm Morning Brief", cron: "0 7 * * *", display: "07:00 daily", done: true },
-  { label: "Daily Asana Triage", cron: "0 8 * * 1-5", display: "08:00 weekdays", done: true },
-  { label: "Hermes Curator", cron: "0 0 * * 0", display: "Sun 00:00", done: false },
-];
-
-// Cost sparkline — tiny SVG placeholder
+// Cost sparkline — tiny SVG placeholder (Phase 3 — full rate-limit sparkline via RateLimitsPanel)
 function CostSparkline() {
-  // 7 data points, normalized to a 0-1 scale (week Mon-Sun)
   const points = [0.32, 0.61, 0.44, 0.88, 0.42, 1.2, 0.73];
   const max = Math.max(...points);
   const width = 80;
@@ -52,16 +45,12 @@ function CostSparkline() {
   );
 }
 
-export function MetricsSidebar({ filteredRuns, filterActive }: MetricsSidebarProps) {
-  // Metrics always show totals from all fixtures
-  const allRuns = RUN_FIXTURES;
-  const totalCost = allRuns.reduce((acc, r) => acc + r.cost, 0);
-  const hermesCost = allRuns
-    .filter((r) => r.lane === "hermes")
-    .reduce((acc, r) => acc + r.cost, 0);
-  const sandcastleCost = allRuns
-    .filter((r) => r.lane === "sandcastle")
-    .reduce((acc, r) => acc + r.cost, 0);
+export function MetricsSidebar({ filterActive, filteredCount }: MetricsSidebarProps) {
+  const { data: runs } = useRunFeed({ limit: 100 });
+  const { data: schedules } = useHermesCron();
+
+  const allRuns = runs ?? [];
+  const totalCost = allRuns.reduce((acc, r) => acc + (r.costUsd ?? 0), 0);
 
   return (
     <aside
@@ -75,12 +64,12 @@ export function MetricsSidebar({ filteredRuns, filterActive }: MetricsSidebarPro
           style={{ color: "var(--text-muted)" }}
         >
           Metrics — today
-          {filterActive && (
+          {filterActive && filteredCount !== undefined && (
             <span
               className="ml-1.5 font-normal normal-case"
               style={{ color: "var(--accent-plum-400)" }}
             >
-              (filtered: {filteredRuns.length} shown)
+              (filtered: {filteredCount} shown)
             </span>
           )}
         </p>
@@ -116,26 +105,7 @@ export function MetricsSidebar({ filteredRuns, filterActive }: MetricsSidebarPro
                 fontFamily: "var(--font-jetbrains-mono, monospace)",
               }}
             >
-              ${hermesCost.toFixed(2)}
-            </dd>
-          </div>
-          <div className="flex justify-between items-baseline">
-            <dt className="text-xs flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
-              <span
-                className="inline-block w-1.5 h-1.5 rounded-full"
-                style={{ background: "var(--lane-sandcastle)" }}
-                aria-label="Sandcastle lane"
-              />
-              Sandcastle
-            </dt>
-            <dd
-              className="text-xs"
-              style={{
-                color: "var(--text-secondary)",
-                fontFamily: "var(--font-jetbrains-mono, monospace)",
-              }}
-            >
-              ${sandcastleCost.toFixed(2)}
+              ${totalCost.toFixed(2)}
             </dd>
           </div>
         </dl>
@@ -154,11 +124,11 @@ export function MetricsSidebar({ filteredRuns, filterActive }: MetricsSidebarPro
           className="mt-1.5 text-[11px]"
           style={{ color: "var(--text-muted)" }}
         >
-          Full charts in Phase 2
+          Full charts coming in Phase 4.
         </p>
       </section>
 
-      {/* Schedule panel */}
+      {/* Schedule panel — wired to useHermesCron */}
       <section>
         <p
           className="text-[11px] font-semibold uppercase tracking-widest mb-3"
@@ -166,35 +136,46 @@ export function MetricsSidebar({ filteredRuns, filterActive }: MetricsSidebarPro
         >
           Schedule — next runs
         </p>
-        <ul className="flex flex-col gap-2">
-          {SCHEDULE.map((item) => (
-            <li key={item.cron} className="flex items-center justify-between gap-2">
-              <span className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>
-                {item.label}
-              </span>
-              <span
-                className="shrink-0 text-[11px]"
-                style={{ color: "var(--text-muted)" }}
-              >
-                {item.display}{" "}
-                {item.done ? (
-                  <span style={{ color: "var(--success)" }}>✓</span>
-                ) : (
-                  <span style={{ color: "var(--text-muted)" }}>◌</span>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <button
-          type="button"
-          className="mt-3 text-xs underline transition-colors"
+        {schedules && schedules.length > 0 ? (
+          <ul className="flex flex-col gap-2">
+            {schedules.map((item) => (
+              <li key={item.id} className="flex items-center justify-between gap-2">
+                <span className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>
+                  {item.skillId}
+                </span>
+                <span
+                  className="shrink-0 text-[11px]"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  {item.nextRunAt
+                    ? new Date(item.nextRunAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                    : "—"}
+                  {" "}
+                  <span style={{ color: item.enabled ? "var(--success)" : "var(--text-muted)" }}>
+                    {item.enabled ? "●" : "○"}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            No schedules configured.
+          </p>
+        )}
+        <Link
+          href="/observability/schedules"
+          className="mt-3 text-xs underline transition-colors inline-block"
           style={{ color: "var(--accent-plum-400)" }}
-          onClick={() => {}}
         >
           Manage schedules →
-        </button>
+        </Link>
       </section>
+
+      {/* Rate limits panel */}
+      <div className="mt-6">
+        <RateLimitsPanel />
+      </div>
     </aside>
   );
 }
