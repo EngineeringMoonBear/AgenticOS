@@ -12,6 +12,15 @@ resource "digitalocean_app" "dashboard" {
     name   = "agenticos-dashboard"
     region = var.do_region
 
+    # Custom domain so App Platform serves traffic for the Cloudflare-proxied
+    # hostname. Without this, App Platform would reject requests with this
+    # Host header. Domain ownership is verified via the Cloudflare CNAME that
+    # already exists (see cloudflare-dns.tf).
+    domain {
+      name = var.domain
+      type = "PRIMARY"
+    }
+
     service {
       name               = "dashboard"
       instance_count     = 1
