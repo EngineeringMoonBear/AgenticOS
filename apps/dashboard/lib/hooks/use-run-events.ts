@@ -1,17 +1,24 @@
 "use client";
 import { useEffect, useState } from "react";
-import type { HermesEvent } from "@agenticos/hermes-client";
+
+// Local event shape — server-side streaming was Hermes-only.
+// Kept as a stub until Claude Code event streaming is wired in a future task.
+export interface RunEvent {
+  ts: string;
+  kind: string;
+  payload: unknown;
+}
 
 export function useRunEvents(runId: string | null) {
-  const [events, setEvents] = useState<HermesEvent[]>([]);
+  const [events, setEvents] = useState<RunEvent[]>([]);
 
   useEffect(() => {
     if (!runId) return;
     setEvents([]);
-    const es = new EventSource(`/api/hermes/runs/${encodeURIComponent(runId)}/events`);
+    const es = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events`);
     es.onmessage = (msg) => {
       try {
-        const evt = JSON.parse(msg.data) as HermesEvent;
+        const evt = JSON.parse(msg.data) as RunEvent;
         setEvents((prev) => [...prev, evt]);
       } catch { /* drop malformed */ }
     };

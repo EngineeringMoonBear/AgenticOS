@@ -1,12 +1,24 @@
 "use client";
 import { useEffect, useState } from "react";
-import type { HermesRun, RunVitalSigns } from "@agenticos/hermes-client";
+import type { RunRecord } from "@/lib/agent";
 import { useRunEvents } from "./use-run-events";
 
 const DEFAULT_STALE_MS = 30_000;
 const CURATOR_STALE_MS = 300_000;
 
-export function useRunVitalSigns(run: HermesRun | null): RunVitalSigns | null {
+export interface RunVitalSigns {
+  runId: string;
+  state: RunRecord["status"];
+  lastEventAt: number;
+  toolCallCount: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  isStale: boolean;
+  throttledUntil?: string | undefined;
+}
+
+export function useRunVitalSigns(run: RunRecord | null): RunVitalSigns | null {
   const events = useRunEvents(run?.id ?? null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -18,7 +30,7 @@ export function useRunVitalSigns(run: HermesRun | null): RunVitalSigns | null {
 
   if (!run) return null;
 
-  const threshold = run.skillId === "curator" ? CURATOR_STALE_MS : DEFAULT_STALE_MS;
+  const threshold = run.agent === "curator" ? CURATOR_STALE_MS : DEFAULT_STALE_MS;
   const lastEventAt = events.length > 0
     ? new Date(events[events.length - 1]!.ts).getTime()
     : new Date(run.startedAt).getTime();
