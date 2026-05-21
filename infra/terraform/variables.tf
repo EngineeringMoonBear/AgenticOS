@@ -11,7 +11,7 @@ variable "tailscale_api_key" {
 }
 
 variable "tailscale_tailnet" {
-  description = "Tailscale Tailnet ID — copy from https://login.tailscale.com/admin/general 'Tailnet ID' field. The API-documented identifier per https://tailscale.com/docs/concepts/tailnet-name (email/domain Legacy IDs are deprecated)."
+  description = "Tailscale tailnet identifier accepted in REST API URL paths. Use your Tailnet NAME (domain-style, e.g. 'goldberrygrove.farm') from https://login.tailscale.com/admin/general — NOT the separate 'Tailnet ID' field on that page, which the REST API doesn't accept. Alternative: literal '-' for the API-key-wildcard."
   type        = string
 }
 

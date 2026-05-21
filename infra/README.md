@@ -60,10 +60,15 @@ ssh-keygen -t ed25519 -f ~/.ssh/agenticos-droplet -C "agenticos-droplet"
 **Tailscale**:
 - API key: <https://login.tailscale.com/admin/settings/keys> → Generate API key.
   Scope: `auth_keys:write`. Save as `tailscale_api_key`.
-- Tailnet ID: <https://login.tailscale.com/admin/general> → copy the **Tailnet ID** field.
-  Save as `tailscale_tailnet`. This is the documented API identifier per
-  <https://tailscale.com/docs/concepts/tailnet-name>. (Earlier Tailscale API usage
-  accepted email/domain-style "Legacy IDs"; those are deprecated and return 404.)
+- Tailnet identifier (save as `tailscale_tailnet`): use one of:
+  - **Your tailnet name** (recommended) — the domain-style or email-shaped string
+    Tailscale assigned. For Goldberry Grove that's `goldberrygrove.farm`.
+    Find it at <https://login.tailscale.com/admin/general> under "Tailnet name"
+    (NOT "Tailnet ID" — that's a different value the REST API does not accept
+    in URL paths, despite what the concepts doc implies).
+  - **Literal `-`** — wildcard meaning "the tailnet of the API key." Works
+    universally; less explicit in logs.
+  - Verify either value works by running `bash infra/scripts/check-auth.sh`.
 
 **Cloudflare** (Profile → API Tokens → Create Token → Custom token):
 - Permissions:
@@ -91,7 +96,7 @@ bash infra/scripts/setup-secrets-1password.sh
 op item edit "AgenticOS Infra" --vault "Goldberry Grove - Admin" \
     do_token="dop_v1_..." \
     tailscale_api_key="tskey-api-..." \
-    tailscale_tailnet="<paste-tailnet-id-from-admin-general-page>" \
+    tailscale_tailnet="goldberrygrove.farm" \
     cloudflare_api_token="..." \
     cloudflare_zone_id="..." \
     cloudflare_account_id="..."
