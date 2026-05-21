@@ -24,7 +24,12 @@ resource "digitalocean_app" "dashboard" {
       # (b) npm doesn't understand pnpm's "workspace:*" dependency syntax.
       # The build_command then filters down to just the dashboard.
       source_dir         = "/"
-      build_command      = "pnpm install --frozen-lockfile && pnpm --filter @agenticos/dashboard build"
+      # --prod=false forces pnpm to install devDependencies even when
+      # NODE_ENV=production is set somewhere upstream. Next.js builds need
+      # @tailwindcss/postcss, TypeScript, @agenticos/tsconfig, etc. — all
+      # devDeps. Without this flag pnpm skips them and the build fails with
+      # "Cannot find module '@tailwindcss/postcss'" + tsconfig resolution errors.
+      build_command      = "pnpm install --frozen-lockfile --prod=false && pnpm --filter @agenticos/dashboard build"
       run_command        = "pnpm --filter @agenticos/dashboard start"
 
       github {
@@ -41,8 +46,12 @@ resource "digitalocean_app" "dashboard" {
 
       env {
         key   = "NODE_ENV"
+        # RUN_TIME scope only — NOT RUN_AND_BUILD_TIME. At BUILD time we
+        # need devDependencies (TS, postcss plugins, workspace tsconfig)
+        # which pnpm skips when NODE_ENV=production is set during install.
+        # Next.js itself reads NODE_ENV at runtime to enable production mode.
         value = "production"
-        scope = "RUN_AND_BUILD_TIME"
+        scope = "RUN_TIME"
       }
     }
   }
