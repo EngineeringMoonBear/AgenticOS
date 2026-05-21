@@ -59,8 +59,12 @@ ssh-keygen -t ed25519 -f ~/.ssh/agenticos-droplet -C "agenticos-droplet"
 
 **Tailscale** (<https://login.tailscale.com/admin/settings/keys> → Generate API key):
 - Scope: `auth_keys:write`
-- Note your tailnet name (the email-shaped string at the top of the admin)
-- Save as `tailscale_api_key` and `tailscale_tailnet`
+- Save as `tailscale_api_key`
+- For `tailscale_tailnet`: use the literal `-` (single hyphen). Tailscale's API
+  treats this as "the tailnet that owns this API key," which always works and
+  doesn't need updating if you rename the account. Alternative: your actual
+  tailnet name (the email-shaped or domain-shaped string at the top of
+  login.tailscale.com/admin).
 
 **Cloudflare** (Profile → API Tokens → Create Token → Custom token):
 - Permissions:
@@ -88,7 +92,7 @@ bash infra/scripts/setup-secrets-1password.sh
 op item edit "AgenticOS Infra" --vault "Goldberry Grove - Admin" \
     do_token="dop_v1_..." \
     tailscale_api_key="tskey-api-..." \
-    tailscale_tailnet="josh@goldberrygrove.farm" \
+    tailscale_tailnet="-" \
     cloudflare_api_token="..." \
     cloudflare_zone_id="..." \
     cloudflare_account_id="..."

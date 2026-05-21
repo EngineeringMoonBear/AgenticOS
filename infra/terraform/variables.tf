@@ -11,8 +11,9 @@ variable "tailscale_api_key" {
 }
 
 variable "tailscale_tailnet" {
-  description = "Tailscale tailnet name (e.g. josh@goldberrygrove.farm)"
+  description = "Tailscale tailnet identifier. Use '-' for 'tailnet of the API key' (recommended), or your tailnet name from top of login.tailscale.com/admin (e.g. josh@goldberrygrove.farm or goldberrygrove.farm)."
   type        = string
+  default     = "-"
 }
 
 variable "cloudflare_api_token" {
