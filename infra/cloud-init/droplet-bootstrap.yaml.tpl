@@ -99,7 +99,22 @@ runcmd:
   - npm install -g pnpm@9.15.4
 
   # --- Claude Code (OAuth login is a manual one-time step after this) ---
+  # Two-step install:
+  #   1. npm install -g (as root): bootstraps the CLI so we can run `claude install`
+  #   2. `claude install` (as deploy user): relocates to native user-space install
+  #      at ~/.claude/local/claude.  This makes the deploy user the owner of the
+  #      binary, so auto-updates work without sudo and `claude doctor` stops
+  #      warning about insufficient update permissions on every invocation.
+  #      Without step 2: deploy user can run claude but can't self-update.
   - npm install -g @anthropic-ai/claude-code
+  - sudo -iu deploy bash -c 'claude install latest </dev/null' || true
+  # Ensure ~/.claude/local is on deploy's PATH (claude install adds it but
+  # cloud-init's bash session won't see the rc-file change without explicit help)
+  - |
+    if ! sudo -iu deploy grep -q '\.claude/local' /home/deploy/.bashrc 2>/dev/null; then
+      echo 'export PATH="$HOME/.claude/local:$PATH"' >> /home/deploy/.bashrc
+      chown deploy:deploy /home/deploy/.bashrc
+    fi
 
   # --- Filesystem layout ---
   - mkdir -p /opt/agenticos /opt/vault /opt/backups /var/log/agenticos /etc/agenticos
