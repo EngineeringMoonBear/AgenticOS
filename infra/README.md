@@ -70,6 +70,66 @@ ssh-keygen -t ed25519 -f ~/.ssh/agenticos-droplet -C "agenticos-droplet"
 - Save as `cloudflare_api_token`
 - From the zone Overview page sidebar, copy the **Zone ID** and **Account ID**
 
+### 3a. Store the tokens — pick ONE path
+
+#### Path A: 1Password CLI (recommended)
+
+The tokens live as a single 1Password item (`AgenticOS Infra`). Nothing on disk in plaintext; `terraform apply` reads them at runtime via `op read`.
+
+```bash
+# One-time setup
+brew install --cask 1password-cli   # if not already installed
+op signin                            # or biometric-unlock the app
+
+# Create the item with placeholder fields
+bash infra/scripts/setup-secrets-1password.sh
+
+# Fill in real values — either via the 1Password app or via CLI:
+op item edit "AgenticOS Infra" --vault "Personal" \
+    do_token="dop_v1_..." \
+    tailscale_api_key="tskey-api-..." \
+    tailscale_tailnet="josh@goldberrygrove.farm" \
+    cloudflare_api_token="..." \
+    cloudflare_zone_id="..." \
+    cloudflare_account_id="..."
+
+# Verify the loader picks them up
+source infra/scripts/load-secrets.sh
+# Expected: "✓ Loaded AgenticOS infra secrets from 1Password (vault: Personal)"
+```
+
+If your secrets live in a different vault, set `AGENTICOS_OP_VAULT=Work` (or whatever) before running.
+
+#### Path B: plaintext `.env` fallback
+
+Use this only if 1Password CLI isn't an option (CI runner, fresh VM).
+
+```bash
+mkdir -p ~/.config/agenticos
+cp infra/secrets.env.example ~/.config/agenticos/infra.env
+chmod 600 ~/.config/agenticos/infra.env
+# edit ~/.config/agenticos/infra.env with real values
+
+# Verify the loader picks them up
+source infra/scripts/load-secrets.sh
+# Expected: "✓ Loaded AgenticOS infra secrets from /Users/.../.config/agenticos/infra.env"
+```
+
+The loader refuses to load this file if its permissions are not `600` or `400`.
+
+#### Ergonomic glue: direnv (optional but nice)
+
+```bash
+brew install direnv
+# Add to ~/.zshrc or ~/.bashrc: eval "$(direnv hook zsh)"  (or bash)
+
+cd infra/terraform
+direnv allow            # one-time approval
+# From now on, cd-ing into infra/terraform auto-loads secrets via .envrc
+```
+
+Without direnv, you'll `source infra/scripts/load-secrets.sh` once per shell session before running `terraform`.
+
 ### 4. One-time Cloudflare prep (manual, can't be Terraformed)
 
 Configure Google as an Identity Provider in Cloudflare Zero Trust:
@@ -95,15 +155,29 @@ Save. Without this, `terraform apply` will fail with `tag not allowed`.
 
 ## Apply
 
+If you set up secrets via Path A (1Password) or Path B (`.env`), Terraform reads them from `TF_VAR_*` env vars — no `terraform.tfvars` file needed.
+
 ```bash
 cd infra/terraform
-cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars and fill in the five token/ID values
+
+# Load secrets (skip this line if direnv is set up — it loads automatically)
+source ../scripts/load-secrets.sh
 
 terraform init
 terraform plan      # review
 terraform apply     # ~3-5 minutes; Droplet cloud-init continues for another ~3-5 min after
 ```
+
+If you'd rather use a `terraform.tfvars` file (less secure — plaintext on disk):
+
+```bash
+cp terraform.tfvars.example terraform.tfvars
+chmod 600 terraform.tfvars
+# edit with values
+terraform apply
+```
+
+`terraform.tfvars` is gitignored so it won't accidentally land in the repo.
 
 Watch the Droplet finish bootstrapping:
 
