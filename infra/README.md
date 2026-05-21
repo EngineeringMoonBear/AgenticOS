@@ -140,13 +140,38 @@ Without direnv, you'll `source infra/scripts/load-secrets.sh` once per shell ses
 
 ### 4. One-time Cloudflare prep (manual, can't be Terraformed)
 
-Configure Google as an Identity Provider in Cloudflare Zero Trust:
+Configure Google as an Identity Provider in Cloudflare Zero Trust. This is
+a two-system setup (Google Cloud creates the OAuth client, Cloudflare uses it).
 
-1. Zero Trust dashboard → **Settings** → **Authentication** → **Login methods**
-2. **Add new** → **Google** → follow the OAuth setup wizard
-3. Name it exactly `Google` (the Terraform code looks it up by that name)
+**4a. Find your Cloudflare team domain** (needed for the OAuth callback URL):
+1. <https://dash.cloudflare.com/> → **Zero Trust** in the left sidebar
+2. **Settings** (bottom of left sidebar) → **Team name and domain**
+3. Your team domain is `<team-name>.cloudflareaccess.com`
+4. The OAuth callback URL is `https://<team-name>.cloudflareaccess.com/cdn-cgi/access/callback`
 
-Docs: <https://developers.cloudflare.com/cloudflare-one/identity/idp-integration/google/>
+**4b. Create a Google OAuth Client** (<https://console.cloud.google.com>):
+1. Create or select a project (e.g., `AgenticOS Auth`)
+2. **APIs & Services** → **OAuth consent screen**:
+   - User type: **Internal** (if you have Google Workspace — recommended) or **External**
+   - Fill in app name (`AgenticOS via Cloudflare`), support email, developer email
+   - Default scopes are fine
+3. **APIs & Services** → **Credentials** → **+ Create Credentials** → **OAuth client ID**:
+   - Application type: **Web application**
+   - Name: `Cloudflare Zero Trust Access`
+   - Authorized redirect URIs: paste the callback URL from §4a
+4. Copy the **Client ID** and **Client Secret** that pop up
+
+**4c. Add Google IdP in Cloudflare:**
+1. <https://dash.cloudflare.com/> → **Zero Trust** → **Integrations** → **Identity providers**
+2. **Add new identity provider** → select **Google**
+3. Fill in:
+   - **Name**: `Google` (exact, capital G — the Terraform `data` block looks it up by name)
+   - **App ID**: paste Google Client ID
+   - **Client secret**: paste Google Client Secret
+4. **Save**
+5. Test via the `…` menu on the new IdP row → "Test" → sign in with `josh@goldberrygrove.farm`
+
+Docs: <https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/google/>
 
 ### 5. One-time Tailscale prep (manual)
 
