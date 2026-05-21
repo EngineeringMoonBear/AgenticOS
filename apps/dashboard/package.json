@@ -13,10 +13,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@agenticos/hermes-client": "workspace:*",
     "@agenticos/vault-core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "eventsource-parser": "^3.0.0",
     "node-cron": "^3.0.3",
     "@anthropic-ai/sdk": "^0.96.0",
     "@base-ui/react": "^1.4.1",

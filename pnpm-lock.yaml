@@ -18,9 +18,6 @@ importers:
 
   apps/dashboard:
     dependencies:
-      '@agenticos/hermes-client':
-        specifier: workspace:*
-        version: link:../../packages/hermes-client
       '@agenticos/vault-core':
         specifier: workspace:*
         version: link:../../packages/vault-core
@@ -48,9 +45,6 @@ importers:
       cmdk:
         specifier: ^1.0.4
         version: 1.1.1(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-      eventsource-parser:
-        specifier: ^3.0.0
-        version: 3.0.8
       lucide-react:
         specifier: ^1.16.0
         version: 1.16.0(react@19.2.6)
@@ -180,31 +174,6 @@ importers:
         version: 16.2.6(@typescript-eslint/parser@8.59.4(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3))(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3)
 
   packages/config/tsconfig: {}
-
-  packages/hermes-client:
-    dependencies:
-      eventsource-parser:
-        specifier: ^3.0.0
-        version: 3.0.8
-      server-only:
-        specifier: ^0.0.1
-        version: 0.0.1
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@agenticos/tsconfig':
-        specifier: workspace:*
-        version: link:../config/tsconfig
-      '@types/node':
-        specifier: ^25
-        version: 25.9.0
-      typescript:
-        specifier: ^6
-        version: 6.0.3
-      vitest:
-        specifier: ^4.1.6
-        version: 4.1.6(@types/node@25.9.0)(jsdom@29.1.1(@noble/hashes@1.8.0))(msw@2.14.6(@types/node@25.9.0)(typescript@6.0.3))(vite@8.0.13(@types/node@25.9.0)(esbuild@0.28.0)(jiti@2.7.0)(yaml@2.9.0))
 
   packages/vault-core:
     dependencies:
