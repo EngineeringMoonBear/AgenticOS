@@ -17,9 +17,15 @@ resource "digitalocean_app" "dashboard" {
       instance_count     = 1
       instance_size_slug = "basic-xxs"
       http_port          = 3000
-      source_dir         = "apps/dashboard"
-      build_command      = "cd ../.. && pnpm install --frozen-lockfile && pnpm --filter @agenticos/dashboard build"
-      run_command        = "cd ../.. && pnpm --filter @agenticos/dashboard start"
+      # source_dir = "/" (repo root) is required so App Platform's buildpack
+      # finds the root pnpm-lock.yaml and uses pnpm. Setting source_dir to a
+      # subdirectory makes the buildpack treat that subdir as the project root,
+      # which: (a) doesn't find pnpm-lock.yaml and falls back to npm, and
+      # (b) npm doesn't understand pnpm's "workspace:*" dependency syntax.
+      # The build_command then filters down to just the dashboard.
+      source_dir         = "/"
+      build_command      = "pnpm install --frozen-lockfile && pnpm --filter @agenticos/dashboard build"
+      run_command        = "pnpm --filter @agenticos/dashboard start"
 
       github {
         repo           = var.github_repo
