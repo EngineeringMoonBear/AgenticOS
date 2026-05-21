@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useRunFeed } from "@/lib/hooks/use-run-feed";
@@ -11,9 +12,25 @@ function formatElapsed(ms: number | undefined): string {
   return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
 }
 
+/**
+ * Returns a stable "now" timestamp that ticks every `intervalMs`.
+ * Reading `Date.now()` inside render violates React 19 purity rules; this
+ * hook moves the clock read into an effect so the rendered value is stable
+ * within a render pass and only updates on the tick interval.
+ */
+function useTick(intervalMs: number): number {
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
 export function LiveRunsStrip() {
   const { data: runs } = useRunFeed({ status: "running" });
   const liveRuns = (runs ?? []).slice(0, 3);
+  const now = useTick(1000);
 
   if (liveRuns.length === 0) return null;
 
@@ -49,7 +66,7 @@ export function LiveRunsStrip() {
             {formatElapsed(
               run.endedAt
                 ? new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()
-                : Date.now() - new Date(run.startedAt).getTime(),
+                : now - new Date(run.startedAt).getTime(),
             )}
           </span>
           <span style={{ color: "var(--text-muted)" }}>▸</span>
