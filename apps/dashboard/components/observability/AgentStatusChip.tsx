@@ -1,13 +1,14 @@
 "use client";
-import { useHermesHealth } from "@/lib/hooks/use-hermes-health";
+import { useAgentHealth } from "@/lib/hooks/use-agent-health";
 
-export function HermesStatusChip() {
-  const { data } = useHermesHealth();
-  const online = data?.status === "ok" || data?.status === "degraded";
+export function AgentStatusChip() {
+  const { data } = useAgentHealth();
+  const online = data?.status === "ok";
   const dotColor = online ? "var(--lane-hermes, #4db6ac)" : "var(--text-muted, #6b6157)";
+  const latency = data?.honcho?.latencyMs;
   const label = online
-    ? `Hermes v${data!.version} · ${data!.activeRuns} active`
-    : "Hermes offline — run `hermes serve` to start";
+    ? `Agent online · Honcho ${latency ?? "?"}ms`
+    : "Agent degraded — check Honcho connection";
   return (
     <span
       className="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs rounded-sm"
@@ -19,7 +20,7 @@ export function HermesStatusChip() {
         style={{ background: dotColor }}
         aria-hidden
       />
-      HERMES
+      AGENT
     </span>
   );
 }

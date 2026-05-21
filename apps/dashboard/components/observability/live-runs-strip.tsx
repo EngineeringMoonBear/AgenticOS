@@ -44,9 +44,13 @@ export function LiveRunsStrip() {
           }}
         >
           <RefreshCw size={12} strokeWidth={1.5} style={{ color: "var(--lane-hermes)" }} />
-          <span style={{ color: "var(--text-secondary)" }}>{run.skillId}</span>
+          <span style={{ color: "var(--text-secondary)" }}>{run.agent}</span>
           <span style={{ color: "var(--text-muted)" }}>
-            {formatElapsed(run.durationMs)}
+            {formatElapsed(
+              run.endedAt
+                ? new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()
+                : Date.now() - new Date(run.startedAt).getTime(),
+            )}
           </span>
           <span style={{ color: "var(--text-muted)" }}>▸</span>
         </Link>

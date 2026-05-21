@@ -151,7 +151,7 @@ export function CommandPalette() {
           {(recentRuns ?? []).slice(0, 5).map((run) => (
             <CommandItem
               key={run.id}
-              value={`run ${run.skillId} ${run.status} ${run.tags.join(" ")}`}
+              value={`run ${run.agent} ${run.status} ${((run as { tags?: string[] }).tags ?? []).join(" ")}`}
               onSelect={() => handleRunNavigate(run.id)}
               className="gap-2.5"
             >
@@ -162,7 +162,7 @@ export function CommandPalette() {
                 aria-hidden="true"
               />
               <span className="flex flex-col min-w-0">
-                <span className="text-sm font-medium truncate">{run.skillId}</span>
+                <span className="text-sm font-medium truncate">{run.agent}</span>
                 <span
                   className="text-xs"
                   style={{ color: "var(--text-muted)" }}

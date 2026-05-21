@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import type { ScheduleRecord } from "@agenticos/hermes-client";
+import type { ScheduleRecord } from "@/lib/scheduler/types";
 
 export function ScheduleEditDrawer({
   record,
@@ -25,8 +25,8 @@ export function ScheduleEditDrawer({
     setError(null);
     try {
       const url = isNew
-        ? "/api/hermes/cron"
-        : `/api/hermes/cron/${encodeURIComponent(record!.id)}`;
+        ? "/api/cron"
+        : `/api/cron/${encodeURIComponent(record!.id)}`;
       const method = isNew ? "POST" : "PUT";
       const body = isNew
         ? { id, skillId, schedule, enabled, stalenessThresholdMs: threshold }
@@ -52,7 +52,7 @@ export function ScheduleEditDrawer({
     if (!confirm(`Delete schedule "${record.id}"?`)) return;
     setSaving(true);
     try {
-      await fetch(`/api/hermes/cron/${encodeURIComponent(record.id)}`, { method: "DELETE" });
+      await fetch(`/api/cron/${encodeURIComponent(record.id)}`, { method: "DELETE" });
       onSaved();
     } finally {
       setSaving(false);

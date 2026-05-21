@@ -1,76 +1,85 @@
 "use client";
-import { useState } from "react";
-import { useLimits } from "@/lib/hooks/use-limits";
-import { SparklineSvg } from "./SparklineSvg";
+import { useQuery } from "@tanstack/react-query";
 
-function minutesUntil(iso: string): string {
-  const ms = new Date(iso).getTime() - Date.now();
-  if (ms < 0) return "now";
-  const m = Math.floor(ms / 60_000);
-  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+interface Run {
+  id: string;
+  agent: string;
+  status: string;
+  startedAt: string;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
 }
 
-function barColor(fraction: number): string {
-  if (fraction > 0.95) return "var(--error, #f87171)";
-  if (fraction > 0.80) return "var(--accent-gold-400, #c9a227)";
-  return "var(--lane-hermes, #4db6ac)";
+interface QuotaView {
+  windowStart: string;
+  windowEnd: string;
+  totalCostUsd: number;
+  totalTokens: number;
+  runCount: number;
+  // Max quota is roughly ~50 messages per 5h window (Claude Code 5x Pro)
+  estimatedQuotaUsedPct: number;
+}
+
+const MAX_QUOTA_MESSAGES_5H = 50;
+
+function computeQuota(runs: Run[]): QuotaView {
+  const now = new Date();
+  const windowMs = 5 * 60 * 60 * 1000;
+  const windowStart = new Date(now.getTime() - windowMs);
+  const recent = runs.filter((r) => new Date(r.startedAt) >= windowStart);
+  const totalCostUsd = recent.reduce((acc, r) => acc + r.costUsd, 0);
+  const totalTokens = recent.reduce((acc, r) => acc + r.inputTokens + r.outputTokens, 0);
+  return {
+    windowStart: windowStart.toISOString(),
+    windowEnd: now.toISOString(),
+    totalCostUsd,
+    totalTokens,
+    runCount: recent.length,
+    estimatedQuotaUsedPct: Math.min(100, (recent.length / MAX_QUOTA_MESSAGES_5H) * 100),
+  };
 }
 
 export function RateLimitsPanel() {
-  const [expanded, setExpanded] = useState(false);
-  const { data, isLoading } = useLimits();
+  const { data, isLoading } = useQuery<{ runs: Run[] }>({
+    queryKey: ["agent", "runs", "for-quota"],
+    queryFn: async () => {
+      const res = await fetch("/api/agent/runs?limit=100");
+      if (!res.ok) throw new Error("failed");
+      return res.json();
+    },
+    refetchInterval: 60_000,
+  });
 
-  if (isLoading) {
-    return <div className="text-xs text-muted">Loading rate limits…</div>;
-  }
-  if (!data?.current) {
-    return (
-      <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-        No data yet — headers not available from this Hermes version.
-      </div>
-    );
-  }
+  if (isLoading) return <div className="p-4 text-sm text-muted-foreground">Loading…</div>;
+  if (!data) return null;
 
-  const { requests, tokens } = data.current;
-  const requestsUsed = 1 - requests.remaining / requests.limit;
-  const tokensUsed   = 1 - tokens.remaining / tokens.limit;
+  const quota = computeQuota(data.runs);
 
   return (
-    <section className="space-y-2">
-      <header className="text-[11px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-        Rate Limits
-      </header>
-      <div className="space-y-1.5">
-        <Row label="Requests" used={requestsUsed} resetIn={minutesUntil(requests.resetAt)} />
-        {expanded && <SparklineSvg history={data.history} field="remainingRequests" limitField="limitRequests" />}
-        <Row label="Tokens"   used={tokensUsed}   resetIn={minutesUntil(tokens.resetAt)} />
-        {expanded && <SparklineSvg history={data.history} field="remainingTokens" limitField="limitTokens" />}
+    <div className="p-4 space-y-3 border rounded-md">
+      <h3 className="text-sm font-medium">Claude Max quota (last 5h)</h3>
+      <div className="space-y-2">
+        <div className="text-xs text-muted-foreground">
+          {quota.runCount}/{MAX_QUOTA_MESSAGES_5H} messages
+        </div>
+        <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-primary transition-all"
+            style={{ width: `${quota.estimatedQuotaUsedPct}%` }}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs pt-2">
+          <div>
+            <div className="text-muted-foreground">Cost</div>
+            <div className="font-mono">${quota.totalCostUsd.toFixed(3)}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Tokens</div>
+            <div className="font-mono">{quota.totalTokens.toLocaleString()}</div>
+          </div>
+        </div>
       </div>
-      <button
-        onClick={() => setExpanded((e) => !e)}
-        className="text-xs underline"
-        style={{ color: "var(--text-muted)" }}
-      >
-        {expanded ? "Hide history" : "Show history"}
-      </button>
-    </section>
-  );
-}
-
-function Row({ label, used, resetIn }: { label: string; used: number; resetIn: string }) {
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      <span className="w-20" style={{ color: "var(--text-muted)" }}>{label}</span>
-      <div className="flex-1 h-2 rounded-sm" style={{ background: "var(--surface, #1a1714)" }}>
-        <div
-          className="h-2 rounded-sm"
-          style={{ width: `${used * 100}%`, background: barColor(used) }}
-        />
-      </div>
-      <span className="w-12 text-right" style={{ color: "var(--text-muted)" }}>
-        {(used * 100).toFixed(0)}%
-      </span>
-      <span className="w-16" style={{ color: "var(--text-muted)" }}>{resetIn}</span>
     </div>
   );
 }

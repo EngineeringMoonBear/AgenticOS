@@ -3,9 +3,18 @@
 import { RefreshCw, MoreHorizontal } from "lucide-react";
 import Link from "next/link";
 import { useState, useEffect } from "react";
-import type { HermesRun } from "@agenticos/hermes-client";
+import type { RunRecord } from "@/lib/agent";
 import { useRunVitalSigns } from "@/lib/hooks/use-run-vital-signs";
 import { cn } from "@/lib/utils";
+
+// Run-card view-model — RunRecord plus optional UI metadata (tags, model, durationMs)
+// not yet captured in the canonical RunRecord schema.
+type Run = RunRecord & {
+  skillId?: string;
+  tags?: string[];
+  model?: string;
+  durationMs?: number;
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -28,7 +37,7 @@ function StatusChip({
   vitals,
   nowMs,
 }: {
-  run: HermesRun;
+  run: Run;
   vitals: ReturnType<typeof useRunVitalSigns>;
   nowMs: number;
 }) {
@@ -114,7 +123,7 @@ function StatusChip({
 // ── RunCard ───────────────────────────────────────────────────────────────────
 
 interface RunCardProps {
-  run: HermesRun;
+  run: Run;
 }
 
 export function RunCard({ run }: RunCardProps) {
@@ -173,12 +182,12 @@ export function RunCard({ run }: RunCardProps) {
             className="flex-1 min-w-0 truncate text-sm font-medium leading-5"
             style={{ color: "var(--text)" }}
           >
-            {run.skillId}
+            {run.skillId ?? run.agent}
           </span>
 
           {/* Tags */}
           <div className="flex items-center gap-1 shrink-0">
-            {run.tags.map((tag) => (
+            {(run.tags ?? []).map((tag: string) => (
               <span
                 key={tag}
                 className="rounded-sm px-1.5 py-px text-[11px] font-medium tracking-wide"

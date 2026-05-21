@@ -26,7 +26,9 @@ export function RunFeed({
   }
 
   const filteredRuns = filterActive && filterTags.length > 0
-    ? (runs ?? []).filter((run) => filterTags.every((tag) => run.tags.includes(tag)))
+    ? (runs ?? []).filter((run) =>
+        filterTags.every((tag) => ((run as { tags?: string[] }).tags ?? []).includes(tag)),
+      )
     : (runs ?? []);
 
   if (filteredRuns.length === 0) {

@@ -3,7 +3,7 @@ import { SlidersHorizontal } from "lucide-react";
 import { HeaderTabs } from "./header-tabs";
 import { PaletteTrigger } from "./palette-trigger";
 import { FilterChip } from "@/components/filter/filter-chip";
-import { HermesStatusChip } from "@/components/observability/HermesStatusChip";
+import { AgentStatusChip } from "@/components/observability/AgentStatusChip";
 
 /** AgenticOS logo mark — plum ring with gold inner dot at 2-o'clock position */
 function LogoMark() {
@@ -72,7 +72,7 @@ export function Header() {
         {/* Right: Hermes status + filter chip + command palette trigger + settings */}
         <div className="flex items-center gap-1 ml-4 shrink-0">
           {/* Hermes daemon status chip */}
-          <HermesStatusChip />
+          <AgentStatusChip />
 
           {/* Global filter chip */}
           <FilterChip />

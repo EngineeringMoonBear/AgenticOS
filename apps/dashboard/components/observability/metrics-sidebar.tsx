@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRunFeed } from "@/lib/hooks/use-run-feed";
-import { useHermesCron } from "@/lib/hooks/use-hermes-cron";
+import { useCron } from "@/lib/hooks/use-cron";
 import { RateLimitsPanel } from "./RateLimitsPanel";
 
 interface MetricsSidebarProps {
@@ -47,7 +47,7 @@ function CostSparkline() {
 
 export function MetricsSidebar({ filterActive, filteredCount }: MetricsSidebarProps) {
   const { data: runs } = useRunFeed({ limit: 100 });
-  const { data: schedules } = useHermesCron();
+  const { data: schedules } = useCron();
 
   const allRuns = runs ?? [];
   const totalCost = allRuns.reduce((acc, r) => acc + (r.costUsd ?? 0), 0);

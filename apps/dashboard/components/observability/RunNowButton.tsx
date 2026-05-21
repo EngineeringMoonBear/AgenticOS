@@ -9,7 +9,7 @@ export function RunNowButton({ scheduleId, onDispatch }: { scheduleId: string; o
     setPending(true);
     setError(null);
     try {
-      const res = await fetch(`/api/hermes/cron/${encodeURIComponent(scheduleId)}/run`, { method: "POST" });
+      const res = await fetch(`/api/cron/${encodeURIComponent(scheduleId)}/run`, { method: "POST" });
       if (!res.ok) {
         const json = await res.json().catch(() => ({ error: "Unknown error" }));
         setError(json.error ?? "Failed");
