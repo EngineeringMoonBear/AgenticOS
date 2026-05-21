@@ -4,11 +4,11 @@
 # Creates the 'AgenticOS Infra' item in 1Password with placeholder fields.
 # You fill in real values via the 1Password app or CLI afterward.
 #
-# Vault defaults to 'Personal'. Override with AGENTICOS_OP_VAULT=Work or similar.
+# Vault defaults to 'Goldberry Grove'. Override with AGENTICOS_OP_VAULT="My Vault".
 
 set -euo pipefail
 
-OP_VAULT="${AGENTICOS_OP_VAULT:-Personal}"
+OP_VAULT="${AGENTICOS_OP_VAULT:-Goldberry Grove}"
 OP_ITEM="AgenticOS Infra"
 
 if ! command -v op >/dev/null 2>&1; then
