@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars and fill in. Never commit terraform.tfvars.
+
+# DigitalOcean API token (DO Console → API → Tokens)
+# Scopes: read+write on droplets, vpc, ssh_keys, apps
+do_token = "dop_v1_..."
+
+# Tailscale API key (https://login.tailscale.com/admin/settings/keys)
+# Scopes: auth_keys:write
+tailscale_api_key = "tskey-api-..."
+tailscale_tailnet = "josh@goldberrygrove.farm"
+
+# Cloudflare (Profile → API Tokens; scopes: Zone:DNS:Edit + Account:Access:Edit + Account:Cloudflare Tunnel:Edit on this zone)
+cloudflare_api_token  = "..."
+cloudflare_zone_id    = "..." # zone Overview page → API section
+cloudflare_account_id = "..." # zone Overview page → API section
+
+# Optional overrides
+# do_region            = "nyc1"
+# droplet_size         = "s-2vcpu-4gb"
+# domain               = "agenticos.gatheringatthegrove.com"
+# google_sso_email     = "josh@goldberrygrove.farm"
+# ssh_public_key_path  = "~/.ssh/agenticos-droplet.pub"
+# github_repo          = "EngineeringMoonBear/AgenticOS"
+# github_branch        = "main"
