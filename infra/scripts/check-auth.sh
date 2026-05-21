@@ -124,7 +124,35 @@ http_get "https://api.cloudflare.com/client/v4/zones/$TF_VAR_cloudflare_zone_id"
 if [ "$HTTP_CODE" = "200" ]; then
     name="$(jq -r '.result.name' < "$BODY")"
     if [ "$name" = "gatheringatthegrove.com" ]; then
-        green "✓ Cloudflare zone access ok — $name"
+        green "✓ Cloudflare zone READ access ok — $name"
+
+        # Zone READ != Zone DNS EDIT. Probe write by creating + deleting a TXT record.
+        # Without this check we get a green check-auth followed by an exploding
+        # terraform apply (see commit history for the actual incident).
+        PROBE_NAME="_agenticos-permission-probe"
+        http_get "https://api.cloudflare.com/client/v4/zones/$TF_VAR_cloudflare_zone_id/dns_records" \
+            "Authorization: Bearer $TF_VAR_cloudflare_api_token" \
+            "Content-Type: application/json"
+        # http_get is GET; do POST manually for create-then-delete
+        write_resp="$(curl -sS -X POST \
+            -H "Authorization: Bearer $TF_VAR_cloudflare_api_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"type\":\"TXT\",\"name\":\"$PROBE_NAME\",\"content\":\"agenticos-probe\",\"ttl\":120}" \
+            "https://api.cloudflare.com/client/v4/zones/$TF_VAR_cloudflare_zone_id/dns_records")"
+        if echo "$write_resp" | grep -q '"success":true'; then
+            green "✓ Cloudflare zone DNS:Edit ok (write probe succeeded)"
+            probe_id="$(echo "$write_resp" | jq -r '.result.id')"
+            curl -sS -X DELETE \
+                -H "Authorization: Bearer $TF_VAR_cloudflare_api_token" \
+                "https://api.cloudflare.com/client/v4/zones/$TF_VAR_cloudflare_zone_id/dns_records/$probe_id" \
+                > /dev/null
+        else
+            red "✗ Cloudflare zone DNS:Edit missing — write probe failed"
+            echo "$write_resp" | head -3
+            echo "    Fix: token needs Zone:DNS:Edit, not just Zone:Read. Recreate at"
+            echo "    https://dash.cloudflare.com/profile/api-tokens"
+            FAILED=$((FAILED+1))
+        fi
     else
         yellow "⚠ Zone name is '$name' (expected gatheringatthegrove.com)"
         WARN=$((WARN+1))
