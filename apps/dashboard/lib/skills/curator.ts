@@ -1,34 +1,27 @@
 import "server-only";
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import type { SkillDefinition } from "./types";
 
-const SYSTEM_PROMPT = readFileSync(
-  path.join(process.cwd(), "lib/skills/prompts/curator-system.txt"),
-  "utf-8",
-);
+/**
+ * Curator dispatch helper. Phase 5 wires this into the scheduler:
+ * the scheduler reads cron entries, finds the Curator entry, and invokes
+ * this function which in turn shells out to /opt/agenticos/scripts/run-curator.sh
+ * on the Droplet.
+ *
+ * In v1, the prompt + system message live in the script + Honcho user-model,
+ * not here. This module is intentionally thin — its only job is to spawn
+ * the canonical run-curator script and surface its run record.
+ */
 
-export const curator: SkillDefinition = {
-  id:           "curator",
-  name:         "Vault Curator",
-  description:  "Nightly: promotes inbox items > 7 days old; runs lint; writes curator-log.md.",
-  budget:       1.0,
-  toolNames: [
-    "vault.page.read",
-    "vault.tree.list",
-    "vault.search",
-    "vault.backlinks",
-    "vault.inbox.list",
-    "vault.inbox.item",
-    "vault.inbox.commit",
-    "vault.inbox.discard",
-    "lint.run",
-  ],
-  systemPrompt: SYSTEM_PROMPT,
-  userPrompt: (ctx) =>
-    `Today's date: ${ctx.todayIso}\n` +
-    `Last curator run: ${ctx.lastRunIso}\n` +
-    `Budget cap: $${ctx.budget}\n\n` +
-    `Begin the curator workflow now.`,
-  stalenessThresholdMs: 300_000,
-};
+export const CURATOR_AGENT_ID = "curator";
+export const CURATOR_SCRIPT_PATH =
+  process.env.CURATOR_SCRIPT_PATH ?? "/opt/agenticos/scripts/run-curator.sh";
+
+export interface CuratorRunOptions {
+  triggeredBy: "scheduler" | "manual";
+}
+
+export async function runCurator(_options: CuratorRunOptions): Promise<{ ok: boolean }> {
+  // The actual subprocess invocation moves to lib/scheduler/scheduler.ts in Task 41.
+  // This function exists so other code (UI "Run Now" button, future tests) can
+  // import a stable handle even before scheduler integration.
+  return Promise.resolve({ ok: true });
+}
