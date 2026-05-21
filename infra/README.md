@@ -85,7 +85,7 @@ op signin                            # or biometric-unlock the app
 bash infra/scripts/setup-secrets-1password.sh
 
 # Fill in real values — either via the 1Password app or via CLI:
-op item edit "AgenticOS Infra" --vault "Goldberry Grove" \
+op item edit "AgenticOS Infra" --vault "Goldberry Grove - Admin" \
     do_token="dop_v1_..." \
     tailscale_api_key="tskey-api-..." \
     tailscale_tailnet="josh@goldberrygrove.farm" \
@@ -95,10 +95,10 @@ op item edit "AgenticOS Infra" --vault "Goldberry Grove" \
 
 # Verify the loader picks them up
 source infra/scripts/load-secrets.sh
-# Expected: "✓ Loaded AgenticOS infra secrets from 1Password (vault: Goldberry Grove)"
+# Expected: "✓ Loaded AgenticOS infra secrets from 1Password (vault: Goldberry Grove - Admin)"
 ```
 
-Default vault is `Goldberry Grove`. To use a different one: `export AGENTICOS_OP_VAULT="My Vault"` before running.
+Default vault is `Goldberry Grove - Admin`. To use a different one: `export AGENTICOS_OP_VAULT="My Vault"` before running.
 
 #### Path B: plaintext `.env` fallback
 

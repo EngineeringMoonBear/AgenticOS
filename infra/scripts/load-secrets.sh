@@ -18,7 +18,7 @@ _agenticos_secrets_loaded=false
 
 # ---- Tier 1: 1Password CLI ----
 _agenticos_load_1password() {
-    local op_vault="${AGENTICOS_OP_VAULT:-Goldberry Grove}"
+    local op_vault="${AGENTICOS_OP_VAULT:-Goldberry Grove - Admin}"
     local op_item="AgenticOS Infra"
 
     if ! command -v op >/dev/null 2>&1; then return 1; fi
