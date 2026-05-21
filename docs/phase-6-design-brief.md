@@ -1,8 +1,10 @@
 # Phase 6 — Polish, Brand Realization & Documentation: Design Brief
 
-**Status**: Brainstorming questionnaire — proposed answers included. Review + approve in one pass.
+> **⚠️ STALE (predates 2026-05-20 foundation v2 pivot):** Written assuming Phase 3 was Hermes-shaped and Phases 4-5 had shipped on top of it. The foundation v2 spec ([`docs/superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md`](superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md)) restructured the runtime + memory layer; the predecessors listed here are now v1 (Curator + observability), v2 (multi-agent fleet), and v3+ (domain connectors). The polish concepts (brand realization, doctor script, launchd supervision, animations) carry forward unchanged. **Don't treat predecessor assumptions here as current.**
+
+**Status**: Brainstorming questionnaire (2026-05-18) — stale; predecessor list needs revision against foundation v2 phase numbering
 **Owner**: AgenticOS — single-developer (Josh)
-**Predecessors required**: Phases 1–5 merged
+**Predecessors required**: v1 + v2 + v3+ shipped (under foundation v2 phase numbering)
 **Asana GIDs**: T1 `1214851299671674` · T2 `1214851272872957` · T3 `1214851152171000` · T4 `1214851272793011` · T5 `1214851152133576`
 
 ---

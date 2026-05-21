@@ -1,5 +1,7 @@
 # AgenticOS Information Architecture
 
+> **⚠️ PARTIALLY STALE (predates 2026-05-20 foundation v2 pivot):** Substantial portions of this IA were written against the Hermes + Sandcastle two-lane model that no longer applies. The foundation v2 spec ([`superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md`](superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md)) replaces both lanes with a single agent fleet (currently one Curator agent under Claude Code + Honcho). Concepts that **survive**: navigation, header layout, tab structure, vault wiki browser, command palette, project-root tagging, scheduler UI patterns, run feed layout (with "lane" stripe re-purposed as agent type indicator), settings page IA. Concepts that **need rewriting**: anywhere referring to "Hermes lane / Sandcastle lane" — these become agent identifiers; "Hermes Curator" becomes "Curator agent"; Sandcastle-specific tabs in the run drawer get deferred to v2. **Full IA rewrite happens during v1 dashboard wiring (foundation v2 Phase 6).** Until then, read this doc with that pivot in mind.
+
 ---
 
 ## 1. Global Shell & Navigation

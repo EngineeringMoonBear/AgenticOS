@@ -1,8 +1,10 @@
 # Phase 4 — Sandcastle Dispatch: Design Brief
 
-**Status**: Brainstorming questionnaire (2026-05-18) — review + approve before spec is written
+> **⚠️ STALE (predates 2026-05-20 foundation v2 pivot):** This brief was written when Phase 3 targeted Hermes Agent as runtime and Sandcastle was scoped as the next major build. The foundation v2 spec ([`superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md`](superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md)) defers multi-agent and Sandcastle-like parallel-coding-agent work to v2+. **Don't treat this brief as current scope.** When v1 ships and v2 brainstorming begins, this brief gets revisited: most concepts (ephemeral worktrees, parallel coding agents, hand-back-for-review pattern) carry forward; the Hermes/MCP integration assumptions need rewriting against Claude Code + Honcho.
+
+**Status**: Brainstorming questionnaire (2026-05-18) — stale; review against foundation v2 before re-scoping
 **Owner**: AgenticOS — single-developer (Josh)
-**Predecessors required**: Phase 3 (Hermes integration, MCP-to-vault binding, RunCard/SSE infrastructure, rate-limit observability) must be merged before Phase 4 begins.
+**Predecessors required**: Foundation v2 v1 (Curator + dashboard observability) must be merged before Phase 4 begins.
 
 ---
 

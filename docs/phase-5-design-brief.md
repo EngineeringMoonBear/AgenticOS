@@ -1,8 +1,10 @@
 # Phase 5 — Connector Plugin System: Design Brief
 
-**Status**: Brainstorming (2026-05-18)
+> **⚠️ STALE (predates 2026-05-20 foundation v2 pivot):** Written when connectors were planned on top of a Hermes-daemon + Sandcastle architecture. The foundation v2 spec ([`docs/superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md`](superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md)) reshapes the integration substrate: connectors will plug into the MCP-to-vault + Honcho composition, likely with a LAN-resident Raspberry Pi for domain devices (smart home, networking, farm IoT). The plugin-system concepts here largely carry forward; the Hermes/Sandcastle plumbing references need rewriting. **Don't treat this brief as current scope.**
+
+**Status**: Brainstorming (2026-05-18) — stale; re-scope against foundation v2 when v2 brainstorming begins
 **Owner**: AgenticOS — single-developer (Josh)
-**Predecessors required**: Phase 3 (Hermes daemon + MCP-to-vault binding); Phase 4 (skill abstraction)
+**Predecessors required**: Foundation v2 v1 (Curator + dashboard observability) merged; v2 multi-agent layer scoped.
 **Asana tasks**: T1 GID 1214851299454281, T2 GID 1214851299669089, T3 GID 1214851299690773, T4 GID 1214851403865054, T5 GID 1214851299735884, T6 GID 1214851415979429
 
 ---

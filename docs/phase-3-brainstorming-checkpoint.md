@@ -1,6 +1,8 @@
 # Phase 3 — Hermes Integration: Brainstorming Checkpoint
 
-**Status**: Brainstorming complete (2026-05-18); design spec not yet written. Resume next session.
+> **⚠️ HISTORICAL (predates the 2026-05-20 foundation v2 pivot):** This checkpoint captured the first Phase 3 brainstorm against Hermes Agent as runtime. The Phase 3 architecture pivoted twice on 2026-05-20: first to Letta, then to the current composed stack (Claude Code + Honcho + Obsidian on DigitalOcean) documented in [`superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md`](superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md). Preserved as decision trail.
+
+**Status**: Brainstorming complete (2026-05-18); superseded by foundation v2 spec.
 
 **Approach chosen**: A — Pragmatic. Ship Hermes integration narrowly; Curator is hardcoded TypeScript. Skill abstraction deferred to Phase 4 (which has two examples to abstract from: Curator + first Sandcastle skill).
 
