@@ -57,7 +57,7 @@ ssh-keygen -t ed25519 -f ~/.ssh/agenticos-droplet -C "agenticos-droplet"
 - Scopes: full read+write
 - Save as `do_token`
 
-**Tailscale** (https://login.tailscale.com/admin/settings/keys → Generate API key):
+**Tailscale** (<https://login.tailscale.com/admin/settings/keys> → Generate API key):
 - Scope: `auth_keys:write`
 - Note your tailnet name (the email-shaped string at the top of the admin)
 - Save as `tailscale_api_key` and `tailscale_tailnet`
@@ -78,7 +78,7 @@ Configure Google as an Identity Provider in Cloudflare Zero Trust:
 2. **Add new** → **Google** → follow the OAuth setup wizard
 3. Name it exactly `Google` (the Terraform code looks it up by that name)
 
-Docs: https://developers.cloudflare.com/cloudflare-one/identity/idp-integration/google/
+Docs: <https://developers.cloudflare.com/cloudflare-one/identity/idp-integration/google/>
 
 ### 5. One-time Tailscale prep (manual)
 
