@@ -22,7 +22,45 @@
 
 ---
 
-## Phase 0 — Infrastructure provision (~3 hr)
+## Phase 0 — Infrastructure provision (~15 min runtime + ~30 min credential setup)
+
+Phase 0 is fully automated via Terraform. See `infra/README.md` for the full walkthrough. Summary:
+
+1. Generate three API tokens (DigitalOcean, Tailscale, Cloudflare) — see `infra/README.md` §3
+2. One-time Cloudflare (Google IdP) + Tailscale (`tagOwners` ACL) prep — see `infra/README.md` §4-5
+3. `cd infra/terraform && cp terraform.tfvars.example terraform.tfvars` then edit with your tokens
+4. `terraform init && terraform apply` (~3-5 min Terraform + ~3-5 min cloud-init in the background)
+5. SSH to the Droplet and run `claude /login` — the one manual OAuth step Terraform can't automate
+
+After this completes you have: VPC + Droplet + App Platform skeleton + Tailscale-joined Droplet + Cloudflare DNS + Tunnel + Access policy live; Droplet fully bootstrapped with Docker, Tailscale, Syncthing, Node 22, pnpm, Claude Code, `deploy` user, UFW configured, repo cloned to `/opt/agenticos/repo`, and (if the repo's `docker-compose.yml` exists) Honcho's stack running.
+
+The original manual web-console steps are preserved below as a fallback for when Terraform isn't available.
+
+### Phase 0 verification
+
+After `terraform apply` returns:
+
+```bash
+cd infra/terraform
+terraform output dashboard_public_url
+curl -I "$(terraform output -raw dashboard_public_url)"
+# Expected: HTTP 302 redirect to Cloudflare Access login
+```
+
+Then SSH and complete OAuth:
+
+```bash
+ssh -i ~/.ssh/agenticos-droplet deploy@$(terraform output -raw droplet_public_ip)
+claude /login              # device-code OAuth in your browser
+claude --print "hello"     # smoke test
+```
+
+---
+
+<details>
+<summary><strong>Fallback: manual provisioning (original Phase 0 steps)</strong></summary>
+
+Use this fallback path only if Terraform isn't available on your workstation.
 
 ## Task 1: Create DigitalOcean VPC and SSH key
 
@@ -468,9 +506,20 @@ git add docs/runbooks/infrastructure.md
 git commit -m "docs(runbook): infrastructure provisioning notes from Phase 0"
 ```
 
+</details>
+
 ---
 
 ## Phase 1 — Honcho + Claude Code OAuth (~2 hr)
+
+> **Note:** With the Terraform path from Phase 0, most of this phase is already done. The Droplet has Docker + Claude Code installed, the repo is cloned to `/opt/agenticos/repo`, and (if `docker-compose.yml` exists in the repo) the Honcho stack is already running. After `claude /login` you should be able to:
+>
+> ```bash
+> curl http://127.0.0.1:8000/health   # Honcho REST API
+> claude --print "hello"               # Claude Code OAuth smoke test
+> ```
+>
+> If those work, skip ahead to Phase 1 verification (Task 13) and Phase 2.
 
 ## Task 12: Honcho docker-compose
 
@@ -676,6 +725,8 @@ git commit -m "docs(runbook): Phase 1 Honcho + Claude Code details"
 ---
 
 ## Phase 2 — Vault sync working (~1 hr)
+
+> **Note:** With the Terraform path from Phase 0, the Droplet side is already done: Syncthing is installed, running as the `deploy` user, GUI bound to `tailscale0` on port 8384, and `/opt/vault` exists with `deploy` ownership. You only need to do the Mac side (Tasks 18-20).
 
 ## Task 17: Move vault content to Droplet `/opt/vault`
 
