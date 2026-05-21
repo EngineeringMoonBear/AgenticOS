@@ -92,7 +92,7 @@ Total marginal cost: ~$29/mo on top of Claude Max.
 ```
                      User Browser (anywhere)
                             │
-                            │ HTTPS → agenticos.goldberrygrove.farm
+                            │ HTTPS → agenticos.gatheringatthegrove.com
                             ▼
               ┌─────────────────────────────────┐
               │  Cloudflare (TLS + DDoS + WAF)  │
@@ -246,7 +246,7 @@ Total recovery time: ~30-45 min for a previously-bootstrapped operator.
 
 ### 8.1 Dashboard (public, auth-gated)
 
-- Custom domain: `agenticos.goldberrygrove.farm` (CNAME → Cloudflare proxy → App Platform)
+- Custom domain: `agenticos.gatheringatthegrove.com` (CNAME → Cloudflare proxy → App Platform)
 - Cloudflare Tunnel: connects Cloudflare to App Platform's `*.ondigitalocean.app` URL
 - Cloudflare Access policy: requires Google SSO with email `josh@goldberrygrove.farm`
 - App Platform itself: no exposed auth; trusts Cloudflare-injected headers (JWT validates request originates from Access)
@@ -278,7 +278,7 @@ Total recovery time: ~30-45 min for a previously-bootstrapped operator.
 | Tailscale | $0 | Free for personal use up to 100 devices |
 | Syncthing | $0 | OSS |
 | Honcho self-hosted | $0 | OSS |
-| Domain | $0 | Existing `goldberrygrove.farm` |
+| Domain | $0 | Subdomain of existing `gatheringatthegrove.com` |
 | **MARGINAL TOTAL** | **$29/mo** | On top of Claude Max ($100/mo, already paid) |
 
 No API spend. Claude Max OAuth is the only LLM source.
@@ -405,14 +405,21 @@ Note: using the Tailscale hostname for SSH requires the GitHub runner to be on t
 
 ---
 
-## 14. Open questions to resolve in implementation
+## 14. Decisions locked from open questions
 
-1. **Honcho MCP tool surface** — Need to verify exact tool names + schemas in Phase 1. The Curator script depends on this.
-2. **Where do Curator instructions live?** — Three options: Honcho user-model, vault `CLAUDE.md`, or hardcoded script. **Recommend Honcho** (dialectic loop refines them); confirm in Phase 4.
-3. **`claude-code-router` vs direct subprocess?** — Plain `claude --print` is simpler for MVP. **Recommend subprocess** for v1; revisit if multi-model routing needed in v2.
-4. **Custom domain confirmation** — `agenticos.goldberrygrove.farm` proposed. Confirm or alternate.
-5. **Backup destination** — Mac rsync via Tailscale for MVP. **Reconsider** DO Spaces ($5/mo) if Mac storage becomes constrained.
-6. **Self-hosted GitHub runner vs DO API for Droplet deploy** — Recommend DO API for MVP to avoid Tailscale-runner infra.
+Updated 2026-05-21 — all six open questions are now locked. The only one that remains a "verify on first contact" is #1, since Honcho's exact MCP tool names can only be confirmed by running the server.
+
+1. **Honcho MCP tool surface** — TBD until Phase 1, but spec contract: Honcho must expose tools to (a) retrieve the current peer representation / user model, (b) add a message to a session with optional insight metadata, (c) search the message history. Exact tool names will be discovered when the server starts. If Honcho's MCP surface materially differs from this contract, Phase 1 raises a blocker.
+
+2. **Curator instructions location** — **Honcho user-model.** Initial system prompt seeds Honcho's `persona` block; subsequent refinements happen via the dialectic loop. A short `prompts/curator.md` in the repo serves as the *initial* seed but is not the source of truth at runtime.
+
+3. **`claude-code-router` vs direct subprocess** — **Direct `claude --print` subprocess.** Simpler for MVP. Multi-model routing deferred to v2 if needed.
+
+4. **Custom domain** — **`agenticos.gatheringatthegrove.com`.** Cloudflare proxy in front; Access policy gates with Google SSO for `josh@goldberrygrove.farm`.
+
+5. **Backup destination** — **Mac rsync via Tailscale.** Daily pg_dump to Droplet `/opt/backups/`, then rsync to a folder on the Mac under Time Machine coverage. Revisit DO Spaces ($5/mo) only if Mac storage becomes constrained.
+
+6. **GitHub Actions → Droplet connectivity** — **Public SSH with UFW restricted to GitHub Actions runner IP ranges.** GitHub publishes the list at `https://api.github.com/meta`; a small daily cron on the Droplet refreshes UFW rules from that list. Simpler than self-hosted runner or DO API SSH.
 
 ---
 

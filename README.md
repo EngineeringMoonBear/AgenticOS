@@ -25,7 +25,7 @@ The architecture is intentionally a composition of best-in-class components rath
 ```
                   Browser (anywhere)
                          │
-                         │ HTTPS → agenticos.your-domain
+                         │ HTTPS → agenticos.gatheringatthegrove.com
                          ▼
                 ┌──────────────────────────────┐
                 │  Cloudflare Access           │
