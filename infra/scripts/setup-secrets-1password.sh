@@ -65,9 +65,9 @@ How to generate each token (per infra/README.md §3):
   do_token             DO Console → API → Tokens → Generate (full read+write)
   tailscale_api_key    https://login.tailscale.com/admin/settings/keys
                        (scope: auth_keys:write, 90-day expiry is fine)
-  tailscale_tailnet    Easiest: literal '-' (means "tailnet of the API key").
-                       Or your tailnet name from top of login.tailscale.com/admin
-                       (e.g. josh@goldberrygrove.farm or goldberrygrove.farm)
+  tailscale_tailnet    Tailnet ID from https://login.tailscale.com/admin/general
+                       (NOT the email/domain-style Legacy ID — that's deprecated
+                       for the API per https://tailscale.com/docs/concepts/tailnet-name)
   cloudflare_api_token Cloudflare → Profile → API Tokens → Custom token
                        (DNS:Edit + Access:Edit + Tunnel:Edit on gatheringatthegrove.com)
   cloudflare_zone_id   Cloudflare zone Overview page → sidebar
