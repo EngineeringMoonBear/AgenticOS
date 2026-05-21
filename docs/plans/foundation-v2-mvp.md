@@ -22,7 +22,7 @@
 
 ---
 
-# Phase 0 — Infrastructure provision (~3 hr)
+## Phase 0 — Infrastructure provision (~3 hr)
 
 ## Task 1: Create DigitalOcean VPC and SSH key
 
@@ -401,7 +401,7 @@ Save.
 
 - [ ] **Step 5: Test the gate**
 
-Open `https://agenticos.gatheringatthegrove.com` in incognito. Expected: Cloudflare Access Google sign-in page. Sign in with josh@goldberrygrove.farm. You land on the App Platform dashboard (which may render an error because routes aren't wired yet — that's OK; we're testing the auth gate).
+Open `https://agenticos.gatheringatthegrove.com` in incognito. Expected: Cloudflare Access Google sign-in page. Sign in with <josh@goldberrygrove.farm>. You land on the App Platform dashboard (which may render an error because routes aren't wired yet — that's OK; we're testing the auth gate).
 
 - [ ] **Step 6: Test denial**
 
@@ -470,7 +470,7 @@ git commit -m "docs(runbook): infrastructure provisioning notes from Phase 0"
 
 ---
 
-# Phase 1 — Honcho + Claude Code OAuth (~2 hr)
+## Phase 1 — Honcho + Claude Code OAuth (~2 hr)
 
 ## Task 12: Honcho docker-compose
 
@@ -675,7 +675,7 @@ git commit -m "docs(runbook): Phase 1 Honcho + Claude Code details"
 
 ---
 
-# Phase 2 — Vault sync working (~1 hr)
+## Phase 2 — Vault sync working (~1 hr)
 
 ## Task 17: Move vault content to Droplet `/opt/vault`
 
@@ -835,7 +835,7 @@ After ~5s, Droplet's copy disappears too.
 
 ---
 
-# Phase 3 — AgenticOS code refactor (~6 hr)
+## Phase 3 — AgenticOS code refactor (~6 hr)
 
 ## Task 21: Clean up macOS Finder duplicates and add `.claude/` to .gitignore
 
@@ -2135,7 +2135,7 @@ git commit -m "refactor(skills): curator helper as thin dispatch stub (real prom
 
 ---
 
-# Phase 4 — Curator script (~4 hr)
+## Phase 4 — Curator script (~4 hr)
 
 ## Task 37: Create the Curator system prompt seed
 
@@ -2392,7 +2392,7 @@ rm /opt/vault/inbox/test-classification.md
 
 ---
 
-# Phase 5 — Scheduler dispatch (~3 hr)
+## Phase 5 — Scheduler dispatch (~3 hr)
 
 ## Task 41: Create `/api/cron` route reading from `cron.json`
 
@@ -2603,7 +2603,7 @@ git commit -m "chore(boot): verify scheduler + MCP server start via instrumentat
 
 ---
 
-# Phase 6 — Dashboard wiring (~6 hr)
+## Phase 6 — Dashboard wiring (~6 hr)
 
 ## Task 44: Wire dashboard observability page to new `/api/agent/*` routes
 
@@ -2757,10 +2757,10 @@ pnpm --filter @agenticos/dashboard dev
 
 - [ ] **Step 2: Open in browser and click through all main pages**
 
-- http://localhost:3000/ — home
-- http://localhost:3000/observability — runs, memory panel, quota panel
-- http://localhost:3000/architecture — architecture map (existing page, should still render)
-- http://localhost:3000/memory — wiki browser (existing page, should still render)
+- <http://localhost:3000/> — home
+- <http://localhost:3000/observability> — runs, memory panel, quota panel
+- <http://localhost:3000/architecture> — architecture map (existing page, should still render)
+- <http://localhost:3000/memory> — wiki browser (existing page, should still render)
 
 For each page, open browser devtools → Network tab → confirm no 404s on `/api/hermes/*` calls. Any leftovers indicate a missed reference; fix and re-test.
 
@@ -2783,7 +2783,7 @@ git commit -m "chore(ui): final cleanup of stale hermes API references"
 
 ---
 
-# Phase 7 — CI/CD wiring (~2 hr)
+## Phase 7 — CI/CD wiring (~2 hr)
 
 ## Task 48: Write `deploy-dashboard.yml`
 
@@ -3235,7 +3235,7 @@ Common issues:
 
 ---
 
-# Phase 8 — End-to-end test (~open-ended, ~1 week elapsed)
+## Phase 8 — End-to-end test (~open-ended, ~1 week elapsed)
 
 ## Task 54: Enable the Curator timer
 
@@ -3376,11 +3376,11 @@ git push origin main --tags
 - Foundation v2 spec: `docs/superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md`
 - ADR 0003 (scheduler ownership): `docs/adr/0003-scheduler-ownership.md`
 - ADR 0004 (Hermes → Letta pivot, superseded): `docs/adr/0004-pivot-hermes-to-letta.md`
-- Honcho docs: https://docs.honcho.dev
-- Claude Code docs: https://docs.anthropic.com/en/docs/claude-code
-- DO App Platform + GitHub Actions: https://docs.digitalocean.com/products/app-platform/how-to/deploy-from-github-actions/
-- Tailscale: https://tailscale.com/kb
-- Syncthing: https://docs.syncthing.net/
+- Honcho docs: <https://docs.honcho.dev>
+- Claude Code docs: <https://docs.anthropic.com/en/docs/claude-code>
+- DO App Platform + GitHub Actions: <https://docs.digitalocean.com/products/app-platform/how-to/deploy-from-github-actions/>
+- Tailscale: <https://tailscale.com/kb>
+- Syncthing: <https://docs.syncthing.net/>
 
 ---
 

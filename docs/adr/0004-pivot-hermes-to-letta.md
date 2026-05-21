@@ -20,7 +20,7 @@ First-time integration testing on **2026-05-20** falsified the assumption end-to
 3. **`hermes dashboard`** at port 9119 is a complete web UI with its own backend, but that backend is a private API — no public documentation, no stability contract.
 4. **`hermes proxy`** is an OpenAI-completion-compatible forwarder, not a run-management API.
 5. **`hermes acp`** is a stdio JSON-RPC surface for VS Code / Zed / JetBrains editor plugins.
-6. The official documentation at https://hermes-agent.nousresearch.com/docs lists "Programmatic Integration" as a navigation entry but ships no content there; the v0.14.0 changelog adds zero HTTP-API surface area. The architecture page mentions "API Server" as a hypothetical entry point with no implementation.
+6. The official documentation at <https://hermes-agent.nousresearch.com/docs> lists "Programmatic Integration" as a navigation entry but ships no content there; the v0.14.0 changelog adds zero HTTP-API surface area. The architecture page mentions "API Server" as a hypothetical entry point with no implementation.
 
 **Hermes is not designed to be orchestrated by another application.** Its design intent is to *be* the orchestrator: it ships its own CLI, gateway (22 messaging platforms), dashboard, cron scheduler, skills system (agentskills.io standard), subagent spawning, and seven execution backends (local/Docker/SSH/Modal/Daytona/Vercel Sandbox/Singularity). The "another app talks to Hermes over HTTP" slot does not exist in Hermes's product mental model.
 
@@ -28,7 +28,7 @@ This invalidates Phase 3's integration premise. AgenticOS's Phase 3 architecture
 
 ## Decision
 
-**Replace Hermes with Letta (https://letta.com, formerly MemGPT) as Phase 3's agent runtime.**
+**Replace Hermes with Letta (<https://letta.com>, formerly MemGPT) as Phase 3's agent runtime.**
 
 Letta is the production-quality successor to the MemGPT research project. It is explicitly designed as a stateful-agents API: server-first, REST-shaped, with persistent memory architecture as the central thesis.
 
@@ -186,10 +186,10 @@ Two Hermes packaging bugs were diagnosed during validation (mcp_serve.py missing
 
 ## References
 
-- Letta documentation: https://docs.letta.com
-- Letta GitHub: https://github.com/letta-ai/letta
-- Letta Code (alternate client): https://github.com/letta-ai/letta-code
-- MemGPT paper (founding research): https://arxiv.org/abs/2310.08560
+- Letta documentation: <https://docs.letta.com>
+- Letta GitHub: <https://github.com/letta-ai/letta>
+- Letta Code (alternate client): <https://github.com/letta-ai/letta-code>
+- MemGPT paper (founding research): <https://arxiv.org/abs/2310.08560>
 - Archived Hermes integration spec: `docs/archive/phase-3-hermes-integration.md`
 - Archived v0.14.0 implications supplement: `docs/archive/phase-3-v0.14.0-implications.md`
 - New Phase 3 integration spec: `docs/phase-3-letta-integration.md`

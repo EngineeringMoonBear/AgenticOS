@@ -264,8 +264,8 @@ These are not hand-written. They emerge from the agent's experience and are insp
 - ADR 0003 — scheduler ownership (affirmed): `docs/adr/0003-scheduler-ownership.md`
 - Archived Hermes-shaped spec: `docs/archive/phase-3-hermes-integration.md`
 - Archived v0.14.0 Hermes supplement: `docs/archive/phase-3-v0.14.0-implications.md`
-- Letta docs: https://docs.letta.com
-- Letta API reference: https://docs.letta.com/api
-- Letta self-hosting: https://docs.letta.com/guides/selfhosting
-- Letta MCP integration: https://docs.letta.com/guides/agents/mcp
-- Letta streaming: https://docs.letta.com/guides/agents/streaming
+- Letta docs: <https://docs.letta.com>
+- Letta API reference: <https://docs.letta.com/api>
+- Letta self-hosting: <https://docs.letta.com/guides/selfhosting>
+- Letta MCP integration: <https://docs.letta.com/guides/agents/mcp>
+- Letta streaming: <https://docs.letta.com/guides/agents/streaming>

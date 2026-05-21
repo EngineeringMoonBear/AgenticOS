@@ -453,10 +453,10 @@ Updated 2026-05-21 — all six open questions are now locked. The only one that 
 - Archived Hermes-shaped spec: `docs/archive/phase-3-hermes-integration.md`
 - Archived v0.14.0 Hermes supplement: `docs/archive/phase-3-v0.14.0-implications.md`
 - (To be moved to archive on approval) Letta-shaped spec: `docs/phase-3-letta-integration.md`
-- Honcho: https://docs.honcho.dev — https://github.com/plastic-labs/honcho
-- mem0: https://docs.mem0.ai (considered, not selected)
-- Claude Code: https://docs.anthropic.com/en/docs/claude-code
-- DO App Platform GitHub Actions: https://docs.digitalocean.com/products/app-platform/how-to/deploy-from-github-actions/
-- Tailscale: https://tailscale.com
-- Syncthing: https://syncthing.net
-- Cloudflare Access: https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/
+- Honcho: <https://docs.honcho.dev> — <https://github.com/plastic-labs/honcho>
+- mem0: <https://docs.mem0.ai> (considered, not selected)
+- Claude Code: <https://docs.anthropic.com/en/docs/claude-code>
+- DO App Platform GitHub Actions: <https://docs.digitalocean.com/products/app-platform/how-to/deploy-from-github-actions/>
+- Tailscale: <https://tailscale.com>
+- Syncthing: <https://syncthing.net>
+- Cloudflare Access: <https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/>
