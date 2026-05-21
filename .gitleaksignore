@@ -1,0 +1,18 @@
+# Gitleaks allowlist — fingerprints of known false positives.
+# Format: <commit-sha>:<file-path>:<rule-id>:<line-number>
+# One fingerprint per line.
+
+# False positive in transient brief restoration of an archived doc.
+# Commit 13cc1f2 (Phase 3 Task 21 cleanup) restored docs/phase-3-v0.14.0-implications.md
+# from a Finder duplicate before realizing the canonical (post-gitleaks-fix) version
+# already lived at docs/archive/. The restored file was the pre-fix version that
+# contained "Bearer no-key-needed-via-proxy" as an obvious-placeholder curl example.
+# Commit 2f97c2b removed the restored file the same day. The string was never a real
+# secret — it's a placeholder used in a Hermes-proxy verification test example. The
+# canonical archived version uses "<placeholder-not-validated>" + "# gitleaks:allow"
+# to make the same point unambiguously.
+#
+# We could rewrite history to remove the brief restoration, but it's not worth the
+# disruption (force-push on main, broken local clones for anyone who fetched).
+# Allowlisting the specific fingerprint is the proportionate fix.
+13cc1f2eafac7c6af766c63618281e45e74ca41b:docs/phase-3-v0.14.0-implications.md:curl-auth-header:222
