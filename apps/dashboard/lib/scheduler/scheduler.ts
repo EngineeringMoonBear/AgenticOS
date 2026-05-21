@@ -1,10 +1,9 @@
 import "server-only";
 import cron from "node-cron";
-import { getHermesClient } from "@/lib/hermes/client-singleton";
 import { readSchedules, updateSchedule } from "./cron-io";
-import type { HermesRun, ScheduleRecord } from "@agenticos/hermes-client";
+import type { RunRecord } from "@/lib/agent";
+import type { ScheduleRecord } from "./types";
 
-const SANITY_CANCEL_THRESHOLD_MS = 30 * 60 * 1000;
 const registered = new Map<string, cron.ScheduledTask>();
 
 export async function bootScheduler(): Promise<void> {
@@ -30,41 +29,32 @@ export function unregisterSchedule(id: string): void {
   registered.delete(id);
 }
 
-export async function sanityCancelStaleRuns(skillId: string): Promise<void> {
-  const client = await getHermesClient();
-  const runs = await client.listRuns({ skillId, status: "running" });
-  const cutoff = Date.now() - SANITY_CANCEL_THRESHOLD_MS;
-  for (const run of runs) {
-    const startedMs = new Date(run.startedAt).getTime();
-    if (startedMs < cutoff) {
-      await client.cancelRun(run.id, "stale-sanity");
-    }
-  }
+/**
+ * Sanity-cancel stale runs.
+ *
+ * Foundation v1 (Hermes) tracked active runs server-side and could cancel them.
+ * Foundation v2 hands runs off to a shell script (Task 41) that writes a JSONL
+ * log. There's no daemon-side "cancel" yet — this is a no-op pending the
+ * Phase 5 dispatch wiring.
+ */
+export async function sanityCancelStaleRuns(_skillId: string): Promise<void> {
+  // No-op for v2. Re-implementation lives with the dispatch script (Task 41).
 }
 
-async function fireSchedule(id: string): Promise<HermesRun | null> {
+async function fireSchedule(id: string): Promise<RunRecord | null> {
   const schedules = await readSchedules();
   const record = schedules.find((s) => s.id === id);
   if (!record || !record.enabled) return null;
   await sanityCancelStaleRuns(record.skillId);
-  const client = await getHermesClient();
-  // Skill metadata is hardcoded in Phase 3 — see lib/skills/curator.ts (Task 5)
-  const { resolveSkill } = await import("@/lib/skills");
-  const skill = await resolveSkill(record.skillId);
-  const run = await client.dispatchRun({
-    skillId:      skill.id,
-    model:        skill.model,
-    budget:       skill.budget,
-    toolNames:    skill.toolNames,
-    systemPrompt: skill.systemPrompt,
-    userPrompt:   skill.userPrompt({ todayIso: new Date().toISOString().slice(0, 10), lastRunIso: record.lastRunAt ?? "never", budget: skill.budget ?? 1.0 }),
-  });
-  await updateSchedule(id, { lastRunAt: new Date().toISOString(), lastRunId: run.id });
-  return run;
+
+  // Phase 5 will wire the actual dispatch (shell out to /opt/agenticos/scripts/run-curator.sh)
+  // For now this is a scaffold so the scheduler boots cleanly.
+  await updateSchedule(id, { lastRunAt: new Date().toISOString() });
+  return null;
 }
 
-export async function triggerSchedule(id: string): Promise<HermesRun> {
+export async function triggerSchedule(id: string): Promise<RunRecord> {
   const run = await fireSchedule(id);
-  if (!run) throw new Error(`Schedule not found or disabled: ${id}`);
+  if (!run) throw new Error(`Schedule not found, disabled, or dispatch not yet wired: ${id}`);
   return run;
 }

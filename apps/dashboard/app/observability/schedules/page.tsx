@@ -1,12 +1,12 @@
 "use client";
 import { useState } from "react";
-import { useHermesCron } from "@/lib/hooks/use-hermes-cron";
+import { useCron } from "@/lib/hooks/use-cron";
 import { RunNowButton } from "@/components/observability/RunNowButton";
 import { ScheduleEditDrawer } from "@/components/observability/ScheduleEditDrawer";
-import type { ScheduleRecord } from "@agenticos/hermes-client";
+import type { ScheduleRecord } from "@/lib/scheduler/types";
 
 export default function SchedulesPage() {
-  const { data: schedules, isLoading, refetch } = useHermesCron();
+  const { data: schedules, isLoading, refetch } = useCron();
   const [editing, setEditing] = useState<ScheduleRecord | "new" | null>(null);
 
   return (

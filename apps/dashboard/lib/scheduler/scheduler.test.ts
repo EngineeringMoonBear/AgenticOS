@@ -5,11 +5,9 @@ import path from "node:path";
 
 vi.mock("server-only", () => ({}));
 
-let cancelRunCalls: Array<{ id: string; reason?: string }> = [];
 let tmpRoot: string;
 
 beforeEach(async () => {
-  cancelRunCalls = [];
   tmpRoot = await mkdtemp(path.join(tmpdir(), "scheduler-"));
   process.env["AGENTICOS_HOME"] = path.join(tmpRoot, ".agenticos");
 });
@@ -21,41 +19,8 @@ afterEach(async () => {
 });
 
 describe("sanityCancelStaleRuns", () => {
-  it("does nothing when no runs are active", async () => {
-    vi.doMock("@/lib/hermes/client-singleton", () => ({
-      getHermesClient: async () => ({
-        listRuns: vi.fn(async () => []),
-        cancelRun: vi.fn(async (id: string, reason?: string) => {
-          cancelRunCalls.push({ id, reason });
-        }),
-        dispatchRun: vi.fn(async () => ({
-          id: "run_new", skillId: "curator", status: "queued", model: "x",
-          startedAt: "2026", inputTokens: 0, outputTokens: 0,
-          cacheReadTokens: 0, cacheWriteTokens: 0, tags: [],
-        })),
-      }),
-    }));
+  it("is a no-op in the v2 scaffold (dispatch logic moves to run-curator.sh)", async () => {
     const { sanityCancelStaleRuns } = await import("./scheduler");
-    await sanityCancelStaleRuns("curator");
-    expect(cancelRunCalls).toHaveLength(0);
-  });
-
-  it("cancels runs silent > 30 minutes", async () => {
-    const oldTs = new Date(Date.now() - 31 * 60 * 1000).toISOString();
-    vi.doMock("@/lib/hermes/client-singleton", () => ({
-      getHermesClient: async () => ({
-        listRuns: vi.fn(async () => [
-          { id: "run_stale", skillId: "curator", status: "running",
-            startedAt: oldTs, model: "x", inputTokens: 0, outputTokens: 0,
-            cacheReadTokens: 0, cacheWriteTokens: 0, tags: [] },
-        ]),
-        cancelRun: vi.fn(async (id: string, reason?: string) => {
-          cancelRunCalls.push({ id, reason });
-        }),
-      }),
-    }));
-    const { sanityCancelStaleRuns } = await import("./scheduler");
-    await sanityCancelStaleRuns("curator");
-    expect(cancelRunCalls).toEqual([{ id: "run_stale", reason: "stale-sanity" }]);
+    await expect(sanityCancelStaleRuns("curator")).resolves.toBeUndefined();
   });
 });
