@@ -22,11 +22,40 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-/** Allowlist of host values considered local/trusted. */
+/** Allowlist of host values considered local/trusted.
+ *
+ * Local-dev hosts are always permitted. Production hosts come from the
+ * ALLOWED_HOSTS env var (comma-separated). In App Platform we set this to
+ * include the Cloudflare-fronted custom domain AND the App Platform
+ * default URL pattern, so both Cloudflare-routed traffic and direct
+ * App-Platform-URL traffic pass the gate.
+ *
+ * Examples:
+ *   ALLOWED_HOSTS="agenticos.gatheringatthegrove.com"
+ *   ALLOWED_HOSTS="agenticos.gatheringatthegrove.com,agenticos-dashboard-w2i7d.ondigitalocean.app"
+ */
+const ENV_HOSTS = (process.env.ALLOWED_HOSTS ?? "")
+  .split(",")
+  .map((h) => h.trim())
+  .filter(Boolean);
+
 const ALLOWED_HOSTS: ReadonlySet<string> = new Set([
   "localhost:3000",
   "127.0.0.1:3000",
+  ...ENV_HOSTS,
 ]);
+
+/** Match any host on App Platform's default-URL pattern.
+ * App Platform URLs look like `agenticos-dashboard-w2i7d.ondigitalocean.app`
+ * where the suffix is random per app instance. Matching the family avoids
+ * needing to update ALLOWED_HOSTS every time the app is recreated. */
+const APP_PLATFORM_HOST_RE = /^[a-z0-9-]+\.ondigitalocean\.app$/;
+
+function isHostAllowed(host: string): boolean {
+  if (ALLOWED_HOSTS.has(host)) return true;
+  if (APP_PLATFORM_HOST_RE.test(host)) return true;
+  return false;
+}
 
 const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -43,7 +72,7 @@ export function isAllowedRequest(req: Request): {
 } {
   // --- Host check (all methods) ---
   const host = req.headers.get("host") ?? "";
-  if (!ALLOWED_HOSTS.has(host)) {
+  if (!isHostAllowed(host)) {
     return { allowed: false, reason: "Forbidden host" };
   }
 
@@ -58,7 +87,7 @@ export function isAllowedRequest(req: Request): {
         // Malformed Origin header — treat as forbidden.
         return { allowed: false, reason: "Forbidden origin" };
       }
-      if (!ALLOWED_HOSTS.has(originHost)) {
+      if (!isHostAllowed(originHost)) {
         return { allowed: false, reason: "Forbidden origin" };
       }
     }

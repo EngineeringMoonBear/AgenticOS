@@ -68,6 +68,16 @@ resource "digitalocean_app" "dashboard" {
         value = "production"
         scope = "RUN_TIME"
       }
+
+      env {
+        # The dashboard's DNS-rebinding-protection middleware (apps/dashboard/proxy.ts)
+        # checks request Host against an allowlist. App Platform's *.ondigitalocean.app
+        # pattern is handled by a regex in code; the custom Cloudflare-fronted domain
+        # has to be listed explicitly here.
+        key   = "ALLOWED_HOSTS"
+        value = var.domain
+        scope = "RUN_TIME"
+      }
     }
   }
 }

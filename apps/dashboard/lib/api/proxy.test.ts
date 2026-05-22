@@ -34,6 +34,20 @@ describe("isAllowedRequest — host check", () => {
     const req = makeRequest("GET", { host: "127.0.0.1:3000" });
     expect(isAllowedRequest(req).allowed).toBe(true);
   });
+
+  it("allows GET with host matching App Platform pattern", () => {
+    const req = makeRequest("GET", {
+      host: "agenticos-dashboard-w2i7d.ondigitalocean.app",
+    });
+    expect(isAllowedRequest(req).allowed).toBe(true);
+  });
+
+  it("rejects GET with host that looks like a fake App Platform URL", () => {
+    const req = makeRequest("GET", {
+      host: "agenticos-dashboard.ondigitalocean.app.evil.com",
+    });
+    expect(isAllowedRequest(req).allowed).toBe(false);
+  });
 });
 
 describe("isAllowedRequest — origin check on state-changing methods", () => {
