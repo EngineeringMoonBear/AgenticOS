@@ -9,8 +9,8 @@ output "droplet_vpc_ip" {
 }
 
 output "droplet_tailscale_hostname" {
-  description = "Expected Tailscale FQDN of the Droplet (after cloud-init `tailscale up` completes)"
-  value       = "agenticos-droplet.${var.tailscale_tailnet}.ts.net"
+  description = "Short hostname for the Droplet on your Tailnet (resolves via MagicDNS once cloud-init completes `tailscale up`). The FQDN depends on your MagicDNS suffix (a separate identifier from the Tailnet ID) — find it with: tailscale status | grep agenticos-droplet"
+  value       = "agenticos-droplet"
 }
 
 output "app_platform_url" {
@@ -42,11 +42,10 @@ Apply complete. Next manual steps:
 3. Install Tailscale on your Mac if you haven't:
      brew install --cask tailscale && open -a Tailscale
 
-4. Pair Syncthing (Droplet GUI is at http://agenticos-droplet.${var.tailscale_tailnet}.ts.net:8384,
-   reachable only over Tailscale).
-
-5. Attach the App Platform app to the VPC (one-time UI step the provider can't do):
-     DO Console → Apps → agenticos-dashboard → Settings → VPC → select agenticos-vpc
+4. Pair Syncthing — open the Droplet's Syncthing GUI (only reachable over Tailscale):
+     open http://agenticos-droplet:8384         (uses Tailscale MagicDNS)
+   Or find the Tailscale IP first:
+     tailscale status | grep agenticos-droplet  (then open http://<that-ip>:8384)
 
 ================================================================================
 EOT
