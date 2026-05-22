@@ -143,24 +143,19 @@ runcmd:
   # --- Clone repo ---
   - sudo -u deploy git clone https://github.com/${github_repo}.git /opt/agenticos/repo
 
-  # --- Honcho docker-compose ---
-  # The compose stack (honcho-api + honcho-deriver + honcho-db + honcho-redis)
-  # is defined in /opt/agenticos/repo/docker-compose.yml. The honcho-init.sql
-  # sidecar creates the pgvector extension on first DB init (bind-mounted into
-  # honcho-db at /docker-entrypoint-initdb.d/init.sql).
-  # If the repo doesn't have these files yet (pre-commit bootstrap), we no-op.
+  # --- AgenticOS docker-compose (telemetry DB only; Hermes/Ollama/OpenViking
+  # run as native systemd services, not in compose — see install steps below).
   - |
-    if [ -f /opt/agenticos/repo/docker-compose.yml ] && [ -f /opt/agenticos/repo/honcho-init.sql ]; then
+    if [ -f /opt/agenticos/repo/docker-compose.yml ]; then
       cp /opt/agenticos/repo/docker-compose.yml /opt/agenticos/docker-compose.yml
-      cp /opt/agenticos/repo/honcho-init.sql /opt/agenticos/honcho-init.sql
       if [ ! -f /opt/agenticos/.env ]; then
-        echo "HONCHO_DB_PASSWORD=$(openssl rand -hex 32)" > /opt/agenticos/.env
+        echo "AGENTICOS_DB_PASSWORD=$(openssl rand -hex 32)" > /opt/agenticos/.env
         chmod 600 /opt/agenticos/.env
         chown deploy:deploy /opt/agenticos/.env
       fi
       cd /opt/agenticos && sudo -u deploy docker compose -f /opt/agenticos/docker-compose.yml --env-file /opt/agenticos/.env up -d
     else
-      echo "WARN: docker-compose.yml or honcho-init.sql missing from repo; skipping Honcho bring-up" >&2
+      echo "WARN: docker-compose.yml missing from repo; skipping db bring-up" >&2
     fi
 
   # --- Honcho reachability ---

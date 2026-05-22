@@ -1,115 +1,49 @@
-# AgenticOS — Honcho self-hosted stack (matches plastic-labs/honcho v2.x).
+# AgenticOS — Docker Compose stack.
 #
 # Cloud-init copies this file from /opt/agenticos/repo/docker-compose.yml to
 # /opt/agenticos/docker-compose.yml and runs `docker compose up -d` with
-# /opt/agenticos/.env (which holds HONCHO_DB_PASSWORD, generated on first boot).
+# /opt/agenticos/.env (which holds AGENTICOS_DB_PASSWORD, generated on first boot).
 #
-# Honcho v2 architecture (mirrors plastic-labs/honcho docker-compose.yml.example):
-#   - postgres (pgvector) — required, init.sql creates the vector extension
-#   - redis                — required, used for caching + deriver queue
-#   - honcho-api           — FastAPI server on :8000
-#   - honcho-deriver       — async worker that processes derivations
+# Current services:
+#   - agenticos-db (pgvector/pg15) — Postgres backing the cost-telemetry tables
+#     (task / session / call rows). pgvector image is retained even though we
+#     no longer need vector ops here, because dropping it would require image
+#     reconfig and the disk footprint is negligible.
 #
-# We pin a specific tag rather than `latest` so the Droplet is reproducible.
-# Bump HONCHO_TAG (env var in /opt/agenticos/.env) to upgrade.
+# Native host services (NOT in this compose file, see cloud-init):
+#   - Hermes Agent — Python service on localhost:7777, orchestrator
+#   - Ollama — local SLM host on 127.0.0.1:11434
+#   - OpenViking — memory store on 127.0.0.1:1933, filesystem-backed over /opt/vault
+#   - Codex CLI — invoked as subprocess by a Hermes skill
+#   - Claude Code — kept installed for fallback, not in default routing
 #
-# Network reachability:
-#   - App Platform reaches Honcho over the DigitalOcean VPC (private IPv4).
-#     UFW must allow port 8000 on the VPC interface (see cloud-init).
-#   - The Mac reaches Honcho over Tailscale (tailscale0). UFW must allow port
-#     8000 on tailscale0 too.
-#   - The public IP is firewalled by UFW (default deny), so Honcho is NOT
-#     exposed to the open internet even though the container binds 0.0.0.0.
+# Why some things are in compose and others aren't:
+# Hermes/Ollama/OpenViking benefit from native filesystem access (vault, models,
+# logs) and don't gain from containerization. Postgres benefits from data-volume
+# isolation, restart policies, and not interfering with system Postgres.
 
 services:
-  honcho-db:
+  agenticos-db:
     image: pgvector/pgvector:pg15
-    container_name: honcho-db
+    container_name: agenticos-db
     restart: unless-stopped
     command: ["postgres", "-c", "max_connections=200"]
     environment:
-      POSTGRES_DB: honcho
-      POSTGRES_USER: honcho
-      POSTGRES_PASSWORD: ${HONCHO_DB_PASSWORD}
+      POSTGRES_DB: agenticos
+      POSTGRES_USER: agenticos
+      POSTGRES_PASSWORD: ${AGENTICOS_DB_PASSWORD}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - honcho-db-data:/var/lib/postgresql/data
-      # Single-line CREATE EXTENSION runs once on first container start
-      # (Postgres only executes /docker-entrypoint-initdb.d/* on an empty
-      # data directory — subsequent restarts skip it).
-      - ./honcho-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    networks:
-      - agenticos
+      - agenticos-db-data:/var/lib/postgresql/data
+    # Bind to localhost only — never expose Postgres to the network. Hermes
+    # and the dashboard's API routes connect via 127.0.0.1.
+    ports:
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U honcho -d honcho"]
+      test: ["CMD-SHELL", "pg_isready -U agenticos -d agenticos"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  honcho-redis:
-    image: redis:8.2
-    container_name: honcho-redis
-    restart: unless-stopped
-    volumes:
-      - honcho-redis-data:/data
-    networks:
-      - agenticos
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  honcho-api:
-    image: ghcr.io/plastic-labs/honcho:${HONCHO_TAG:-v2.0.3}
-    container_name: honcho-api
-    restart: unless-stopped
-    depends_on:
-      honcho-db:
-        condition: service_healthy
-      honcho-redis:
-        condition: service_healthy
-    environment:
-      # SQLAlchemy + psycopg3 driver string (Honcho v2 uses async psycopg).
-      DB_CONNECTION_URI: postgresql+psycopg://honcho:${HONCHO_DB_PASSWORD}@honcho-db:5432/honcho
-      CACHE_URL: redis://honcho-redis:6379/0?suppress=true
-      CACHE_ENABLED: "true"
-    ports:
-      # Bind on all host interfaces. UFW is the gatekeeper — it allows port
-      # 8000 only on eth1 (VPC) and tailscale0, and denies it on the public IP.
-      - "0.0.0.0:8000:8000"
-    networks:
-      - agenticos
-    healthcheck:
-      test:
-        - CMD
-        - /app/.venv/bin/python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()"
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-  honcho-deriver:
-    image: ghcr.io/plastic-labs/honcho:${HONCHO_TAG:-v2.0.3}
-    container_name: honcho-deriver
-    restart: unless-stopped
-    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
-    depends_on:
-      honcho-api:
-        condition: service_healthy
-    environment:
-      DB_CONNECTION_URI: postgresql+psycopg://honcho:${HONCHO_DB_PASSWORD}@honcho-db:5432/honcho
-      CACHE_URL: redis://honcho-redis:6379/0?suppress=true
-      CACHE_ENABLED: "true"
-    networks:
-      - agenticos
-
 volumes:
-  honcho-db-data:
-  honcho-redis-data:
-
-networks:
-  agenticos:
-    driver: bridge
+  agenticos-db-data:
