@@ -183,7 +183,67 @@ volumes:
   openviking-config:
 ```
 
-**`ov.conf` schema — needs verification before Phase 1.0 Task 2 executes.** The Feishu integration code at `openviking/parse/accessors/feishu_accessor.py:56` shows the file is INI/TOML-style with sections like `[feishu]`; the memory section is referenced as `ov_config.memory.extraction_enabled` (so `[memory]` section, `extraction_enabled` field). Action: pull the openviking source from PyPI locally (~20 min spike), read `openviking/config/loader.py` or equivalent, document the full schema, then write the production `ov.conf` template.
+**`ov.conf` schema — VERIFIED 2026-05-22 during Task 2 execution.** Earlier guess (TOML/INI with `[memory]` section) was wrong. Actual format:
+
+- **JSON** — loader is `openviking.server.config.load_json_config` (despite the `.conf` extension)
+- All Pydantic models set `extra="forbid"` → no inline comments, unknown keys fail validation
+- The `feishu_accessor.py` references to `[feishu]` are misleading — that's just where Feishu *env vars* are documented, not a config-file section
+
+Working minimal `ov.conf` (committed to repo at `openviking-config/ov.conf`):
+```json
+{
+  "default_account": "agenticos",
+  "default_user": "deploy",
+  "default_agent": "default",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 1933,
+    "workers": 1,
+    "cors_origins": ["*"],
+    "auth_mode": "api_key",
+    "root_api_key": "__OPENVIKING_ROOT_API_KEY__"
+  },
+  "storage": { "workspace": "/app/.openviking/data" },
+  "embedding": {
+    "dense": {
+      "provider": "ollama",
+      "model": "nomic-embed-text",
+      "api_base": "http://ollama:11434/v1"
+    }
+  },
+  "memory": { "extraction_enabled": true }
+}
+```
+
+Notes:
+- `embedding.dense.api_base` MUST end with `/v1` — without it, the OpenAI-compat path hits a 404 and the circuit breaker trips
+- `server.auth_mode = "dev"` is rejected for non-loopback hosts (and a Docker container is non-loopback by definition), so `api_key` mode is required in production
+- `root_api_key` placeholder is substituted at first boot by cloud-init with an `openssl rand -hex 32` value, persisted in `/opt/agenticos/.env` as `OPENVIKING_ROOT_API_KEY`
+
+**REST surface — VERIFIED via `/openapi.json` of the running container (85 paths total):**
+
+Auth: every `/api/v1/*` endpoint requires `Authorization: Bearer <OPENVIKING_ROOT_API_KEY>`. The `/health` endpoint is auth-free.
+
+Key endpoints for Phase 1.3's `openviking-client.ts`:
+
+| Concern | Path | Method |
+|---|---|---|
+| Health | `/health` | GET |
+| Search (semantic) | `/api/v1/search/find` | POST |
+| Search (context-aware) | `/api/v1/search/search` | POST |
+| Search (pattern) | `/api/v1/search/grep`, `/api/v1/search/glob` | POST |
+| Read content (full) | `/api/v1/content/read` | GET |
+| Read content (abstract / overview) | `/api/v1/content/abstract`, `/api/v1/content/overview` | GET |
+| Write content | `/api/v1/content/write` | POST |
+| Filesystem ops | `/api/v1/fs/{ls,tree,mkdir,mv,stat}` | various |
+| Sessions | `/api/v1/sessions` `/api/v1/sessions/{id}` `/api/v1/sessions/{id}/{commit,messages,extract,context}` | various |
+| Resources | `/api/v1/resources` | POST/GET |
+| Skills (OV-managed, not Hermes skills) | `/api/v1/skills` | POST/GET |
+| Memory stats | `/api/v1/stats/memories` | GET |
+
+**Action for Plan Task 18 (`openviking-client.ts`):** earlier plan code targeted `POST /search` with no auth. Correct shape is `POST /api/v1/search/find` with `Authorization: Bearer ${OPENVIKING_ROOT_API_KEY}` header. Update during Phase 1.3 execution.
+
+**Idle memory footprint (verified):** 273 MiB resident with both Ollama + agenticos-db also running. Slightly above the earlier 200 MiB estimate but well under the 500 MiB flag threshold. Total stack idle: ~743 MiB on a 4 GiB Droplet → ~3.3 GiB free for Hermes + Codex + actual model inference.
 
 ### 5. Existing Ollama install confirmed working
 
@@ -202,7 +262,7 @@ volumes:
 | **Task 4** (Codex install) | unchanged install path | **add `codex login --with-api-key` post-install step**; flag autonomous-call shape |
 | **Task 9** (plugin package) | unchanged | Note: plugins still run inside the Hermes container; package needs to be `pip install`'d into the container at build time OR mounted as a volume |
 | **Task 13** (codex_coder) | `codex --print --json` parser | **`codex exec --json` parser** with verified event types |
-| **Task 18** (openviking-client.ts) | guessed POST `/search` | **Verified endpoint** (TBD — get OpenAPI from running container: `curl http://127.0.0.1:1933/openapi.json`) |
+| **Task 18** (openviking-client.ts) | guessed POST `/search` | **Verified:** `POST /api/v1/search/find` with `Authorization: Bearer ${OPENVIKING_ROOT_API_KEY}`. See §4 "REST surface" above for the full path table. |
 
 **Add a new** **Task 11.5** **(pre-Phase-1.1 spike, ~20 min):**
 - Read Hermes Agent v0.14 source from PyPI locally
