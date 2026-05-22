@@ -233,3 +233,4 @@ All four can be combined into a 45-min Task 11.5 spike during execution, after P
 - **Low confidence on:** OpenViking ov.conf required keys — Feishu integration is referenced but optional; we'll learn the rest by attempting to start the server with a minimal config and iterating on errors.
 
 Spike outcome: ~70% of "best-guess" code in the plan has been replaced with verified shapes. The remaining 30% has a clear cheap path to verification during execution, not later in production.
+<!-- automerge-test 2026-05-22T12:49:00-04:00 -->
