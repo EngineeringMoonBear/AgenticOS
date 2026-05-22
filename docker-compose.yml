@@ -12,7 +12,7 @@
 #
 # Native host services (NOT in this compose file, see cloud-init):
 #   - Hermes Agent — Python service on localhost:7777, orchestrator
-#   - OpenViking — memory store on 127.0.0.1:1933, filesystem-backed over /opt/vault
+#     (will move to compose in a later task)
 #   - Codex CLI — invoked as subprocess by a Hermes skill
 #   - Claude Code — kept installed for fallback, not in default routing
 #
@@ -69,6 +69,48 @@ services:
       retries: 5
       start_period: 30s
 
+  # OpenViking — agent-native memory store. Verified schema (see
+  # openviking-config/README.md): ov.conf is JSON, top-level model
+  # OpenVikingConfig, all sub-models extra="forbid". The container's entrypoint
+  # (`openviking-entrypoint`) waits for /app/.openviking/ov.conf to exist
+  # before launching openviking-server, so the bind-mount must include the
+  # file before the container becomes healthy.
+  #
+  # Layout:
+  #   - /opt/vault            → /app/vault            (Syncthing-paired memory root)
+  #   - /opt/agenticos/openviking-config/ov.conf
+  #                           → /app/.openviking/ov.conf  (read-only config file)
+  #   - openviking-data (named volume)
+  #                           → /app/.openviking/data (hot sqlite + vectordb)
+  #
+  # Embeddings hit the sibling `ollama` service over the docker-compose
+  # network at http://ollama:11434 — see `embedding.dense.api_base` in
+  # ov.conf. nomic-embed-text is pre-pulled by cloud-init.
+  openviking:
+    image: ghcr.io/volcengine/openviking:v0.3.19
+    container_name: openviking
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1933:1933"
+    volumes:
+      - /opt/vault:/app/vault
+      - /opt/agenticos/openviking-config/ov.conf:/app/.openviking/ov.conf:ro
+      - openviking-data:/app/.openviking/data
+    environment:
+      OLLAMA_BASE_URL: "http://ollama:11434"
+      OPENVIKING_CONFIG_FILE: /app/.openviking/ov.conf
+      OPENVIKING_WITH_BOT: "0"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:1933/health > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
 volumes:
   agenticos-db-data:
   ollama-models:
+  openviking-data:

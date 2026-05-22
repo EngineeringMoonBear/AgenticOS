@@ -143,15 +143,43 @@ runcmd:
   # --- Clone repo ---
   - sudo -u deploy git clone https://github.com/${github_repo}.git /opt/agenticos/repo
 
-  # --- AgenticOS docker-compose (telemetry DB + Ollama; Hermes/OpenViking
-  # run as native systemd services, not in compose — see install steps below).
+  # --- AgenticOS docker-compose (telemetry DB + Ollama + OpenViking;
+  # Hermes runs as a native systemd service for now, will move to compose
+  # in a later task).
+  #
+  # The openviking-config directory in the repo holds ov.conf, which the
+  # OpenViking container bind-mounts read-only at /app/.openviking/ov.conf.
+  # We copy it to /opt/agenticos/openviking-config/ so the path is stable
+  # even if the repo gets re-cloned. /opt/vault is created earlier in this
+  # runcmd block (mkdir /opt/vault), and that ordering matters: the compose
+  # `up -d` below tries to bind-mount /opt/vault into openviking, so it
+  # must exist and be owned by deploy first.
   - |
     if [ -f /opt/agenticos/repo/docker-compose.yml ]; then
       cp /opt/agenticos/repo/docker-compose.yml /opt/agenticos/docker-compose.yml
+      if [ -d /opt/agenticos/repo/openviking-config ]; then
+        mkdir -p /opt/agenticos/openviking-config
+        cp -a /opt/agenticos/repo/openviking-config/. /opt/agenticos/openviking-config/
+        chown -R deploy:deploy /opt/agenticos/openviking-config
+      fi
       if [ ! -f /opt/agenticos/.env ]; then
-        echo "AGENTICOS_DB_PASSWORD=$(openssl rand -hex 32)" > /opt/agenticos/.env
+        {
+          echo "AGENTICOS_DB_PASSWORD=$(openssl rand -hex 32)"
+          echo "OPENVIKING_ROOT_API_KEY=ovk_$(openssl rand -hex 24)"
+        } > /opt/agenticos/.env
         chmod 600 /opt/agenticos/.env
         chown deploy:deploy /opt/agenticos/.env
+      fi
+      # If the .env predates OpenViking, add the key now (idempotent).
+      if ! grep -q '^OPENVIKING_ROOT_API_KEY=' /opt/agenticos/.env; then
+        echo "OPENVIKING_ROOT_API_KEY=ovk_$(openssl rand -hex 24)" >> /opt/agenticos/.env
+      fi
+      # Template the root_api_key into ov.conf. The repo ships a placeholder
+      # (__OPENVIKING_ROOT_API_KEY__) and we substitute from .env so the
+      # actual secret never lives in git.
+      if [ -f /opt/agenticos/openviking-config/ov.conf ]; then
+        OV_KEY=$(grep '^OPENVIKING_ROOT_API_KEY=' /opt/agenticos/.env | cut -d= -f2-)
+        sed -i "s|__OPENVIKING_ROOT_API_KEY__|${OV_KEY}|g" /opt/agenticos/openviking-config/ov.conf
       fi
       cd /opt/agenticos && sudo -u deploy docker compose -f /opt/agenticos/docker-compose.yml --env-file /opt/agenticos/.env up -d
     else
