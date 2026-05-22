@@ -155,6 +155,18 @@ runcmd:
       cd /opt/agenticos && sudo -u deploy docker compose -f /opt/agenticos/docker-compose.yml --env-file /opt/agenticos/.env up -d
     fi
 
+  # --- Honcho reachability ---
+  # Honcho's container binds 0.0.0.0:8000, but UFW (default deny incoming on
+  # the public interface) keeps it off the open internet. We explicitly allow
+  # port 8000 on:
+  #   - eth1: the DigitalOcean VPC-private interface, so App Platform's
+  #     dashboard service can reach HONCHO_URL=http://<vpc-private-ip>:8000
+  #   - tailscale0: so the Mac (and any future Tailnet member) can hit Honcho
+  #     directly over Tailscale for debugging / direct API calls.
+  # Public IP traffic to :8000 remains blocked by the default-deny policy.
+  - ufw allow in on eth1 to any port 8000 proto tcp
+  - ufw allow in on tailscale0 to any port 8000 proto tcp
+
   # --- Curator timer (won't actually fire usefully until `claude /login` is done) ---
   - systemctl daemon-reload
   - systemctl enable --now agenticos-curator.timer

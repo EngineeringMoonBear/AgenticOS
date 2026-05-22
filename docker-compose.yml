@@ -1,0 +1,71 @@
+# AgenticOS — Honcho self-hosted stack.
+#
+# Cloud-init copies this file from /opt/agenticos/repo/docker-compose.yml to
+# /opt/agenticos/docker-compose.yml and runs `docker compose up -d` with
+# /opt/agenticos/.env (which holds HONCHO_DB_PASSWORD, generated on first boot).
+#
+# Network reachability:
+#   - App Platform reaches Honcho over the DigitalOcean VPC (private IPv4).
+#     UFW must allow port 8000 on the VPC interface (see cloud-init).
+#   - The Mac reaches Honcho over Tailscale (tailscale0). UFW must allow port
+#     8000 on tailscale0 too.
+#   - The public IP is firewalled by UFW (default deny), so Honcho is NOT
+#     exposed to the open internet even though the container binds 0.0.0.0.
+#
+# Data:
+#   - Postgres data lives in the named volume `honcho-db-data`, which maps to
+#     /var/lib/docker/volumes/<project>_honcho-db-data on the host. Backups
+#     (Phase 7) snapshot this volume nightly.
+
+services:
+  honcho-db:
+    image: pgvector/pgvector:pg16
+    container_name: honcho-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: honcho
+      POSTGRES_PASSWORD: ${HONCHO_DB_PASSWORD}
+      POSTGRES_DB: honcho
+    volumes:
+      - honcho-db-data:/var/lib/postgresql/data
+    networks:
+      - agenticos
+    healthcheck:
+      # pg_isready returns 0 when Postgres is accepting connections. The
+      # `depends_on.condition: service_healthy` on the honcho service uses
+      # this to delay startup until the DB is actually ready (not just
+      # "container started").
+      test: ["CMD", "pg_isready", "-U", "honcho", "-d", "honcho"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  honcho:
+    image: plasticlabs/honcho:latest
+    container_name: honcho
+    restart: unless-stopped
+    depends_on:
+      honcho-db:
+        condition: service_healthy
+    environment:
+      # Honcho reads DATABASE_URL at startup. The hostname `honcho-db`
+      # resolves via the user-defined bridge network below.
+      DATABASE_URL: postgresql://honcho:${HONCHO_DB_PASSWORD}@honcho-db:5432/honcho
+      # Bind to all interfaces inside the container so the published port
+      # mapping below can route VPC and Tailscale traffic to it.
+      HOST: 0.0.0.0
+      PORT: "8000"
+    ports:
+      # Bind on all host interfaces. UFW (configured in cloud-init) is the
+      # actual gatekeeper — it allows port 8000 only on the VPC interface
+      # and tailscale0, and denies it on the public IP.
+      - "0.0.0.0:8000:8000"
+    networks:
+      - agenticos
+
+volumes:
+  honcho-db-data:
+
+networks:
+  agenticos:
+    driver: bridge
