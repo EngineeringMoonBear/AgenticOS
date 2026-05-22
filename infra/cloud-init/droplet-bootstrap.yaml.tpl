@@ -208,6 +208,14 @@ runcmd:
       echo "WARN: docker-compose.yml missing from repo; skipping db bring-up" >&2
     fi
 
+  # --- Run dashboard migrations against agenticos-db ---
+  # Applies apps/dashboard/migrations/*.sql via node-pg-migrate. Idempotent —
+  # node-pg-migrate tracks applied migrations in the pgmigrations table and
+  # skips ones already at the target version. Runs after the compose up -d so
+  # agenticos-db is alive; the script also waits up to 60s for pg_isready.
+  - chmod +x /opt/agenticos/repo/infra/cloud-init/scripts/run-migrations.sh
+  - /opt/agenticos/repo/infra/cloud-init/scripts/run-migrations.sh
+
   # --- Ollama model pre-pull ---
   # Pre-pulls Qwen 2.5 3B (general SLM) and nomic-embed-text (embeddings for
   # OpenViking). Done after `docker compose up -d` so the container is alive.
