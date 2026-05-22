@@ -60,6 +60,21 @@ write_files:
       Persistent=true
       Unit=agenticos-curator.service
 
+  # Drop-in override for the syncthing@deploy.service unit. By default
+  # Syncthing's GUI binds to 127.0.0.1:8384 (loopback only), which means
+  # even with UFW open on tailscale0 the GUI is unreachable from the
+  # Mac on the Tailnet. The STGUIADDRESS env var overrides the config.xml
+  # bind setting BEFORE Syncthing's first run, so we never have to edit
+  # config.xml or restart the service to fix the bind. This file lives
+  # at /etc/systemd/system/syncthing@deploy.service.d/override.conf and
+  # is systemd's canonical way to extend a stock unit without modifying
+  # the package-installed unit file.
+  - path: /etc/systemd/system/syncthing@deploy.service.d/override.conf
+    permissions: "0644"
+    content: |
+      [Service]
+      Environment=STGUIADDRESS=0.0.0.0:8384
+
       [Install]
       WantedBy=timers.target
 
@@ -90,26 +105,14 @@ runcmd:
   - apt-get update
   - DEBIAN_FRONTEND=noninteractive apt-get install -y syncthing
   - loginctl enable-linger deploy
+  # Reload systemd so it picks up the syncthing@deploy.service drop-in
+  # (Environment=STGUIADDRESS=0.0.0.0:8384) we wrote in write_files above.
+  # Without reload, the drop-in exists on disk but the unit cache doesn't
+  # know about it. Then enable+start applies the env var on first boot,
+  # so Syncthing binds to 0.0.0.0:8384 from the very first run — no need
+  # to edit config.xml or restart later.
+  - systemctl daemon-reload
   - systemctl enable --now syncthing@deploy.service
-  # Wait for Syncthing's first-run to create its config.xml, then change the
-  # GUI bind address from the default 127.0.0.1:8384 (loopback only) to
-  # 0.0.0.0:8384 so Tailscale-routed traffic can reach it. Without this,
-  # opening port 8384 on tailscale0 is a no-op because Syncthing only
-  # listens on lo. UFW rule below is necessary but not sufficient.
-  - |
-    timeout 30 bash -c '
-      until [ -f /home/deploy/.local/state/syncthing/config.xml ] || \
-            [ -f /home/deploy/.config/syncthing/config.xml ]; do
-        sleep 1
-      done
-    '
-  - |
-    CONFIG=$(find /home/deploy/.local/state/syncthing /home/deploy/.config/syncthing -name config.xml 2>/dev/null | head -1)
-    if [ -n "$CONFIG" ]; then
-      sed -i 's|<address>127\.0\.0\.1:8384</address>|<address>0.0.0.0:8384</address>|' "$CONFIG"
-      chown deploy:deploy "$CONFIG"
-      sudo -iu deploy systemctl --user restart syncthing
-    fi
   - ufw allow in on tailscale0 to any port 8384 proto tcp
 
   # --- Node 22 + pnpm ---
