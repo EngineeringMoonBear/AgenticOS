@@ -62,13 +62,29 @@ echo "prompt here" | codex exec --json \
 {"type":"turn.failed","error":{"message":"<same message>"}}
 ```
 
-**Unverified (success path — blocked on OpenAI billing):**
-Expected event types based on OpenAI's published Codex docs but **NOT** confirmed at probe time:
-- `agent_message` (or `message`) — the assistant's reply text
-- `token_count` (or `usage`) — input/output token tallies
-- `turn.completed` — successful turn close
+**Success path — VERIFIED (2026-05-22, after billing enabled):**
+```jsonl
+{"type":"thread.started","thread_id":"019e503f-4bd8-7d00-b475-97ad8985e32b"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"PONG"}}
+{"type":"turn.completed","usage":{"input_tokens":11754,"cached_input_tokens":10624,"output_tokens":6,"reasoning_output_tokens":0}}
+```
 
-**ACTION required before Phase 1.4 execution:** add a payment method to the `agenticos-droplet` OpenAI project at `platform.openai.com → Projects → Billing`. Set the $30/mo hard cap there. Once a single successful Codex call lands, re-run the probe and update `codex_coder.py`'s parser.
+**Parsing rules for `codex_coder.py`:**
+- Assistant text: collect `event.item.text` from every `item.completed` event where `event.item.type == "agent_message"` (multiple items possible per turn; concatenate in order received).
+- Token usage: read `event.usage` from `turn.completed`.
+  - `input_tokens`: total input including cached.
+  - `cached_input_tokens`: subset that hit OpenAI's prompt cache (~90% discount).
+  - `output_tokens`: regular generated tokens.
+  - `reasoning_output_tokens`: o-series "thinking" tokens (billed as output).
+
+**Pricing implication (worth a schema delta):** the trivial "PONG" reply consumed 11,754 input tokens, 10,624 of which were cache hits. At gpt-5-codex rates that's ≈$0.013 with the cache discount vs ≈$0.13 if all input had been uncached — a 10× difference. The `calls` table should record `cached_input_tokens` separately so cost math is accurate. Add the column to migration `0001_initial_telemetry.sql`:
+
+```sql
+ALTER TABLE calls ADD COLUMN cached_input_tokens INTEGER NOT NULL DEFAULT 0;
+```
+
+And update `pricing.py` / `pricing.ts` to compute as `(uncached_input * input_rate + cached_input * cached_rate + output * output_rate) / 1_000_000` instead of treating all input as uncached.
 
 ### 3. Hermes Agent
 
