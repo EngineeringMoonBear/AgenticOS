@@ -100,99 +100,123 @@
 
 ## Phase 1.0 — Infrastructure & install (≈3.5 hrs)
 
-### Task 1: Ollama install script via cloud-init
+### Task 1: Ollama via docker-compose
+
+> **Rationale:** Original task assumed native install + systemd override. That requires broader sudo on the Droplet than `deploy` has (NOPASSWD is restricted to `/bin/systemctl` and `/usr/sbin/ufw`). Pivoting to Docker aligns Ollama with the rest of the Spec 1 stack (Hermes + OpenViking also Docker-first per the verified-api-shapes doc) AND removes the sudoers complication for every downstream task. Net result: no install scripts to write, just a compose service + a post-up model-pull step.
 
 **Files:**
-- Create: `infra/cloud-init/scripts/install-ollama.sh`
-- Create: `infra/cloud-init/templates/ollama-override.conf`
+- Modify: `docker-compose.yml`
 - Modify: `infra/cloud-init/droplet-bootstrap.yaml.tpl`
 
-- [ ] **Step 1: Write the install script**
+- [ ] **Step 1: Add `ollama` service to `docker-compose.yml`**
 
-Create `infra/cloud-init/scripts/install-ollama.sh`:
-
-```bash
-#!/usr/bin/env bash
-# Idempotent Ollama install + model pull for AgenticOS Spec 1.
-# Pinned to bind localhost only (default), models pre-pulled so first task hits
-# warm cache instead of triggering a 2 GB download on the critical path.
-set -euo pipefail
-
-if ! command -v ollama >/dev/null 2>&1; then
-  curl -fsSL https://ollama.com/install.sh | sh
-fi
-
-# Drop-in override ensures Ollama is reachable only on 127.0.0.1 (default is
-# 0.0.0.0:11434, which we'd then have to firewall). Belt and suspenders with UFW.
-install -d -m 0755 /etc/systemd/system/ollama.service.d
-cp /opt/agenticos/repo/infra/cloud-init/templates/ollama-override.conf \
-   /etc/systemd/system/ollama.service.d/override.conf
-
-systemctl daemon-reload
-systemctl enable --now ollama.service
-
-# Wait for the daemon to start serving before pulling models
-for i in $(seq 1 30); do
-  if curl -fsS --max-time 2 http://127.0.0.1:11434/api/version >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
-
-# Pre-pull day-1 models (idempotent: `ollama pull` is a no-op if up-to-date)
-sudo -u deploy ollama pull qwen2.5:3b
-sudo -u deploy ollama pull nomic-embed-text
-
-echo "Ollama install complete; version: $(curl -s http://127.0.0.1:11434/api/version)"
-```
-
-- [ ] **Step 2: Write the systemd override**
-
-Create `infra/cloud-init/templates/ollama-override.conf`:
-
-```ini
-[Service]
-# Pin Ollama to localhost. Hermes calls it from the same host; nothing else
-# should reach it. Without this, Ollama listens on 0.0.0.0:11434 by default.
-Environment=OLLAMA_HOST=127.0.0.1:11434
-# Limit GPU/CPU offload to 2 models concurrently (RAM budget: ~2.3 GB).
-Environment=OLLAMA_MAX_LOADED_MODELS=2
-# Models stay resident 30 min after last use (avoid cold-start lag)
-Environment=OLLAMA_KEEP_ALIVE=30m
-```
-
-- [ ] **Step 3: Wire the script into cloud-init**
-
-Edit `infra/cloud-init/droplet-bootstrap.yaml.tpl`, find the `runcmd:` section, and add after the `--- Claude Code ---` block:
+Edit `docker-compose.yml` (which currently has only `agenticos-db`). Append the new service before the closing `volumes:` block:
 
 ```yaml
-  # --- Ollama (local SLM tier for Spec 1) ---
-  - chmod +x /opt/agenticos/repo/infra/cloud-init/scripts/install-ollama.sh
-  - /opt/agenticos/repo/infra/cloud-init/scripts/install-ollama.sh
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    # Bind to localhost only — Hermes (another compose service in Spec 1) will
+    # reach it on the docker-compose network at `http://ollama:11434`. UFW
+    # belt-and-suspenders blocks public traffic regardless.
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      # Inside the container, listen on all interfaces so the docker-compose
+      # network can route to it. Host-side port mapping above is what controls
+      # external reachability.
+      OLLAMA_HOST: "0.0.0.0:11434"
+      OLLAMA_MAX_LOADED_MODELS: "2"
+      OLLAMA_KEEP_ALIVE: "30m"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama --version > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 ```
 
-- [ ] **Step 4: Manually run on the existing Droplet (since user_data is ignore_changes)**
+Add to the existing `volumes:` block:
+```yaml
+volumes:
+  agenticos-db-data:
+  ollama-models:
+```
+
+- [ ] **Step 2: Add post-up model-pull step to cloud-init**
+
+Edit `infra/cloud-init/droplet-bootstrap.yaml.tpl`. After the existing `docker compose ... up -d` block (which brings up `agenticos-db` AND now `ollama`), add a new section that pre-pulls models inside the running container:
+
+```yaml
+  # --- Ollama model pre-pull ---
+  # Pre-pulls Qwen 2.5 3B (general SLM) and nomic-embed-text (embeddings for
+  # OpenViking). Done after `docker compose up -d` so the container is alive.
+  # Idempotent: ollama pull is a no-op if the model is already present.
+  # Runs in background (`&`) so cloud-init doesn't block on the ~2.3 GB
+  # download — first agent task after boot may wait if it triggers before
+  # the pull completes, but that's a one-time first-deploy cost.
+  - |
+    if docker ps --format '{{.Names}}' | grep -q '^ollama$'; then
+      for i in $(seq 1 30); do
+        if docker exec ollama ollama --version > /dev/null 2>&1; then break; fi
+        sleep 2
+      done
+      (docker exec ollama ollama pull qwen2.5:3b && \
+       docker exec ollama ollama pull nomic-embed-text) &
+    fi
+```
+
+If you previously added the native Ollama install section (`install-ollama.sh` invocation) to cloud-init, **remove it** — the Docker compose service replaces it entirely.
+
+- [ ] **Step 3: Verify locally (compose file parses)**
 
 ```bash
-scp -i ~/.ssh/agenticos-droplet \
-  infra/cloud-init/scripts/install-ollama.sh \
-  infra/cloud-init/templates/ollama-override.conf \
-  deploy@159.223.171.231:/tmp/
-
-ssh -i ~/.ssh/agenticos-droplet deploy@159.223.171.231 \
-  'sudo install -m 755 /tmp/install-ollama.sh /opt/agenticos/repo/infra/cloud-init/scripts/install-ollama.sh \
-   && sudo install -m 644 /tmp/ollama-override.conf /opt/agenticos/repo/infra/cloud-init/templates/ollama-override.conf \
-   && sudo /opt/agenticos/repo/infra/cloud-init/scripts/install-ollama.sh'
+cd /Users/joshuadunbar/Documents/Dev\ Projects/AgenticOS
+docker compose config 2>&1 | head -40
 ```
 
-Expected: `Ollama install complete; version: {"version":"0.x.x"}`.
+Expected: dumps both `agenticos-db` and `ollama` services with no errors.
 
-- [ ] **Step 5: Verify**
+- [ ] **Step 4: Deploy to the existing Droplet**
+
+`deploy` is in the `docker` group, so no sudo needed for compose operations.
+
+```bash
+# Push the updated compose file
+scp -i ~/.ssh/agenticos-droplet \
+  docker-compose.yml \
+  deploy@159.223.171.231:/opt/agenticos/docker-compose.yml
+
+# Bring up the new Ollama container alongside agenticos-db
+ssh -i ~/.ssh/agenticos-droplet deploy@159.223.171.231 \
+  'cd /opt/agenticos && docker compose --env-file /opt/agenticos/.env up -d'
+
+# Wait for healthy + pull models (in the background so model pulls don't block)
+ssh -i ~/.ssh/agenticos-droplet deploy@159.223.171.231 'set -e
+  for i in $(seq 1 30); do
+    s=$(docker inspect -f "{{.State.Health.Status}}" ollama 2>/dev/null || echo missing)
+    echo "ollama health: $s"
+    [ "$s" = "healthy" ] && break
+    sleep 3
+  done
+  docker exec ollama ollama pull qwen2.5:3b 2>&1 | tail -3
+  docker exec ollama ollama pull nomic-embed-text 2>&1 | tail -3
+'
+```
+
+Expected: both `docker pull` lines end with `success` or "pulled".
+
+- [ ] **Step 5: End-to-end verify**
 
 ```bash
 ssh -i ~/.ssh/agenticos-droplet deploy@159.223.171.231 \
   'curl -s http://127.0.0.1:11434/api/tags | python3 -m json.tool | head -20'
 ```
+
+Expected: JSON listing `qwen2.5:3b` and `nomic-embed-text`.
 
 Expected: JSON listing `qwen2.5:3b` and `nomic-embed-text` models.
 
