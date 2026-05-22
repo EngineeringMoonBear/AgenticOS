@@ -127,12 +127,103 @@ volumes:
   hermes-data:
 ```
 
-**Plugin contract — still unverified.** The `nousresearch/hermes-agent:main` image is enormous (~2.6GB) and ships its own Playwright; getting at its `SkillBase` requires extracting the Python package from the image. Best path is to:
-1. Pull from PyPI separately into a local venv on the Mac (no install needed on Droplet — just for reading the source)
-2. Read `~/.venv/lib/python3.12/site-packages/hermes_agent/skills/__init__.py` to confirm SkillBase class + decorator shape
-3. Update `cost_recorder.py` / `slm_runner.py` / `codex_coder.py` / `slm_router.py` against verified signatures
+**Plugin contract — VERIFIED 2026-05-22 via the running container.** Plan's "SkillBase" abstraction does NOT exist. Hermes has THREE distinct extension surfaces, each with a different shape:
 
-Defer this to a smaller follow-on spike (~20 min) before Phase 1.1 Task 11 execution.
+### 3a. Hook plugins (`/opt/hermes/plugins/<category>/<name>/`)
+
+- Directory layout:
+  ```
+  plugins/<category>/<name>/
+    ├── plugin.yaml      # manifest
+    ├── __init__.py      # implements hook functions
+    └── <name>.py        # core logic (convention)
+  ```
+- `plugin.yaml` declares hooks. Example (`disk-cleanup/plugin.yaml`):
+  ```yaml
+  name: disk-cleanup
+  version: 2.0.0
+  description: "Auto-track and clean up ephemeral files."
+  hooks:
+    - post_tool_call
+    - on_session_end
+  ```
+- Available hooks (verified from `observability/langfuse/plugin.yaml`): `pre_api_request`, `post_api_request`, `pre_llm_call`, `post_llm_call`, `pre_tool_call`, `post_tool_call`, `on_session_end`. Likely also: `on_session_start`, `on_turn_start`, `on_session_switch` — confirm at impl time.
+- Plugin loader: `/opt/hermes/hermes_cli/plugins.py`.
+
+### 3b. Memory providers (`/opt/hermes/plugins/memory/<name>/`)
+
+- Subclass `agent.memory_provider.MemoryProvider` (abstract base at `/opt/hermes/agent/memory_provider.py`).
+- Required: `name` property, `is_available()`, `initialize(session_id, **kwargs)`.
+- Lifecycle: `system_prompt_block()`, `prefetch(query)`, `queue_prefetch(query)`, `sync_turn(user, assistant)`, `shutdown()`, `get_tool_schemas()`, `handle_tool_call()`.
+- Optional hooks: `on_turn_start`, `on_session_end`, `on_session_switch`, `on_pre_compress`, `on_memory_write`, `on_delegation`.
+- Bundled examples: `honcho/`, `mem0/`, `hindsight/`, `byterover/`, `retaindb/`, `supermemory/`. OpenViking is NOT in the bundled set — it integrates via env-var config in the agent runtime (see Task 3's `hermes-config/config.yaml`), not as a Hermes memory plugin.
+
+### 3c. Tools (`/opt/hermes/tools/<name>.py`)
+
+- Tools register via `registry.register(...)` at module level (source: `/opt/hermes/tools/registry.py`).
+- Schema-declared, exposed to the LLM for invocation.
+
+### 3d. Cron jobs
+
+- File-based: `JOBS_FILE` (constants in `/opt/hermes/cron/__init__.py`).
+- Scheduler: `cron.scheduler.tick()` — file-locked.
+
+### Plan delta for Tasks 11–15 (REPLAN)
+
+The plan currently treats `cost_recorder`, `slm_router`, `codex_coder`, `slm_runner`, `inbox_watcher` as Hermes "skills" subclassing a non-existent `SkillBase`. Correct mapping:
+
+| Plan task | Old shape | Correct shape |
+|---|---|---|
+| **11 `cost_recorder`** | Skill subclass | **Hook plugin** at `packages/agenticos-hermes/plugins/cost-recorder/` with `plugin.yaml` declaring `post_llm_call` + `on_session_end`. Plugin dir is bind-mounted into `/opt/hermes/plugins/cost-recorder/` via docker-compose. |
+| **12 `slm_runner`** | Skill subclass | **Internal Python module** in our package (`workers/slm_runner.py`). Called by the cron-task code; not a Hermes plugin or tool. |
+| **13 `codex_coder`** | Skill subclass | **Internal Python module** (`workers/codex_coder.py`). Wraps `codex exec --json` subprocess. Defer Hermes Tool registration to Spec 2/3 — Phase 1.4 only needs it called from cron-task code. |
+| **14 `slm_router`** | Skill subclass | **Internal Python module** (`routing.py`). Pure-function decision tree from spec §5.1. |
+| **15 `inbox_watcher`** | Hermes plugin | **Standalone Python daemon** as its own docker-compose service. fsnotify on `/opt/vault/inbox/`. Triggers cron-task entrypoints via subprocess or REST. NOT a Hermes hook plugin. |
+
+### Revised `packages/agenticos-hermes/` layout
+
+```
+packages/agenticos-hermes/
+  pyproject.toml
+  src/agenticos_hermes/
+    db.py
+    pricing.py
+    routing.py           # slm_router (was: skills/slm_router.py)
+    workers/
+      slm_runner.py      # Ollama wrapper (was: skills/slm_runner.py)
+      codex_coder.py     # Codex CLI wrapper (was: skills/codex_coder.py)
+    tasks/
+      daily_brief.py
+      cost_report.py
+      inbox_triage.py
+  plugins/
+    cost-recorder/       # Hermes hook plugin (bind-mounted into Hermes container)
+      plugin.yaml
+      __init__.py
+  daemons/
+    inbox-watcher/       # Standalone fsnotify daemon
+      Dockerfile
+      watcher.py
+  tests/
+```
+
+Two docker-compose additions for Phase 1.1 (do these when Task 9 lands):
+1. Add bind mount on `hermes-agent` service: `- ./packages/agenticos-hermes/plugins/cost-recorder:/opt/hermes/plugins/cost-recorder:ro`
+2. Add new service `inbox-watcher` (Python + watchdog) sharing `/opt/vault` mount, depending on `hermes-agent`
+
+### Hermes external auth model (affects Task 17)
+
+Dashboard subcommand mints an ephemeral `secrets.token_urlsafe(32)` at container boot, embeds it in `index.html` as `window.__HERMES_SESSION_TOKEN__`. External callers (our Next.js dashboard) must either:
+- (a) Scrape that script tag from a single `GET /` to harvest the token, then use it for all `/api/*` calls, OR
+- (b) Wait for a stable-API-key auth mode upstream (open PR / issue territory)
+
+For Phase 1.3 Task 17 we'll start with (a) — single bootstrap fetch on the Next.js side that caches the token, refreshes on 401.
+
+### Confidence
+
+- **High:** Directory layouts, plugin.yaml schema, hook lifecycle event names, MemoryProvider ABC contract, tool-registry pattern, cron scheduler existence, dashboard ephemeral token pattern.
+- **Medium:** Exact hook function signatures — verify at impl time via `inspect.signature` against a loaded bundled plugin.
+- **Low:** Whether `inbox-watcher` daemon can call back via Hermes REST to create sessions vs going through the cron-tick path. Easiest to try REST first; fall back to cron if it doesn't work.
 
 ### 4. OpenViking
 
