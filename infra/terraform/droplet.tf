@@ -23,10 +23,26 @@ resource "digitalocean_droplet" "agenticos_droplet" {
 
   user_data = local.cloud_init
 
-  # Replace if the cloud-init template changes meaningfully.
   lifecycle {
     ignore_changes = [
-      image, # don't replace on image refreshes
+      # Image refresh shouldn't replace the running Droplet.
+      image,
+      # user_data is ForceNew — any cloud-init template edit would trigger
+      # destroy+recreate, losing Honcho data and Claude Code OAuth.
+      # Cloud-init only runs at first boot anyway, so editing the template
+      # for FUTURE droplets is fine; the existing Droplet ignores the drift.
+      # To force a recreate after a meaningful template change, do it
+      # explicitly with `terraform taint digitalocean_droplet.agenticos_droplet`.
+      user_data,
+      # ssh_keys can also trigger replacement when the keypair fingerprint
+      # changes (e.g., key rotation). We handle key rotation by adding the
+      # new key to the deploy user via separate automation, not by replacing
+      # the Droplet.
+      ssh_keys,
     ]
+    # Belt-and-suspenders: if we ever DO intentionally trigger replacement
+    # (via taint), create the new Droplet before destroying the old. Means
+    # we don't lose service if create fails.
+    create_before_destroy = true
   }
 }
