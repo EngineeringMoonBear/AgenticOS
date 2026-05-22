@@ -10,6 +10,8 @@
 
 **Spec reference:** `docs/superpowers/specs/2026-05-22-spec1-orchestrator-cost-observability-design.md`
 
+> **⚠ API-VERIFICATION DELTA — read first:** `docs/superpowers/specs/spec1-verified-api-shapes.md` captures the post-spike findings. The most important deltas: Hermes Agent and OpenViking are **Docker-first** (pivot Tasks 2 + 3 from pip+venv+systemd to docker-compose services), Codex CLI uses `codex exec --json` not `codex --print --json` and requires a one-time `codex login --with-api-key`, and `hermes-agent` is at `0.14.0` not `1.x`. Task code below has not been rewritten yet — refer to the verification doc for the corrected shapes when executing Tasks 2, 3, 4, 11–15, 17–18. An ~45-min sub-spike (new Task 11.5) is recommended before Phase 1.1 to lock the remaining Hermes plugin contract + OpenViking ov.conf schema.
+
 **Time estimate:** 18–25 hours over 1–2 weeks of evenings.
 
 **Prerequisites already done (don't redo):**
