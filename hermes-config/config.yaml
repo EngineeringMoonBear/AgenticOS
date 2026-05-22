@@ -1,0 +1,92 @@
+# AgenticOS — Hermes Agent configuration.
+#
+# Mounted into the container at $HERMES_HOME/config.yaml (HERMES_HOME=/opt/data).
+# The Hermes entrypoint copies its default example into HERMES_HOME on first
+# boot ONLY IF the file is missing — bind-mounting this file pre-empts that
+# bootstrap so our config is in effect on the very first run.
+#
+# Sources for each field:
+#   - cli-config.yaml.example shipped inside the Docker image (full schema
+#     reference, see /opt/hermes/cli-config.yaml.example)
+#   - hermes_cli/config.py default tree (verified at task-3 execution time)
+#   - plugins/memory/openviking/__init__.py for the OpenViking env-var contract
+#
+# Secrets (API keys, DB URL) are NEVER written here. They live in
+# /opt/agenticos/.env which docker-compose loads via env_file:.
+
+# =============================================================================
+# Main LLM — OpenAI gpt-4o-mini for Hermes's own internal use (session naming,
+# routing decisions, light tool calls). Heavy coding work is delegated to
+# Codex via a skill (Task 13), so this only needs to be cheap and fast.
+#
+# provider "custom" + base_url is the documented way to point Hermes at a raw
+# OpenAI-compatible endpoint. We use it instead of provider "openai" because
+# the latter requires `hermes auth` interactive setup; "custom" reads the API
+# key from OPENAI_API_KEY (set in /opt/agenticos/.env, forwarded via env_file).
+# =============================================================================
+model:
+  default: "gpt-4o-mini"
+  provider: "custom"
+  base_url: "https://api.openai.com/v1"
+
+# =============================================================================
+# Auxiliary models (vision, web_extract, session_search, compression).
+# Pin to the same cheap OpenAI endpoint via "main" so we don't accidentally
+# require an OpenRouter / Nous Portal credential we haven't configured.
+# =============================================================================
+auxiliary:
+  vision:
+    provider: "main"
+    model: "gpt-4o-mini"
+  web_extract:
+    provider: "main"
+    model: "gpt-4o-mini"
+  session_search:
+    provider: "main"
+    model: "gpt-4o-mini"
+  compression:
+    provider: "main"
+    model: "gpt-4o-mini"
+
+# =============================================================================
+# Persistent memory — built-in MEMORY.md/USER.md PLUS the OpenViking provider.
+# OpenViking endpoint, account, user, agent come from the OPENVIKING_* env
+# vars passed in via docker-compose (see plugins/memory/openviking/__init__.py
+# for the contract). Only ONE external provider may be active at a time;
+# we pick openviking because it's already running in the stack (Task 2).
+# =============================================================================
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 2200
+  user_char_limit: 1375
+  provider: "openviking"
+
+# =============================================================================
+# Agent behaviour — defaults are fine for now. Skills, cron jobs, plugins are
+# added in Tasks 9–16. Task 3 just stands the service up.
+# =============================================================================
+agent:
+  max_turns: 60
+  reasoning_effort: "medium"
+  verbose: false
+
+# =============================================================================
+# Terminal — local backend; the container itself IS the sandbox, so skill
+# tool calls run inside /opt/data on the hermes-data volume.
+# =============================================================================
+terminal:
+  backend: "local"
+  cwd: "/opt/data/workspace"
+  timeout: 180
+  lifetime_seconds: 300
+
+# =============================================================================
+# Compression — keep defaults; long sessions auto-shrink.
+# =============================================================================
+compression:
+  enabled: true
+  threshold: 0.50
+  target_ratio: 0.20
+  protect_last_n: 20
+  protect_first_n: 3
