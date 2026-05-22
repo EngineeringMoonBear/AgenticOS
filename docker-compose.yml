@@ -1,0 +1,49 @@
+# AgenticOS — Docker Compose stack.
+#
+# Cloud-init copies this file from /opt/agenticos/repo/docker-compose.yml to
+# /opt/agenticos/docker-compose.yml and runs `docker compose up -d` with
+# /opt/agenticos/.env (which holds AGENTICOS_DB_PASSWORD, generated on first boot).
+#
+# Current services:
+#   - agenticos-db (pgvector/pg15) — Postgres backing the cost-telemetry tables
+#     (task / session / call rows). pgvector image is retained even though we
+#     no longer need vector ops here, because dropping it would require image
+#     reconfig and the disk footprint is negligible.
+#
+# Native host services (NOT in this compose file, see cloud-init):
+#   - Hermes Agent — Python service on localhost:7777, orchestrator
+#   - Ollama — local SLM host on 127.0.0.1:11434
+#   - OpenViking — memory store on 127.0.0.1:1933, filesystem-backed over /opt/vault
+#   - Codex CLI — invoked as subprocess by a Hermes skill
+#   - Claude Code — kept installed for fallback, not in default routing
+#
+# Why some things are in compose and others aren't:
+# Hermes/Ollama/OpenViking benefit from native filesystem access (vault, models,
+# logs) and don't gain from containerization. Postgres benefits from data-volume
+# isolation, restart policies, and not interfering with system Postgres.
+
+services:
+  agenticos-db:
+    image: pgvector/pgvector:pg15
+    container_name: agenticos-db
+    restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      POSTGRES_DB: agenticos
+      POSTGRES_USER: agenticos
+      POSTGRES_PASSWORD: ${AGENTICOS_DB_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - agenticos-db-data:/var/lib/postgresql/data
+    # Bind to localhost only — never expose Postgres to the network. Hermes
+    # and the dashboard's API routes connect via 127.0.0.1.
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agenticos -d agenticos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  agenticos-db-data:

@@ -143,17 +143,32 @@ runcmd:
   # --- Clone repo ---
   - sudo -u deploy git clone https://github.com/${github_repo}.git /opt/agenticos/repo
 
-  # --- Honcho docker-compose (no-op if compose file not yet in repo) ---
+  # --- AgenticOS docker-compose (telemetry DB only; Hermes/Ollama/OpenViking
+  # run as native systemd services, not in compose — see install steps below).
   - |
     if [ -f /opt/agenticos/repo/docker-compose.yml ]; then
       cp /opt/agenticos/repo/docker-compose.yml /opt/agenticos/docker-compose.yml
       if [ ! -f /opt/agenticos/.env ]; then
-        echo "HONCHO_DB_PASSWORD=$(openssl rand -hex 32)" > /opt/agenticos/.env
+        echo "AGENTICOS_DB_PASSWORD=$(openssl rand -hex 32)" > /opt/agenticos/.env
         chmod 600 /opt/agenticos/.env
         chown deploy:deploy /opt/agenticos/.env
       fi
       cd /opt/agenticos && sudo -u deploy docker compose -f /opt/agenticos/docker-compose.yml --env-file /opt/agenticos/.env up -d
+    else
+      echo "WARN: docker-compose.yml missing from repo; skipping db bring-up" >&2
     fi
+
+  # --- Honcho reachability ---
+  # Honcho's container binds 0.0.0.0:8000, but UFW (default deny incoming on
+  # the public interface) keeps it off the open internet. We explicitly allow
+  # port 8000 on:
+  #   - eth1: the DigitalOcean VPC-private interface, so App Platform's
+  #     dashboard service can reach HONCHO_URL=http://<vpc-private-ip>:8000
+  #   - tailscale0: so the Mac (and any future Tailnet member) can hit Honcho
+  #     directly over Tailscale for debugging / direct API calls.
+  # Public IP traffic to :8000 remains blocked by the default-deny policy.
+  - ufw allow in on eth1 to any port 8000 proto tcp
+  - ufw allow in on tailscale0 to any port 8000 proto tcp
 
   # --- Curator timer (won't actually fire usefully until `claude /login` is done) ---
   - systemctl daemon-reload
