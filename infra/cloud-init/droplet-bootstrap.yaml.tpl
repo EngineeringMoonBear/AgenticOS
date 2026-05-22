@@ -136,6 +136,22 @@ runcmd:
     fi
   - sudo -iu deploy bash -lc 'npm install -g @anthropic-ai/claude-code'
 
+  # --- Codex CLI (OpenAI's coder; API-key-billed, no interactive OAuth) ---
+  # Installs under deploy's user-scoped npm prefix (already set by the Claude block
+  # above), so auto-updates work without sudo. Authentication is done via
+  # `codex login --with-api-key` after first secret-refresh — see Task 5's
+  # refresh-secrets.sh which calls login after rewriting /opt/agenticos/.env.
+  # For the FIRST boot of a fresh Droplet (before the secret-refresh timer
+  # has fired), this block also does an initial login from OPENAI_API_KEY
+  # in /opt/agenticos/.env if that env var is set.
+  - sudo -iu deploy bash -lc 'npm install -g @openai/codex'
+  - |
+    if [ -f /opt/agenticos/.env ] && grep -q '^OPENAI_API_KEY=' /opt/agenticos/.env; then
+      sudo -iu deploy bash -lc 'set -a && source /opt/agenticos/.env && set +a && printenv OPENAI_API_KEY | codex login --with-api-key'
+    else
+      echo "INFO: skipping initial codex login — OPENAI_API_KEY not yet in .env" >&2
+    fi
+
   # --- Filesystem layout ---
   - mkdir -p /opt/agenticos /opt/vault /opt/backups /var/log/agenticos /etc/agenticos
   - chown -R deploy:deploy /opt/agenticos /opt/vault /opt/backups /var/log/agenticos /etc/agenticos
