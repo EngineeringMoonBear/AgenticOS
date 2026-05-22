@@ -143,7 +143,7 @@ runcmd:
   # --- Clone repo ---
   - sudo -u deploy git clone https://github.com/${github_repo}.git /opt/agenticos/repo
 
-  # --- AgenticOS docker-compose (telemetry DB only; Hermes/Ollama/OpenViking
+  # --- AgenticOS docker-compose (telemetry DB + Ollama; Hermes/OpenViking
   # run as native systemd services, not in compose — see install steps below).
   - |
     if [ -f /opt/agenticos/repo/docker-compose.yml ]; then
@@ -156,6 +156,23 @@ runcmd:
       cd /opt/agenticos && sudo -u deploy docker compose -f /opt/agenticos/docker-compose.yml --env-file /opt/agenticos/.env up -d
     else
       echo "WARN: docker-compose.yml missing from repo; skipping db bring-up" >&2
+    fi
+
+  # --- Ollama model pre-pull ---
+  # Pre-pulls Qwen 2.5 3B (general SLM) and nomic-embed-text (embeddings for
+  # OpenViking). Done after `docker compose up -d` so the container is alive.
+  # Idempotent: ollama pull is a no-op if the model is already present.
+  # Runs in background (`&`) so cloud-init doesn't block on the ~2.3 GB
+  # download — first agent task after boot may wait if it triggers before
+  # the pull completes, but that's a one-time first-deploy cost.
+  - |
+    if docker ps --format '{{.Names}}' | grep -q '^ollama$'; then
+      for i in $(seq 1 30); do
+        if docker exec ollama ollama --version > /dev/null 2>&1; then break; fi
+        sleep 2
+      done
+      (docker exec ollama ollama pull qwen2.5:3b && \
+       docker exec ollama ollama pull nomic-embed-text) &
     fi
 
   # --- Honcho reachability ---
