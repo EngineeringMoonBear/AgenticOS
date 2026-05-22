@@ -91,6 +91,25 @@ runcmd:
   - DEBIAN_FRONTEND=noninteractive apt-get install -y syncthing
   - loginctl enable-linger deploy
   - systemctl enable --now syncthing@deploy.service
+  # Wait for Syncthing's first-run to create its config.xml, then change the
+  # GUI bind address from the default 127.0.0.1:8384 (loopback only) to
+  # 0.0.0.0:8384 so Tailscale-routed traffic can reach it. Without this,
+  # opening port 8384 on tailscale0 is a no-op because Syncthing only
+  # listens on lo. UFW rule below is necessary but not sufficient.
+  - |
+    timeout 30 bash -c '
+      until [ -f /home/deploy/.local/state/syncthing/config.xml ] || \
+            [ -f /home/deploy/.config/syncthing/config.xml ]; do
+        sleep 1
+      done
+    '
+  - |
+    CONFIG=$(find /home/deploy/.local/state/syncthing /home/deploy/.config/syncthing -name config.xml 2>/dev/null | head -1)
+    if [ -n "$CONFIG" ]; then
+      sed -i 's|<address>127\.0\.0\.1:8384</address>|<address>0.0.0.0:8384</address>|' "$CONFIG"
+      chown deploy:deploy "$CONFIG"
+      sudo -iu deploy systemctl --user restart syncthing
+    fi
   - ufw allow in on tailscale0 to any port 8384 proto tcp
 
   # --- Node 22 + pnpm ---
