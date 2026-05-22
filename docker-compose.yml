@@ -12,15 +12,14 @@
 #
 # Native host services (NOT in this compose file, see cloud-init):
 #   - Hermes Agent — Python service on localhost:7777, orchestrator
-#   - Ollama — local SLM host on 127.0.0.1:11434
 #   - OpenViking — memory store on 127.0.0.1:1933, filesystem-backed over /opt/vault
 #   - Codex CLI — invoked as subprocess by a Hermes skill
 #   - Claude Code — kept installed for fallback, not in default routing
 #
 # Why some things are in compose and others aren't:
-# Hermes/Ollama/OpenViking benefit from native filesystem access (vault, models,
-# logs) and don't gain from containerization. Postgres benefits from data-volume
-# isolation, restart policies, and not interfering with system Postgres.
+# Hermes/OpenViking benefit from native filesystem access (vault, logs) and
+# don't gain from containerization. Postgres and Ollama benefit from data-volume
+# isolation, restart policies, and not interfering with system services.
 
 services:
   agenticos-db:
@@ -45,5 +44,31 @@ services:
       timeout: 5s
       retries: 10
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    # Bind to localhost only — Hermes (another compose service in Spec 1) will
+    # reach it on the docker-compose network at `http://ollama:11434`. UFW
+    # belt-and-suspenders blocks public traffic regardless.
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      # Inside the container, listen on all interfaces so the docker-compose
+      # network can route to it. Host-side port mapping above is what controls
+      # external reachability.
+      OLLAMA_HOST: "0.0.0.0:11434"
+      OLLAMA_MAX_LOADED_MODELS: "2"
+      OLLAMA_KEEP_ALIVE: "30m"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama --version > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 volumes:
   agenticos-db-data:
+  ollama-models:
