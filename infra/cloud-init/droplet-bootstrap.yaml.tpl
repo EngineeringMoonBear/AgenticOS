@@ -99,22 +99,20 @@ runcmd:
   - npm install -g pnpm@9.15.4
 
   # --- Claude Code (OAuth login is a manual one-time step after this) ---
-  # Two-step install:
-  #   1. npm install -g (as root): bootstraps the CLI so we can run `claude install`
-  #   2. `claude install` (as deploy user): relocates to native user-space install
-  #      at ~/.claude/local/claude.  This makes the deploy user the owner of the
-  #      binary, so auto-updates work without sudo and `claude doctor` stops
-  #      warning about insufficient update permissions on every invocation.
-  #      Without step 2: deploy user can run claude but can't self-update.
-  - npm install -g @anthropic-ai/claude-code
-  - sudo -iu deploy bash -c 'claude install latest </dev/null' || true
-  # Ensure ~/.claude/local is on deploy's PATH (claude install adds it but
-  # cloud-init's bash session won't see the rc-file change without explicit help)
+  # Install as the deploy user with a user-scoped npm prefix so auto-updates
+  # work without sudo.  Root-global npm installs (which is what `npm install
+  # -g` does by default) put the binary at /usr/lib/node_modules/... owned by
+  # root, and Claude Code's self-update logic can't write there as deploy.
+  # User-scoped prefix → deploy owns its npm-managed binaries → updates work.
+  - mkdir -p /home/deploy/.npm-global
+  - chown -R deploy:deploy /home/deploy/.npm-global
+  - sudo -iu deploy npm config set prefix /home/deploy/.npm-global
   - |
-    if ! sudo -iu deploy grep -q '\.claude/local' /home/deploy/.bashrc 2>/dev/null; then
-      echo 'export PATH="$HOME/.claude/local:$PATH"' >> /home/deploy/.bashrc
+    if ! sudo -iu deploy grep -q '.npm-global/bin' /home/deploy/.bashrc 2>/dev/null; then
+      echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> /home/deploy/.bashrc
       chown deploy:deploy /home/deploy/.bashrc
     fi
+  - sudo -iu deploy bash -lc 'npm install -g @anthropic-ai/claude-code'
 
   # --- Filesystem layout ---
   - mkdir -p /opt/agenticos /opt/vault /opt/backups /var/log/agenticos /etc/agenticos
