@@ -198,6 +198,33 @@ services:
       # bootstrap, gosu drop, dashboard FastAPI startup) takes ~20-40 s.
       start_period: 90s
 
+  # ---------------------------------------------------------------------------
+  # inbox-watcher — standalone daemon (NOT a Hermes plugin) that watches
+  # /opt/vault/inbox/ for stable .md files and shells out to the
+  # `agenticos_hermes.tasks.inbox_triage` module. See
+  # packages/agenticos-hermes/daemons/inbox-watcher/ for the implementation.
+  # ---------------------------------------------------------------------------
+  inbox-watcher:
+    build:
+      context: ./packages/agenticos-hermes
+      dockerfile: daemons/inbox-watcher/Dockerfile
+    container_name: inbox-watcher
+    restart: unless-stopped
+    volumes:
+      - /opt/vault:/opt/vault
+    environment:
+      AGENTICOS_DB_URL: postgresql://agenticos:${AGENTICOS_DB_PASSWORD}@agenticos-db:5432/agenticos
+      OLLAMA_ENDPOINT: http://ollama:11434
+      OPENVIKING_ENDPOINT: http://openviking:1933
+      OPENVIKING_ROOT_API_KEY: ${OPENVIKING_ROOT_API_KEY}
+    env_file:
+      - /opt/agenticos/.env
+    depends_on:
+      agenticos-db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
 volumes:
   agenticos-db-data:
   ollama-models:
