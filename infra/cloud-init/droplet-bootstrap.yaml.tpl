@@ -143,9 +143,7 @@ runcmd:
   # --- Clone repo ---
   - sudo -u deploy git clone https://github.com/${github_repo}.git /opt/agenticos/repo
 
-  # --- AgenticOS docker-compose (telemetry DB + Ollama + OpenViking;
-  # Hermes runs as a native systemd service for now, will move to compose
-  # in a later task).
+  # --- AgenticOS docker-compose (telemetry DB + Ollama + OpenViking + Hermes).
   #
   # The openviking-config directory in the repo holds ov.conf, which the
   # OpenViking container bind-mounts read-only at /app/.openviking/ov.conf.
@@ -161,6 +159,14 @@ runcmd:
         mkdir -p /opt/agenticos/openviking-config
         cp -a /opt/agenticos/repo/openviking-config/. /opt/agenticos/openviking-config/
         chown -R deploy:deploy /opt/agenticos/openviking-config
+      fi
+      # Hermes config — bind-mounted read-only at /opt/data/config.yaml inside
+      # the hermes-agent container. Copying to a stable /opt/agenticos/ path
+      # decouples the bind-mount source from the repo clone location.
+      if [ -d /opt/agenticos/repo/hermes-config ]; then
+        mkdir -p /opt/agenticos/hermes-config
+        cp -a /opt/agenticos/repo/hermes-config/. /opt/agenticos/hermes-config/
+        chown -R deploy:deploy /opt/agenticos/hermes-config
       fi
       if [ ! -f /opt/agenticos/.env ]; then
         {
