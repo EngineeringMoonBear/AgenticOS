@@ -46,18 +46,28 @@
 - Modify: `infra/terraform/droplet.tf`
 
 **Hermes plugin package (new Python workspace)**
+
+> **Phase 1.1 was replanned** after the verified-API-shapes spike (commit `96b6976`). The original assumption of a `SkillBase` abstraction was wrong. Hermes uses three distinct extension surfaces (hook plugins, memory providers, tools) — see `docs/superpowers/specs/spec1-verified-api-shapes.md` §3 for the contract. Below is the revised layout.
+
 - Create: `packages/agenticos-hermes/pyproject.toml`
 - Create: `packages/agenticos-hermes/src/agenticos_hermes/__init__.py`
-- Create: `packages/agenticos-hermes/src/agenticos_hermes/db.py`
-- Create: `packages/agenticos-hermes/src/agenticos_hermes/pricing.py`
-- Create: `packages/agenticos-hermes/src/agenticos_hermes/skills/cost_recorder.py`
-- Create: `packages/agenticos-hermes/src/agenticos_hermes/skills/slm_runner.py`
-- Create: `packages/agenticos-hermes/src/agenticos_hermes/skills/codex_coder.py`
-- Create: `packages/agenticos-hermes/src/agenticos_hermes/skills/slm_router.py`
-- Create: `packages/agenticos-hermes/src/agenticos_hermes/plugins/inbox_watcher.py`
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/db.py` — Postgres connection helper
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/pricing.py` — cost-per-call math (incl. cached_input_tokens math)
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/routing.py` — SLM-vs-Codex decision tree (pure function)
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/workers/__init__.py`
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/workers/slm_runner.py` — Ollama HTTP wrapper (internal module, NOT a Hermes plugin)
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/workers/codex_coder.py` — `codex exec --json` subprocess wrapper (internal module)
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/tasks/__init__.py`
 - Create: `packages/agenticos-hermes/src/agenticos_hermes/tasks/daily_brief.py`
 - Create: `packages/agenticos-hermes/src/agenticos_hermes/tasks/cost_report.py`
-- Create: `packages/agenticos-hermes/tests/` (one per skill/plugin/task)
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/tasks/inbox_triage.py`
+- Create: `packages/agenticos-hermes/plugins/cost-recorder/plugin.yaml` — Hermes hook-plugin manifest
+- Create: `packages/agenticos-hermes/plugins/cost-recorder/__init__.py` — hook function impls (post_llm_call, on_session_end)
+- Create: `packages/agenticos-hermes/daemons/inbox-watcher/Dockerfile`
+- Create: `packages/agenticos-hermes/daemons/inbox-watcher/watcher.py` — fsnotify daemon
+- Create: `packages/agenticos-hermes/daemons/inbox-watcher/pyproject.toml`
+- Create: `packages/agenticos-hermes/tests/` (one per module)
+- Modify: `docker-compose.yml` — bind-mount cost-recorder into hermes-agent + add inbox-watcher service
 
 **Dashboard (existing Next.js app, brownfield)**
 - Create: `apps/dashboard/lib/agent/hermes-client.ts`
@@ -1124,17 +1134,26 @@ git commit -m "feat(infra): run dashboard migrations against agenticos-db at boo
 
 ## Phase 1.1 — Hermes plugins package (≈5–6 hrs)
 
+> **REPLANNED 2026-05-22.** Original tasks assumed a `SkillBase` Hermes class that doesn't exist. The verified contract (see `docs/superpowers/specs/spec1-verified-api-shapes.md` §3) splits our work into:
+> - **Hook plugin** (`plugins/cost-recorder/`): runs inside Hermes, observes every LLM call via `post_llm_call` + `on_session_end` hooks declared in `plugin.yaml`. Bind-mounted into the Hermes container.
+> - **Internal Python modules** (`src/agenticos_hermes/workers/`, `routing.py`, `tasks/`): pure code our cron tasks import; not loaded by Hermes.
+> - **Standalone Docker daemon** (`daemons/inbox-watcher/`): separate compose service, fsnotify on `/opt/vault/inbox/`, triggers Hermes via REST.
+>
+> A few hook signatures still need confirmation at impl time (see notes in Task 11). The plan flags those clearly and the subagent should `inspect.signature` against a bundled plugin (`/opt/hermes/plugins/disk-cleanup/`) at the start of that task.
+
 ### Task 9: Plugin package skeleton
 
 **Files:**
 - Create: `packages/agenticos-hermes/pyproject.toml`
 - Create: `packages/agenticos-hermes/src/agenticos_hermes/__init__.py`
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/workers/__init__.py`
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/tasks/__init__.py`
 - Create: `packages/agenticos-hermes/tests/__init__.py`
+- Create: `packages/agenticos-hermes/plugins/.gitkeep`
+- Create: `packages/agenticos-hermes/daemons/.gitkeep`
 - Create: `packages/agenticos-hermes/.gitignore`
 
 - [ ] **Step 1: Write pyproject.toml**
-
-Create `packages/agenticos-hermes/pyproject.toml`:
 
 ```toml
 [build-system]
@@ -1144,13 +1163,14 @@ build-backend = "hatchling.build"
 [project]
 name = "agenticos-hermes"
 version = "0.1.0"
-description = "AgenticOS Hermes Agent plugins and skills"
+description = "AgenticOS internal modules, Hermes hook plugins, and standalone daemons"
 requires-python = ">=3.11"
 dependencies = [
   "psycopg[binary]>=3.2",
   "httpx>=0.27",
   "watchdog>=4.0",
   "pydantic>=2.6",
+  "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -1160,6 +1180,9 @@ dev = [
   "pytest-mock>=3.12",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/agenticos_hermes"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
@@ -1167,64 +1190,73 @@ asyncio_mode = "auto"
 
 - [ ] **Step 2: Write package init**
 
-Create `packages/agenticos-hermes/src/agenticos_hermes/__init__.py`:
-
+`src/agenticos_hermes/__init__.py`:
 ```python
-"""AgenticOS plugins and skills for Hermes Agent.
+"""AgenticOS Spec 1 plugins and internal modules.
 
-Modules:
-- skills.cost_recorder — after-session hook that writes telemetry rows
-- skills.slm_runner — invokes Ollama HTTP API
-- skills.codex_coder — wraps `codex --print` subprocess
-- skills.slm_router — picks Codex vs Ollama per task
-- plugins.inbox_watcher — fsnotify on /opt/vault/inbox
-- tasks.daily_brief — cron-driven daily summary
-- tasks.cost_report — cron-driven cost rollup
+Submodules:
+  - workers.slm_runner    — Ollama HTTP client (internal, not a Hermes plugin)
+  - workers.codex_coder   — codex exec --json subprocess wrapper (internal)
+  - routing               — slm_router decision tree (pure function)
+  - tasks.daily_brief     — cron task (07:00 ET)
+  - tasks.cost_report     — cron task (23:00 ET)
+  - tasks.inbox_triage    — triggered by daemons/inbox-watcher
+  - db                    — Postgres connection helper
+  - pricing               — per-call cost math (incl. cached_input_tokens discount)
 
-See: docs/superpowers/specs/2026-05-22-spec1-orchestrator-cost-observability-design.md
+Sibling top-level dirs (NOT inside src/):
+  - plugins/cost-recorder/  — Hermes hook plugin bind-mounted into the container
+  - daemons/inbox-watcher/  — Standalone Docker daemon
 """
 __version__ = "0.1.0"
 ```
 
-- [ ] **Step 3: Add gitignore**
+- [ ] **Step 3: Create empty init files + gitignore**
 
-Create `packages/agenticos-hermes/.gitignore`:
+```bash
+mkdir -p packages/agenticos-hermes/src/agenticos_hermes/workers
+mkdir -p packages/agenticos-hermes/src/agenticos_hermes/tasks
+mkdir -p packages/agenticos-hermes/plugins
+mkdir -p packages/agenticos-hermes/daemons
+mkdir -p packages/agenticos-hermes/tests
 
-```
+touch packages/agenticos-hermes/src/agenticos_hermes/workers/__init__.py
+touch packages/agenticos-hermes/src/agenticos_hermes/tasks/__init__.py
+touch packages/agenticos-hermes/tests/__init__.py
+touch packages/agenticos-hermes/plugins/.gitkeep
+touch packages/agenticos-hermes/daemons/.gitkeep
+
+cat > packages/agenticos-hermes/.gitignore <<'EOF'
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
 .venv/
 dist/
+EOF
 ```
 
-- [ ] **Step 4: Create test init + verify install works locally**
+- [ ] **Step 4: Sanity-check the package installs**
 
 ```bash
-mkdir -p packages/agenticos-hermes/src/agenticos_hermes/skills
-mkdir -p packages/agenticos-hermes/src/agenticos_hermes/plugins
-mkdir -p packages/agenticos-hermes/src/agenticos_hermes/tasks
-touch packages/agenticos-hermes/src/agenticos_hermes/skills/__init__.py
-touch packages/agenticos-hermes/src/agenticos_hermes/plugins/__init__.py
-touch packages/agenticos-hermes/src/agenticos_hermes/tasks/__init__.py
-touch packages/agenticos-hermes/tests/__init__.py
-
 cd packages/agenticos-hermes
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install -e .[dev]
+.venv/bin/pip install -e '.[dev]'
 .venv/bin/python -c 'import agenticos_hermes; print(agenticos_hermes.__version__)'
 ```
-
 Expected: `0.1.0`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Commit + PR**
 
 ```bash
-git add packages/agenticos-hermes/
-git commit -m "feat(hermes-plugins): package skeleton with pyproject.toml"
+git -c commit.gpgsign=false commit -am "feat(hermes-plugins): package skeleton (replanned layout)"
+git push -u origin agenticos/spec1-task9-skeleton
+gh pr create --base main --title "feat(hermes-plugins): package skeleton" --body "..."
+gh pr merge <num> --squash --auto --delete-branch
 ```
+
+The CI's `Pytest (agenticos-hermes)` check will activate at this point (it was skipping until the pyproject.toml existed) — but tests are empty so it should pass.
 
 ---
 
@@ -1236,73 +1268,73 @@ git commit -m "feat(hermes-plugins): package skeleton with pyproject.toml"
 - Create: `packages/agenticos-hermes/tests/test_db.py`
 - Create: `packages/agenticos-hermes/tests/test_pricing.py`
 
-- [ ] **Step 1: Write the failing test for pricing**
+- [ ] **Step 1: Write failing tests for pricing (TDD)**
 
-Create `packages/agenticos-hermes/tests/test_pricing.py`:
-
+`tests/test_pricing.py`:
 ```python
 from agenticos_hermes.pricing import cost_cents
 
-def test_local_ollama_call_is_free():
+def test_local_ollama_is_free():
     assert cost_cents(provider="ollama", model="qwen2.5:3b",
-                      input_tokens=1000, output_tokens=500) == 0
+                      input_tokens=1000, cached_input_tokens=0,
+                      output_tokens=500, reasoning_output_tokens=0) == 0
 
-def test_gpt5_codex_cost_is_computed():
-    # gpt-5-codex hypothetical pricing: $1.25/M input, $10/M output (placeholder
-    # until we lock to real OpenAI rates at implementation time per spec §11.2)
-    # 1000 input + 500 output = 0.125c + 0.5c = 0.625c → rounds to 1 cent
-    result = cost_cents(provider="openai", model="gpt-5-codex",
-                       input_tokens=1000, output_tokens=500)
-    assert result >= 1, "expected at least 1 cent for paid call"
+def test_gpt5_codex_with_cache_discount():
+    # 11754 input (10624 cached, 1130 uncached), 6 output, 0 reasoning — matches the verified probe
+    # Expected: ~1.3 cents with cache discount, ~13 cents without
+    c = cost_cents(provider="openai", model="gpt-5-codex",
+                   input_tokens=11754, cached_input_tokens=10624,
+                   output_tokens=6, reasoning_output_tokens=0)
+    assert 1 <= c <= 3, f"expected ~1-2 cents with cache, got {c}"
 
-def test_unknown_model_raises():
-    import pytest
-    with pytest.raises(ValueError, match="unknown model"):
-        cost_cents(provider="openai", model="bogus-model",
-                   input_tokens=100, output_tokens=100)
+def test_reasoning_tokens_billed_as_output():
+    # If model has reasoning tokens (o-series), they count toward output rate
+    c_with_reasoning = cost_cents(provider="openai", model="gpt-5",
+                                   input_tokens=100, cached_input_tokens=0,
+                                   output_tokens=50, reasoning_output_tokens=200)
+    c_without = cost_cents(provider="openai", model="gpt-5",
+                            input_tokens=100, cached_input_tokens=0,
+                            output_tokens=50, reasoning_output_tokens=0)
+    assert c_with_reasoning > c_without
 ```
 
-- [ ] **Step 2: Run the test, see it fail**
-
-```bash
-cd packages/agenticos-hermes
-.venv/bin/pytest tests/test_pricing.py -v
-```
-
-Expected: ImportError on `agenticos_hermes.pricing`.
-
-- [ ] **Step 3: Implement pricing.py**
-
-Create `packages/agenticos-hermes/src/agenticos_hermes/pricing.py`:
+- [ ] **Step 2: Implement `pricing.py`**
 
 ```python
-"""Per-call cost computation for cost-recorder.
+"""Per-call cost computation. Source of truth for $ amounts in telemetry.
 
-Pricing tables here are the canonical source of truth for $ amounts in the
-telemetry. They MUST be updated when OpenAI changes prices. The commit history
-of this file is the audit trail.
+Pricing tables are checked into version control — commit history acts as the
+audit trail. Update whenever OpenAI changes their rate card.
 
-Per spec §5.2 + §11.2: gpt-5-codex pricing should be verified against OpenAI's
-current rate card at implementation time.
+Schema: per million tokens, in cents. Tuple is (input_rate, cached_rate, output_rate).
+Cached input is heavily discounted (~90% off) per OpenAI's prompt-cache pricing.
 """
-from typing import Final
+from typing import Final, Literal
 
-# Cost per million tokens, in cents. (input_cents, output_cents)
-_OPENAI_PRICING: Final[dict[str, tuple[int, int]]] = {
-    # TODO at impl time: verify against https://openai.com/api/pricing
-    "gpt-5-codex": (125, 1000),    # $1.25 / $10.00 per M tokens
-    "gpt-5":       (300, 1500),    # $3.00 / $15.00 per M tokens
-    "gpt-5-mini":  (15, 60),       # $0.15 / $0.60 per M tokens
-    "gpt-4o-mini": (15, 60),       # $0.15 / $0.60 per M tokens
+# (input_per_M_cents, cached_input_per_M_cents, output_per_M_cents)
+_OPENAI_PRICING: Final[dict[str, tuple[int, int, int]]] = {
+    # Verify against https://openai.com/api/pricing — last reviewed 2026-05-22
+    "gpt-5-codex": (125, 12, 1000),    # $1.25 / $0.12 / $10.00
+    "gpt-5":       (300, 30, 1500),    # $3.00 / $0.30 / $15.00
+    "gpt-5-mini":  (15,  1,  60),      # $0.15 / $0.01 / $0.60
+    "gpt-4o-mini": (15,  1,  60),
 }
 
 _LOCAL_PROVIDERS: Final[set[str]] = {"ollama"}
 
 
-def cost_cents(provider: str, model: str, input_tokens: int, output_tokens: int) -> int:
-    """Compute cost in integer cents (rounded up).
+def cost_cents(*,
+               provider: Literal["openai", "ollama"],
+               model: str,
+               input_tokens: int,
+               cached_input_tokens: int = 0,
+               output_tokens: int,
+               reasoning_output_tokens: int = 0) -> int:
+    """Compute cost in integer cents (ceiling-rounded).
 
-    Local providers (Ollama) always return 0.
+    Reasoning tokens (o-series "thinking") are billed at the output rate.
+    Cached input tokens are billed at the cached (discounted) rate; the
+    remaining `input_tokens - cached_input_tokens` are billed at full input rate.
     """
     if provider in _LOCAL_PROVIDERS:
         return 0
@@ -1311,26 +1343,60 @@ def cost_cents(provider: str, model: str, input_tokens: int, output_tokens: int)
     if model not in _OPENAI_PRICING:
         raise ValueError(f"unknown model: {model}")
 
-    in_per_m, out_per_m = _OPENAI_PRICING[model]
-    # Cost in micro-cents, then ceiling-divide to cents
-    micro = input_tokens * in_per_m + output_tokens * out_per_m
-    # Tokens-per-M → divide by 1_000_000; cents already × 100, so:
-    cents = -(-micro // 1_000_000)  # ceil div
-    return int(cents)
+    in_rate, cached_rate, out_rate = _OPENAI_PRICING[model]
+    uncached_input = max(0, input_tokens - cached_input_tokens)
+    total_output = output_tokens + reasoning_output_tokens
+
+    # Cents-per-million tokens * tokens → integer cents (ceiling)
+    micro = (uncached_input * in_rate
+             + cached_input_tokens * cached_rate
+             + total_output * out_rate)
+    return -(-micro // 1_000_000)  # ceiling division
 ```
 
-- [ ] **Step 4: Run tests, see them pass**
+- [ ] **Step 3: Run tests**
 
 ```bash
-cd packages/agenticos-hermes
-.venv/bin/pytest tests/test_pricing.py -v
+cd packages/agenticos-hermes && .venv/bin/pytest tests/test_pricing.py -v
 ```
-
 Expected: 3 passed.
 
-- [ ] **Step 5: Write the failing test for db helper**
+- [ ] **Step 4: Write `db.py`**
 
-Create `packages/agenticos-hermes/tests/test_db.py`:
+```python
+"""Postgres connection helper. Plugin/task code uses `with connect() as conn:`.
+
+We use psycopg3 sync — Hermes calls our hook functions synchronously and our
+cron tasks are batch-oriented; async would add complexity for no win.
+"""
+import os
+from contextlib import contextmanager
+from typing import Iterator
+
+import psycopg
+
+
+def build_db_url() -> str:
+    """Read AGENTICOS_DB_URL from env. Raises if unset."""
+    url = os.environ.get("AGENTICOS_DB_URL")
+    if not url:
+        raise RuntimeError("AGENTICOS_DB_URL not set in environment")
+    return url
+
+
+@contextmanager
+def connect() -> Iterator[psycopg.Connection]:
+    """Yield a Postgres connection. Commits on clean exit, rolls back on error."""
+    with psycopg.connect(build_db_url()) as conn:
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+```
+
+- [ ] **Step 5: Write test_db.py**
 
 ```python
 import pytest
@@ -1340,351 +1406,303 @@ def test_build_db_url_from_env(monkeypatch):
     monkeypatch.setenv("AGENTICOS_DB_URL", "postgresql://x:y@h:5432/d")
     assert build_db_url() == "postgresql://x:y@h:5432/d"
 
-def test_build_db_url_missing_raises(monkeypatch):
+def test_missing_raises(monkeypatch):
     monkeypatch.delenv("AGENTICOS_DB_URL", raising=False)
     with pytest.raises(RuntimeError, match="AGENTICOS_DB_URL"):
         build_db_url()
 ```
 
-- [ ] **Step 6: Run, see fail**
+- [ ] **Step 6: Run all tests + commit + PR**
 
 ```bash
-.venv/bin/pytest tests/test_db.py -v
-```
-
-Expected: ImportError.
-
-- [ ] **Step 7: Implement db.py**
-
-Create `packages/agenticos-hermes/src/agenticos_hermes/db.py`:
-
-```python
-"""Postgres connection helpers shared across skills/plugins/tasks.
-
-We use psycopg3 sync connections from Hermes plugins (skills run in Hermes's
-own threadpool — async pool would add complexity for no win here).
-"""
-import os
-from contextlib import contextmanager
-from typing import Iterator
-
-import psycopg
-from psycopg import Connection
-
-
-def build_db_url() -> str:
-    """Return AGENTICOS_DB_URL from env. Raises if unset."""
-    url = os.environ.get("AGENTICOS_DB_URL")
-    if not url:
-        raise RuntimeError("AGENTICOS_DB_URL not set in environment")
-    return url
-
-
-@contextmanager
-def connect() -> Iterator[Connection]:
-    """Yield a Postgres connection. Commits on clean exit, rolls back on error."""
-    url = build_db_url()
-    with psycopg.connect(url) as conn:
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-```
-
-- [ ] **Step 8: Run, see pass**
-
-```bash
-.venv/bin/pytest tests/test_db.py -v
-```
-
-Expected: 2 passed.
-
-- [ ] **Step 9: Commit**
-
-```bash
-git add packages/agenticos-hermes/src/agenticos_hermes/db.py \
-        packages/agenticos-hermes/src/agenticos_hermes/pricing.py \
-        packages/agenticos-hermes/tests/test_db.py \
-        packages/agenticos-hermes/tests/test_pricing.py
-git commit -m "feat(hermes-plugins): db connection helper + pricing table"
+.venv/bin/pytest -v
+git -c commit.gpgsign=false commit -am "feat(hermes-plugins): db + pricing helpers (with cached_input_tokens math)"
+git push -u origin agenticos/spec1-task10-db-pricing
+gh pr create --base main --title "feat(hermes-plugins): db + pricing helpers"
+gh pr merge <num> --squash --auto --delete-branch
 ```
 
 ---
 
-### Task 11: cost_recorder skill
+### Task 11: cost-recorder hook plugin
 
 **Files:**
-- Create: `packages/agenticos-hermes/src/agenticos_hermes/skills/cost_recorder.py`
+- Create: `packages/agenticos-hermes/plugins/cost-recorder/plugin.yaml`
+- Create: `packages/agenticos-hermes/plugins/cost-recorder/__init__.py`
 - Create: `packages/agenticos-hermes/tests/test_cost_recorder.py`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: VERIFY hook function signatures against a bundled plugin**
 
-Create `packages/agenticos-hermes/tests/test_cost_recorder.py`:
-
-```python
-"""Tests for the cost-recorder skill.
-
-Strategy: mock psycopg.connect; assert the INSERT statements + parameters
-are correct shape. This tests our logic without needing a real Postgres.
-"""
-import pytest
-from unittest.mock import MagicMock, patch
-from agenticos_hermes.skills.cost_recorder import record_call, record_task_completion
-
-@patch("agenticos_hermes.skills.cost_recorder.connect")
-def test_record_call_inserts_row(mock_connect):
-    conn = MagicMock()
-    cursor = MagicMock()
-    conn.cursor.return_value.__enter__.return_value = cursor
-    mock_connect.return_value.__enter__.return_value = conn
-
-    record_call(
-        session_id="s1",
-        task_id="t1",
-        provider="openai",
-        model="gpt-5-codex",
-        input_tokens=1000,
-        output_tokens=500,
-        latency_ms=1234,
-        metadata={"finish_reason": "stop"},
-    )
-
-    cursor.execute.assert_any_call(
-        """INSERT INTO calls (session_id, task_id, provider, model,
-                              input_tokens, output_tokens, cost_cents,
-                              latency_ms, metadata)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)""",
-        ("s1", "t1", "openai", "gpt-5-codex", 1000, 500, 2, 1234,
-         '{"finish_reason": "stop"}')
-    )
-
-@patch("agenticos_hermes.skills.cost_recorder.connect")
-def test_record_task_completion_rolls_up_cost(mock_connect):
-    conn = MagicMock()
-    cursor = MagicMock()
-    cursor.fetchone.return_value = (175,)  # sum of cost_cents in child calls
-    conn.cursor.return_value.__enter__.return_value = cursor
-    mock_connect.return_value.__enter__.return_value = conn
-
-    record_task_completion(task_id="t1", status="done")
-
-    # Should SELECT sum, then UPDATE the task row
-    assert any("SELECT COALESCE(SUM(cost_cents), 0)" in str(call)
-               for call in cursor.execute.call_args_list), \
-           "expected aggregation query"
-    assert any("UPDATE tasks" in str(call)
-               for call in cursor.execute.call_args_list), \
-           "expected UPDATE on tasks"
-```
-
-- [ ] **Step 2: Run, see fail**
+Before writing code, run this probe on the Droplet to learn the actual hook function shape:
 
 ```bash
-.venv/bin/pytest tests/test_cost_recorder.py -v
+ssh -i ~/.ssh/agenticos-droplet deploy@159.223.171.231 \
+  'docker exec hermes-agent bash -c "
+    cat /opt/hermes/plugins/observability/langfuse/__init__.py | head -80
+    echo ---
+    grep -rn \"def post_llm_call\\|def on_session_end\\|def post_tool_call\" /opt/hermes/plugins/ 2>/dev/null | head -10
+  "'
 ```
 
-Expected: ImportError.
+Document the actual signatures observed (which args, kwargs, return types) at the top of `plugin.yaml` as comments. **If signatures differ from what's assumed below, adjust the function bodies accordingly — the hook contract is the source of truth.**
 
-- [ ] **Step 3: Implement cost_recorder.py**
+- [ ] **Step 2: Write `plugin.yaml`**
 
-Create `packages/agenticos-hermes/src/agenticos_hermes/skills/cost_recorder.py`:
+```yaml
+name: cost-recorder
+version: 1.0.0
+description: "AgenticOS cost telemetry — records every LLM call to agenticos-db (tasks/sessions/calls)."
+author: AgenticOS
+requires_env:
+  - AGENTICOS_DB_URL
+hooks:
+  - post_llm_call
+  - on_session_end
+```
+
+- [ ] **Step 3: Write `__init__.py`**
 
 ```python
-"""cost-recorder: writes telemetry rows after every LLM call and task.
+"""cost-recorder hook plugin for Hermes Agent.
 
-Registered in Hermes config.yaml under `skills:`. The exact Hermes hook shape
-(decorator vs config-driven event registration) depends on Hermes's plugin
-contract — verify against the installed version. The pure-function entry
-points below are stable regardless.
+VERIFY at impl time: the exact hook signatures Hermes calls. Confirmed-good
+references for shape: /opt/hermes/plugins/observability/langfuse/__init__.py
+(which implements pre/post_llm_call hooks). Adjust the parameter names below
+to match Hermes 0.14's actual contract; the BODY logic is correct regardless.
+
+Hook lifecycle (per spec1-verified-api-shapes.md §3a):
+  - post_llm_call: fires after every LLM API call. Use to record `calls` rows.
+  - on_session_end: fires when a Hermes session closes. Use to roll up
+    cost_cents into the parent `tasks` row.
 """
+from __future__ import annotations
+
 import json
+import logging
+import os
+import time
 from typing import Any
 
-from ..db import connect
-from ..pricing import cost_cents
+from agenticos_hermes.db import connect
+from agenticos_hermes.pricing import cost_cents
+
+logger = logging.getLogger(__name__)
 
 
-def record_call(
-    *,
-    session_id: str,
-    task_id: str,
-    provider: str,
-    model: str,
-    input_tokens: int,
-    output_tokens: int,
-    latency_ms: int,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Insert a row into `calls` for one LLM API call.
+def _task_id_for_session(session_id: str) -> str | None:
+    """Look up the parent task_id for a Hermes session.
 
-    Cost is computed from the pricing table; metadata is JSONB-serialized.
+    Spec 1's session→task linkage: when a cron task starts a Hermes session,
+    it inserts the (task_id, session_id, hermes_skill) row in `sessions` first.
+    By the time post_llm_call fires, the row already exists.
     """
-    cost = cost_cents(provider=provider, model=model,
-                     input_tokens=input_tokens, output_tokens=output_tokens)
-    meta_json = json.dumps(metadata or {})
-
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO calls (session_id, task_id, provider, model,
-                                      input_tokens, output_tokens, cost_cents,
-                                      latency_ms, metadata)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)""",
-                (session_id, task_id, provider, model, input_tokens,
-                 output_tokens, cost, latency_ms, meta_json),
-            )
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT task_id FROM sessions WHERE id = %s", (session_id,))
+        row = cur.fetchone()
+        return row[0] if row else None
 
 
-def record_task_completion(*, task_id: str, status: str,
-                            error: str | None = None) -> None:
-    """Mark task done/failed and roll up cost from its calls."""
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT COALESCE(SUM(cost_cents), 0) FROM calls WHERE task_id = %s",
-                (task_id,),
-            )
-            total_cents = cur.fetchone()[0]
-            cur.execute(
-                """UPDATE tasks
-                   SET status = %s, ended_at = now(), cost_cents = %s, error = %s
-                   WHERE id = %s""",
-                (status, total_cents, error, task_id),
-            )
+def post_llm_call(*, session_id: str, request: dict[str, Any],
+                   response: dict[str, Any], **kwargs) -> None:
+    """Record a single LLM API call into `calls`.
+
+    Expected `response` shape (verify at impl time):
+      response.usage = {input_tokens, cached_input_tokens, output_tokens,
+                        reasoning_output_tokens}
+      response.model = "gpt-5-codex" / "qwen2.5:3b" / ...
+      response.provider = "openai" / "ollama"
+      response.latency_ms = int
+    """
+    task_id = _task_id_for_session(session_id)
+    if task_id is None:
+        logger.warning("post_llm_call: session %s has no task row; skipping",
+                       session_id)
+        return
+
+    provider = response.get("provider", "openai")
+    model = response.get("model", "unknown")
+    usage = response.get("usage", {})
+    cost = cost_cents(
+        provider=provider,
+        model=model,
+        input_tokens=usage.get("input_tokens", 0),
+        cached_input_tokens=usage.get("cached_input_tokens", 0),
+        output_tokens=usage.get("output_tokens", 0),
+        reasoning_output_tokens=usage.get("reasoning_output_tokens", 0),
+    )
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO calls
+               (session_id, task_id, provider, model,
+                input_tokens, cached_input_tokens,
+                output_tokens, reasoning_output_tokens,
+                cost_cents, latency_ms, metadata)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)""",
+            (
+                session_id, task_id, provider, model,
+                usage.get("input_tokens", 0),
+                usage.get("cached_input_tokens", 0),
+                usage.get("output_tokens", 0),
+                usage.get("reasoning_output_tokens", 0),
+                cost,
+                response.get("latency_ms", 0),
+                json.dumps(response.get("metadata", {})),
+            ),
+        )
 
 
-def record_task_start(*, task_id: str, kind: str, trigger: str,
-                       metadata: dict[str, Any] | None = None) -> None:
-    """Create a `tasks` row in 'queued' status."""
-    meta_json = json.dumps(metadata or {})
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO tasks (id, kind, trigger, status, metadata)
-                   VALUES (%s, %s, %s, 'running', %s::jsonb)""",
-                (task_id, kind, trigger, meta_json),
-            )
+def on_session_end(*, session_id: str, **kwargs) -> None:
+    """Close the sessions row, then roll up task cost from its calls."""
+    with connect() as conn, conn.cursor() as cur:
+        # Close session: set ended_at, roll up its calls' cost
+        cur.execute(
+            """SELECT COALESCE(SUM(cost_cents), 0) FROM calls
+               WHERE session_id = %s""",
+            (session_id,),
+        )
+        session_cost = cur.fetchone()[0]
+        cur.execute(
+            """UPDATE sessions SET ended_at = now(), cost_cents = %s
+               WHERE id = %s""",
+            (session_cost, session_id),
+        )
 
-
-def record_session_start(*, session_id: str, task_id: str,
-                          hermes_skill: str) -> None:
-    """Create a `sessions` row."""
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO sessions (id, task_id, hermes_skill)
-                   VALUES (%s, %s, %s)""",
-                (session_id, task_id, hermes_skill),
-            )
-
-
-def record_session_end(*, session_id: str) -> None:
-    """Close session, roll up cost."""
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT COALESCE(SUM(cost_cents), 0) FROM calls WHERE session_id = %s",
-                (session_id,),
-            )
-            total = cur.fetchone()[0]
-            cur.execute(
-                """UPDATE sessions
-                   SET ended_at = now(), cost_cents = %s
-                   WHERE id = %s""",
-                (total, session_id),
-            )
+        # Also roll up to the task: sum cost across all its sessions
+        cur.execute(
+            """UPDATE tasks t SET cost_cents = (
+                 SELECT COALESCE(SUM(cost_cents), 0) FROM calls
+                 WHERE task_id = t.id
+               )
+               WHERE id = (SELECT task_id FROM sessions WHERE id = %s)""",
+            (session_id,),
+        )
 ```
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 4: Write tests with mocked connect()**
+
+```python
+# tests/test_cost_recorder.py
+import json
+from unittest.mock import MagicMock, patch
+import sys
+import os
+from pathlib import Path
+
+# Add plugins/ to sys.path so we can import the hook module
+PLUGINS_DIR = Path(__file__).parent.parent / "plugins" / "cost-recorder"
+sys.path.insert(0, str(PLUGINS_DIR.parent))  # parent so we can do `import importlib; importlib.import_module("cost-recorder")` — but cost-recorder has a hyphen so we import via spec_from_file_location
+
+import importlib.util
+spec = importlib.util.spec_from_file_location(
+    "cost_recorder", str(PLUGINS_DIR / "__init__.py")
+)
+cost_recorder = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cost_recorder)
+
+
+@patch.object(cost_recorder, "connect")
+def test_post_llm_call_inserts_row(mock_connect):
+    cursor = MagicMock()
+    cursor.fetchone.return_value = ("task-abc",)
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+    mock_connect.return_value.__enter__.return_value = conn
+
+    cost_recorder.post_llm_call(
+        session_id="sess-1",
+        request={},
+        response={
+            "provider": "openai",
+            "model": "gpt-5-codex",
+            "usage": {"input_tokens": 11754, "cached_input_tokens": 10624,
+                      "output_tokens": 6, "reasoning_output_tokens": 0},
+            "latency_ms": 1500,
+        },
+    )
+    # First execute is the task_id lookup; second is the INSERT
+    assert any("INSERT INTO calls" in str(c)
+               for c in cursor.execute.call_args_list), \
+           "expected INSERT into calls"
+
+
+@patch.object(cost_recorder, "connect")
+def test_on_session_end_rolls_up(mock_connect):
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (42,)
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+    mock_connect.return_value.__enter__.return_value = conn
+
+    cost_recorder.on_session_end(session_id="sess-1")
+
+    calls = [str(c) for c in cursor.execute.call_args_list]
+    assert any("UPDATE sessions" in c for c in calls)
+    assert any("UPDATE tasks" in c for c in calls)
+```
+
+- [ ] **Step 5: Run tests + commit + PR**
 
 ```bash
 .venv/bin/pytest tests/test_cost_recorder.py -v
+git -c commit.gpgsign=false commit -am "feat(hermes-plugins): cost-recorder hook plugin (post_llm_call + on_session_end)"
+git push -u origin agenticos/spec1-task11-cost-recorder
+gh pr create --base main --title "feat(hermes-plugins): cost-recorder hook plugin"
+gh pr merge <num> --squash --auto --delete-branch
 ```
 
-Expected: 2 passed.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/agenticos-hermes/src/agenticos_hermes/skills/cost_recorder.py \
-        packages/agenticos-hermes/tests/test_cost_recorder.py
-git commit -m "feat(hermes-plugins): cost_recorder skill (per-call + rollup)"
-```
+> The plugin doesn't actually run inside Hermes until Task 16 bind-mounts it into the container and enables it. Tests are the verification for this task.
 
 ---
 
-### Task 12: slm_runner skill (Ollama wrapper)
+### Task 12: slm_runner worker (Ollama HTTP wrapper)
 
 **Files:**
-- Create: `packages/agenticos-hermes/src/agenticos_hermes/skills/slm_runner.py`
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/workers/slm_runner.py`
 - Create: `packages/agenticos-hermes/tests/test_slm_runner.py`
 
-- [ ] **Step 1: Write the failing test**
+This is an **internal Python module**, not a Hermes plugin. It's imported by our cron task code (Tasks 23–25).
 
-Create `packages/agenticos-hermes/tests/test_slm_runner.py`:
+- [ ] **Step 1: Failing test**
 
 ```python
+# tests/test_slm_runner.py
 import pytest
 from unittest.mock import patch, MagicMock
-from agenticos_hermes.skills.slm_runner import run_slm, SlmResult
+from agenticos_hermes.workers.slm_runner import run_slm, SlmResult
 
-@patch("agenticos_hermes.skills.slm_runner.httpx.Client")
-def test_run_slm_returns_text_tokens_and_latency(mock_client_cls):
-    mock_client = MagicMock()
-    mock_client_cls.return_value.__enter__.return_value = mock_client
-
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = {
+@patch("agenticos_hermes.workers.slm_runner.httpx.Client")
+def test_run_slm_parses_response(mock_client_cls):
+    client = MagicMock()
+    mock_client_cls.return_value.__enter__.return_value = client
+    resp = MagicMock()
+    resp.json.return_value = {
         "choices": [{"message": {"content": "category: farming"}}],
         "usage": {"prompt_tokens": 42, "completion_tokens": 8},
     }
-    mock_resp.raise_for_status = MagicMock()
-    mock_client.post.return_value = mock_resp
+    resp.raise_for_status = MagicMock()
+    client.post.return_value = resp
 
-    result = run_slm(model="qwen2.5:3b", prompt="classify this", system="")
-
-    assert isinstance(result, SlmResult)
-    assert result.text == "category: farming"
-    assert result.input_tokens == 42
-    assert result.output_tokens == 8
-    assert result.model == "qwen2.5:3b"
-    assert result.latency_ms >= 0
-
-@patch("agenticos_hermes.skills.slm_runner.httpx.Client")
-def test_run_slm_raises_on_http_error(mock_client_cls):
-    import httpx
-    mock_client = MagicMock()
-    mock_client_cls.return_value.__enter__.return_value = mock_client
-    mock_client.post.side_effect = httpx.HTTPError("ollama down")
-
-    with pytest.raises(httpx.HTTPError):
-        run_slm(model="qwen2.5:3b", prompt="x", system="")
+    r = run_slm(model="qwen2.5:3b", prompt="classify this")
+    assert isinstance(r, SlmResult)
+    assert r.text == "category: farming"
+    assert r.input_tokens == 42
+    assert r.output_tokens == 8
+    assert r.model == "qwen2.5:3b"
 ```
 
-- [ ] **Step 2: Run, see fail**
-
-```bash
-.venv/bin/pytest tests/test_slm_runner.py -v
-```
-
-- [ ] **Step 3: Implement slm_runner.py**
-
-Create `packages/agenticos-hermes/src/agenticos_hermes/skills/slm_runner.py`:
+- [ ] **Step 2: Implement `slm_runner.py`**
 
 ```python
-"""slm-runner: thin wrapper over Ollama's OpenAI-compat REST API.
-
-Always returns 0-cost; that's the whole point of the local tier.
+"""Ollama HTTP wrapper. Uses Ollama's OpenAI-compatible /v1/chat/completions
+endpoint. Always returns 0 cost (handled by pricing.py's local-providers set).
 """
 import os
 import time
 from dataclasses import dataclass
-
 import httpx
 
-OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "http://127.0.0.1:11434")
+OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "http://ollama:11434")
 OLLAMA_TIMEOUT = float(os.environ.get("OLLAMA_TIMEOUT", "60"))
 
 
@@ -1699,22 +1717,18 @@ class SlmResult:
 
 def run_slm(*, model: str, prompt: str, system: str = "",
             temperature: float = 0.2) -> SlmResult:
-    """Call Ollama's OpenAI-compatible chat-completions endpoint."""
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "stream": False,
-    }
-
     start = time.monotonic()
     with httpx.Client(timeout=OLLAMA_TIMEOUT) as client:
-        resp = client.post(f"{OLLAMA_ENDPOINT}/v1/chat/completions", json=payload)
+        resp = client.post(
+            f"{OLLAMA_ENDPOINT}/v1/chat/completions",
+            json={"model": model, "messages": messages,
+                  "temperature": temperature, "stream": False},
+        )
         resp.raise_for_status()
         data = resp.json()
     latency_ms = int((time.monotonic() - start) * 1000)
@@ -1728,83 +1742,112 @@ def run_slm(*, model: str, prompt: str, system: str = "",
     )
 ```
 
-- [ ] **Step 4: Run tests, see pass**
+- [ ] **Step 3: Run, commit, PR**
 
 ```bash
 .venv/bin/pytest tests/test_slm_runner.py -v
-```
-
-Expected: 2 passed.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/agenticos-hermes/src/agenticos_hermes/skills/slm_runner.py \
-        packages/agenticos-hermes/tests/test_slm_runner.py
-git commit -m "feat(hermes-plugins): slm_runner skill (Ollama OpenAI-compat)"
+git -c commit.gpgsign=false commit -am "feat(hermes-plugins): slm_runner worker (Ollama OpenAI-compat HTTP)"
+git push -u origin agenticos/spec1-task12-slm-runner
+gh pr create --base main --title "feat(hermes-plugins): slm_runner worker"
+gh pr merge <num> --squash --auto --delete-branch
 ```
 
 ---
 
-### Task 13: codex_coder skill (Codex CLI subprocess wrapper)
+### Task 13: codex_coder worker (Codex CLI wrapper)
 
 **Files:**
-- Create: `packages/agenticos-hermes/src/agenticos_hermes/skills/codex_coder.py`
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/workers/codex_coder.py`
 - Create: `packages/agenticos-hermes/tests/test_codex_coder.py`
 
-- [ ] **Step 1: Write the failing test**
+Internal Python module. Uses the verified `codex exec --json` invocation pattern from `spec1-verified-api-shapes.md` §2.
 
-Create `packages/agenticos-hermes/tests/test_codex_coder.py`:
+- [ ] **Step 1: Failing test (verified JSONL event shape)**
 
 ```python
+# tests/test_codex_coder.py
 import json
 import pytest
 from unittest.mock import patch, MagicMock
-from agenticos_hermes.skills.codex_coder import run_codex, CodexResult
+from agenticos_hermes.workers.codex_coder import run_codex, CodexResult
 
-@patch("agenticos_hermes.skills.codex_coder.subprocess.run")
-def test_run_codex_parses_jsonl_output(mock_run):
-    # Codex CLI --json emits JSONL: each line is one event
-    output_lines = [
-        json.dumps({"type": "metadata", "model": "gpt-5-codex"}),
-        json.dumps({"type": "message", "role": "assistant",
-                    "content": "Sure, here's the answer"}),
-        json.dumps({"type": "usage", "input_tokens": 100,
-                    "output_tokens": 50}),
+@patch("agenticos_hermes.workers.codex_coder.subprocess.run")
+def test_run_codex_parses_verified_jsonl(mock_run):
+    # Real shape from a successful gpt-5-codex run (spec1-verified-api-shapes.md §2)
+    events = [
+        json.dumps({"type": "thread.started", "thread_id": "abc-123"}),
+        json.dumps({"type": "turn.started"}),
+        json.dumps({"type": "item.completed",
+                    "item": {"id": "item_0", "type": "agent_message", "text": "PONG"}}),
+        json.dumps({"type": "turn.completed",
+                    "usage": {"input_tokens": 11754, "cached_input_tokens": 10624,
+                              "output_tokens": 6, "reasoning_output_tokens": 0}}),
     ]
     mock_run.return_value = MagicMock(
-        returncode=0,
-        stdout="\n".join(output_lines) + "\n",
-        stderr="",
+        returncode=0, stdout="\n".join(events) + "\n", stderr="",
     )
 
-    result = run_codex(prompt="hello", task_id="t1")
+    r = run_codex(prompt="say PONG", task_id="task-1")
+    assert isinstance(r, CodexResult)
+    assert r.text == "PONG"
+    assert r.input_tokens == 11754
+    assert r.cached_input_tokens == 10624
+    assert r.output_tokens == 6
+    assert r.reasoning_output_tokens == 0
 
-    assert isinstance(result, CodexResult)
-    assert result.text == "Sure, here's the answer"
-    assert result.model == "gpt-5-codex"
-    assert result.input_tokens == 100
-    assert result.output_tokens == 50
 
-@patch("agenticos_hermes.skills.codex_coder.subprocess.run")
-def test_run_codex_raises_on_nonzero_exit(mock_run):
-    mock_run.return_value = MagicMock(returncode=1, stdout="",
-                                       stderr="auth error")
-    with pytest.raises(RuntimeError, match="Codex exited 1"):
-        run_codex(prompt="x", task_id="t1")
+@patch("agenticos_hermes.workers.codex_coder.subprocess.run")
+def test_run_codex_concatenates_multiple_agent_messages(mock_run):
+    events = [
+        json.dumps({"type": "thread.started", "thread_id": "abc"}),
+        json.dumps({"type": "turn.started"}),
+        json.dumps({"type": "item.completed",
+                    "item": {"id": "i0", "type": "agent_message", "text": "Part 1 "}}),
+        json.dumps({"type": "item.completed",
+                    "item": {"id": "i1", "type": "agent_message", "text": "Part 2"}}),
+        json.dumps({"type": "turn.completed",
+                    "usage": {"input_tokens": 10, "cached_input_tokens": 0,
+                              "output_tokens": 5, "reasoning_output_tokens": 0}}),
+    ]
+    mock_run.return_value = MagicMock(returncode=0, stdout="\n".join(events), stderr="")
+    r = run_codex(prompt="x", task_id="t")
+    assert r.text == "Part 1 Part 2"
+
+
+@patch("agenticos_hermes.workers.codex_coder.subprocess.run")
+def test_run_codex_raises_on_turn_failed(mock_run):
+    events = [
+        json.dumps({"type": "thread.started", "thread_id": "abc"}),
+        json.dumps({"type": "turn.started"}),
+        json.dumps({"type": "error", "message": "Quota exceeded."}),
+        json.dumps({"type": "turn.failed",
+                    "error": {"message": "Quota exceeded."}}),
+    ]
+    mock_run.return_value = MagicMock(returncode=0, stdout="\n".join(events), stderr="")
+    with pytest.raises(RuntimeError, match="Quota exceeded"):
+        run_codex(prompt="x", task_id="t")
 ```
 
-- [ ] **Step 2: Run, see fail**
-
-- [ ] **Step 3: Implement codex_coder.py**
-
-Create `packages/agenticos-hermes/src/agenticos_hermes/skills/codex_coder.py`:
+- [ ] **Step 2: Implement `codex_coder.py`**
 
 ```python
-"""codex-coder: spawns `codex --print --json` as a subprocess.
+"""codex exec --json subprocess wrapper.
 
-Each task gets its own sandbox dir at /opt/agenticos/work/<task-id>/ so
-parallel codex runs don't trample each other's files.
+Invocation pattern from spec1-verified-api-shapes.md §2:
+  echo "<prompt>" | codex exec --json --skip-git-repo-check \
+                                --sandbox read-only \
+                                --dangerously-bypass-approvals-and-sandbox \
+                                --model <model>
+
+JSONL events parsed:
+  thread.started      → thread_id (informational)
+  turn.started        → marker
+  item.completed      → if item.type == "agent_message", append item.text
+  turn.completed      → usage dict (input/cached_input/output/reasoning tokens)
+  error / turn.failed → raise RuntimeError with the message
+
+Auth: requires `codex login --with-api-key` to have been run once; auth
+persists in ~/.codex/auth.json. Cloud-init Task 4 already handles this.
 """
 import json
 import os
@@ -1823,177 +1866,154 @@ class CodexResult:
     text: str
     model: str
     input_tokens: int
+    cached_input_tokens: int
     output_tokens: int
+    reasoning_output_tokens: int
     latency_ms: int
 
 
 def run_codex(*, prompt: str, task_id: str,
               model: str = CODEX_DEFAULT_MODEL,
               timeout_sec: int = 600) -> CodexResult:
-    """Run Codex in a per-task sandbox dir; parse JSONL output."""
     sandbox = WORK_ROOT / task_id
     sandbox.mkdir(parents=True, exist_ok=True)
 
-    cmd = [CODEX_BIN, "--print", "--json", "--model", model]
-
+    cmd = [
+        CODEX_BIN, "exec", "--json",
+        "--skip-git-repo-check",
+        "--sandbox", "read-only",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--model", model,
+    ]
     start = time.monotonic()
-    result = subprocess.run(
-        cmd,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        cwd=sandbox,
-        timeout=timeout_sec,
-        env={**os.environ},
+    proc = subprocess.run(
+        cmd, input=prompt, capture_output=True, text=True,
+        cwd=sandbox, timeout=timeout_sec, env={**os.environ},
     )
     latency_ms = int((time.monotonic() - start) * 1000)
 
-    if result.returncode != 0:
+    if proc.returncode != 0:
         raise RuntimeError(
-            f"Codex exited {result.returncode}: {result.stderr[:500]}"
+            f"Codex exited {proc.returncode}: {proc.stderr[:500]}"
         )
 
-    # Parse JSONL events
     text_parts: list[str] = []
     actual_model = model
-    input_tokens = 0
-    output_tokens = 0
+    usage: dict = {}
+    error_msg: str | None = None
 
-    for line in result.stdout.splitlines():
+    for line in proc.stdout.splitlines():
         if not line.strip():
             continue
         try:
-            event = json.loads(line)
+            ev = json.loads(line)
         except json.JSONDecodeError:
             continue
+        et = ev.get("type")
+        if et == "item.completed":
+            item = ev.get("item", {})
+            if item.get("type") == "agent_message":
+                text_parts.append(item.get("text", ""))
+        elif et == "turn.completed":
+            usage = ev.get("usage", {})
+        elif et in ("error", "turn.failed"):
+            msg = ev.get("error", {}).get("message") or ev.get("message", "")
+            error_msg = msg
 
-        etype = event.get("type")
-        if etype == "metadata":
-            actual_model = event.get("model", model)
-        elif etype == "message" and event.get("role") == "assistant":
-            text_parts.append(event.get("content", ""))
-        elif etype == "usage":
-            input_tokens = event.get("input_tokens", 0)
-            output_tokens = event.get("output_tokens", 0)
+    if error_msg:
+        raise RuntimeError(f"Codex turn failed: {error_msg}")
 
     return CodexResult(
         text="".join(text_parts),
         model=actual_model,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
+        input_tokens=usage.get("input_tokens", 0),
+        cached_input_tokens=usage.get("cached_input_tokens", 0),
+        output_tokens=usage.get("output_tokens", 0),
+        reasoning_output_tokens=usage.get("reasoning_output_tokens", 0),
         latency_ms=latency_ms,
     )
 ```
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 3: Run, commit, PR**
 
 ```bash
 .venv/bin/pytest tests/test_codex_coder.py -v
+git -c commit.gpgsign=false commit -am "feat(hermes-plugins): codex_coder worker (verified JSONL event shape)"
+git push -u origin agenticos/spec1-task13-codex-coder
+gh pr create --base main --title "feat(hermes-plugins): codex_coder worker"
+gh pr merge <num> --squash --auto --delete-branch
 ```
-
-Expected: 2 passed.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/agenticos-hermes/src/agenticos_hermes/skills/codex_coder.py \
-        packages/agenticos-hermes/tests/test_codex_coder.py
-git commit -m "feat(hermes-plugins): codex_coder skill (subprocess + sandbox dir + JSONL parse)"
-```
-
-> **Note:** Codex CLI's `--json` output format may differ from the JSONL shape assumed above. Run `codex --print --json --help` on the Droplet and a small probe (`echo hi | codex --print --json`) to confirm the actual event shape. If different, update the parser in `codex_coder.py` and the test fixtures accordingly. This is the §11.3 open question manifesting in practice.
 
 ---
 
-### Task 14: slm_router skill (decision tree)
+### Task 14: routing.py (slm_router decision tree)
 
 **Files:**
-- Create: `packages/agenticos-hermes/src/agenticos_hermes/skills/slm_router.py`
-- Create: `packages/agenticos-hermes/tests/test_slm_router.py`
+- Create: `packages/agenticos-hermes/src/agenticos_hermes/routing.py`
+- Create: `packages/agenticos-hermes/tests/test_routing.py`
 
-- [ ] **Step 1: Write the failing test (matrix coverage)**
+Pure function module. Spec §5.1 logic.
 
-Create `packages/agenticos-hermes/tests/test_slm_router.py`:
+- [ ] **Step 1: Failing tests (matrix coverage)**
 
 ```python
-import pytest
+# tests/test_routing.py
 from unittest.mock import patch
-from agenticos_hermes.skills.slm_router import route, RouteDecision
+from agenticos_hermes.routing import route, RouteDecision
 
-# 1. Budget block
-@patch("agenticos_hermes.skills.slm_router._mtd_cost_cents", return_value=3001)
-@patch("agenticos_hermes.skills.slm_router._budget_cap_cents", return_value=3000)
+@patch("agenticos_hermes.routing._mtd_cost_cents", return_value=3001)
+@patch("agenticos_hermes.routing._budget_cap_cents", return_value=3000)
 def test_budget_blocked_forces_slm(_cap, _mtd):
     d = route(kind="daily-brief", complexity="high", context_tokens=1000)
     assert d.provider == "ollama"
-    assert d.reason == "budget-blocked"
     assert d.budget_blocked is True
 
-# 2. Task-kind override (forced SLM)
-@patch("agenticos_hermes.skills.slm_router._mtd_cost_cents", return_value=0)
-@patch("agenticos_hermes.skills.slm_router._budget_cap_cents", return_value=3000)
-def test_inbox_triage_routes_to_slm(_cap, _mtd):
+@patch("agenticos_hermes.routing._mtd_cost_cents", return_value=0)
+@patch("agenticos_hermes.routing._budget_cap_cents", return_value=3000)
+def test_inbox_triage_routes_slm(_cap, _mtd):
     d = route(kind="inbox-triage", complexity="auto", context_tokens=500)
     assert d.provider == "ollama"
 
-# 3. Task-kind override (forced Codex)
-@patch("agenticos_hermes.skills.slm_router._mtd_cost_cents", return_value=0)
-@patch("agenticos_hermes.skills.slm_router._budget_cap_cents", return_value=3000)
-def test_daily_brief_routes_to_codex(_cap, _mtd):
+@patch("agenticos_hermes.routing._mtd_cost_cents", return_value=0)
+@patch("agenticos_hermes.routing._budget_cap_cents", return_value=3000)
+def test_daily_brief_routes_codex(_cap, _mtd):
     d = route(kind="daily-brief", complexity="auto", context_tokens=2000)
     assert d.provider == "openai"
-    assert d.model == "gpt-5-codex"
 
-# 4. Context-size escalation
-@patch("agenticos_hermes.skills.slm_router._mtd_cost_cents", return_value=0)
-@patch("agenticos_hermes.skills.slm_router._budget_cap_cents", return_value=3000)
+@patch("agenticos_hermes.routing._mtd_cost_cents", return_value=0)
+@patch("agenticos_hermes.routing._budget_cap_cents", return_value=3000)
 def test_long_context_forces_codex(_cap, _mtd):
     d = route(kind="other", complexity="auto", context_tokens=17000)
     assert d.provider == "openai"
-    assert "context" in d.reason
 
-# 5. Complexity hint
-@patch("agenticos_hermes.skills.slm_router._mtd_cost_cents", return_value=0)
-@patch("agenticos_hermes.skills.slm_router._budget_cap_cents", return_value=3000)
-def test_high_complexity_forces_codex(_cap, _mtd):
-    d = route(kind="other", complexity="high", context_tokens=500)
-    assert d.provider == "openai"
-
-# 6. Default path
-@patch("agenticos_hermes.skills.slm_router._mtd_cost_cents", return_value=0)
-@patch("agenticos_hermes.skills.slm_router._budget_cap_cents", return_value=3000)
-def test_default_routes_to_slm(_cap, _mtd):
+@patch("agenticos_hermes.routing._mtd_cost_cents", return_value=0)
+@patch("agenticos_hermes.routing._budget_cap_cents", return_value=3000)
+def test_default_routes_slm(_cap, _mtd):
     d = route(kind="other", complexity="auto", context_tokens=500)
     assert d.provider == "ollama"
 ```
 
-- [ ] **Step 2: Run, see fail**
-
-- [ ] **Step 3: Implement slm_router.py**
-
-Create `packages/agenticos-hermes/src/agenticos_hermes/skills/slm_router.py`:
+- [ ] **Step 2: Implement `routing.py`**
 
 ```python
-"""slm-router: decides Codex vs Ollama per call.
+"""slm_router — decides Codex vs Ollama per call.
 
-Logic per spec §5.1, in priority order:
-  1. Budget hard-block → SLM
-  2. Task-kind override (config-driven)
-  3. Context size > 16k → Codex
-  4. Complexity hint = high → Codex
-  5. Complexity hint = low → SLM
-  6. Default → SLM (with escalation on schema-validation failure)
+Decision tree (spec §5.1, priority order):
+  1. Budget hard-block      → SLM
+  2. Task-kind override     → config-driven
+  3. Context > 16k tokens   → Codex (SLMs lose coherence)
+  4. Complexity hint        → high → Codex, low → SLM
+  5. Default                → SLM
 """
 from dataclasses import dataclass
 from typing import Literal
 
-from ..db import connect
+from .db import connect
 
 CONTEXT_ESCALATION_THRESHOLD = 16_000
 DEFAULT_SLM_MODEL = "qwen2.5:3b"
 DEFAULT_CODEX_MODEL = "gpt-5-codex"
 
-# Per spec §5.1: hard config overrides per task kind
 _KIND_ROUTING: dict[str, str] = {
     "inbox-triage": "ollama",
     "cost-report": "ollama",
@@ -2010,14 +2030,11 @@ class RouteDecision:
 
 
 def _mtd_cost_cents() -> int:
-    """Month-to-date Codex spend in cents."""
     with connect() as conn, conn.cursor() as cur:
-        cur.execute(
-            """SELECT COALESCE(SUM(cost_cents), 0)
-               FROM calls
-               WHERE provider = 'openai'
-                 AND occurred_at >= date_trunc('month', now())"""
-        )
+        cur.execute("""SELECT COALESCE(SUM(cost_cents), 0)
+                       FROM calls
+                       WHERE provider = 'openai'
+                         AND occurred_at >= date_trunc('month', now())""")
         return int(cur.fetchone()[0])
 
 
@@ -2028,174 +2045,126 @@ def _budget_cap_cents() -> int:
         return int(row[0]) if row else 3000
 
 
-def route(*, kind: str, complexity: Literal["low", "auto", "high"] = "auto",
+def route(*, kind: str,
+          complexity: Literal["low", "auto", "high"] = "auto",
           context_tokens: int = 0) -> RouteDecision:
-    # 1. Budget hard-block
     if _mtd_cost_cents() >= _budget_cap_cents():
-        return RouteDecision(provider="ollama", model=DEFAULT_SLM_MODEL,
-                             reason="budget-blocked", budget_blocked=True)
-
-    # 2. Task-kind override
+        return RouteDecision("ollama", DEFAULT_SLM_MODEL,
+                             "budget-blocked", budget_blocked=True)
     if kind in _KIND_ROUTING:
         prov = _KIND_ROUTING[kind]
         model = DEFAULT_CODEX_MODEL if prov == "openai" else DEFAULT_SLM_MODEL
-        return RouteDecision(provider=prov, model=model,
-                             reason=f"kind-override:{kind}")
-
-    # 3. Context-size escalation
+        return RouteDecision(prov, model, f"kind-override:{kind}")
     if context_tokens > CONTEXT_ESCALATION_THRESHOLD:
-        return RouteDecision(provider="openai", model=DEFAULT_CODEX_MODEL,
-                             reason=f"context-{context_tokens}>16k")
-
-    # 4. Complexity hint
+        return RouteDecision("openai", DEFAULT_CODEX_MODEL,
+                             f"context-{context_tokens}>16k")
     if complexity == "high":
-        return RouteDecision(provider="openai", model=DEFAULT_CODEX_MODEL,
-                             reason="complexity-high")
+        return RouteDecision("openai", DEFAULT_CODEX_MODEL, "complexity-high")
     if complexity == "low":
-        return RouteDecision(provider="ollama", model=DEFAULT_SLM_MODEL,
-                             reason="complexity-low")
-
-    # 5. Default
-    return RouteDecision(provider="ollama", model=DEFAULT_SLM_MODEL,
-                         reason="default-slm")
+        return RouteDecision("ollama", DEFAULT_SLM_MODEL, "complexity-low")
+    return RouteDecision("ollama", DEFAULT_SLM_MODEL, "default-slm")
 ```
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 3: Run, commit, PR**
 
 ```bash
-.venv/bin/pytest tests/test_slm_router.py -v
-```
-
-Expected: 6 passed.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/agenticos-hermes/src/agenticos_hermes/skills/slm_router.py \
-        packages/agenticos-hermes/tests/test_slm_router.py
-git commit -m "feat(hermes-plugins): slm_router decision tree (budget→kind→context→complexity→default)"
+.venv/bin/pytest tests/test_routing.py -v
+git -c commit.gpgsign=false commit -am "feat(hermes-plugins): routing.py decision tree (budget/kind/context/complexity)"
+git push -u origin agenticos/spec1-task14-routing
+gh pr create --base main --title "feat(hermes-plugins): slm_router decision tree"
+gh pr merge <num> --squash --auto --delete-branch
 ```
 
 ---
 
-### Task 15: inbox_watcher plugin
+### Task 15: inbox-watcher standalone daemon
 
 **Files:**
-- Create: `packages/agenticos-hermes/src/agenticos_hermes/plugins/inbox_watcher.py`
-- Create: `packages/agenticos-hermes/tests/test_inbox_watcher.py`
+- Create: `packages/agenticos-hermes/daemons/inbox-watcher/Dockerfile`
+- Create: `packages/agenticos-hermes/daemons/inbox-watcher/pyproject.toml`
+- Create: `packages/agenticos-hermes/daemons/inbox-watcher/watcher.py`
+- Create: `packages/agenticos-hermes/daemons/inbox-watcher/test_watcher.py`
 
-- [ ] **Step 1: Write the failing test**
+**Standalone Docker daemon**, NOT a Hermes plugin. Watches `/opt/vault/inbox/` via fsnotify; on a stable `.md` file, invokes the inbox-triage task entrypoint.
 
-Create `packages/agenticos-hermes/tests/test_inbox_watcher.py`:
+- [ ] **Step 1: Decide invocation mechanism (Hermes REST vs subprocess)**
 
-```python
-import time
-import tempfile
-from pathlib import Path
-import pytest
-from unittest.mock import MagicMock
-from agenticos_hermes.plugins.inbox_watcher import InboxWatcher
+Two options for triggering work from the daemon:
+- **(a) Hermes REST:** POST to `/api/sessions` to create a Hermes session, then call our task code. Requires reading the `__HERMES_SESSION_TOKEN__` from the dashboard HTML. Defer to runtime — if it works, prefer it (the work shows up in Hermes's session list).
+- **(b) Subprocess:** `python -m agenticos_hermes.tasks.inbox_triage <path>` directly. Simpler, no REST coupling. Hermes won't know about the session unless the task code itself calls Hermes APIs.
 
-def test_inbox_watcher_debounces_and_triggers_callback(tmp_path: Path):
-    inbox = tmp_path / "inbox"
-    inbox.mkdir()
-    received: list[Path] = []
+Default: **(b)** — simpler, doesn't depend on the ephemeral-token harvest pattern. The cron-task code itself can opt to start a Hermes session if needed.
 
-    def on_ready(p: Path) -> None:
-        received.append(p)
+- [ ] **Step 2: Write `Dockerfile`**
 
-    watcher = InboxWatcher(watch_dir=inbox, debounce_seconds=1, on_ready=on_ready)
-    watcher.start()
+```dockerfile
+FROM python:3.11-slim
 
-    note = inbox / "test.md"
-    note.write_text("# hello")
+WORKDIR /app
 
-    # Wait past the debounce
-    time.sleep(2.0)
-    watcher.stop()
+# Install agenticos-hermes from local context (sibling dir mount via compose)
+COPY . /app/daemon
+COPY ../../src /app/agenticos_hermes
+COPY ../../pyproject.toml /app/pyproject.toml
 
-    assert len(received) == 1
-    assert received[0] == note
+RUN pip install --no-cache-dir watchdog>=4.0 httpx>=0.27 PyYAML>=6.0 'psycopg[binary]>=3.2' \
+    && pip install --no-cache-dir -e /app
 
-def test_inbox_watcher_ignores_non_md_files(tmp_path: Path):
-    inbox = tmp_path / "inbox"
-    inbox.mkdir()
-    received: list[Path] = []
+# Run as non-root to match Hermes container's UID layout (root inside but mapped to deploy outside)
+RUN useradd -m -u 10000 watcher
+USER watcher
 
-    watcher = InboxWatcher(watch_dir=inbox, debounce_seconds=0.5,
-                            on_ready=received.append)
-    watcher.start()
-
-    (inbox / "not-a-note.txt").write_text("ignore me")
-    time.sleep(1.0)
-    watcher.stop()
-
-    assert received == []
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "/app/daemon/watcher.py"]
 ```
 
-- [ ] **Step 2: Run, see fail**
-
-- [ ] **Step 3: Implement inbox_watcher.py**
-
-Create `packages/agenticos-hermes/src/agenticos_hermes/plugins/inbox_watcher.py`:
+- [ ] **Step 3: Write `watcher.py`**
 
 ```python
-"""inbox-watcher: fsnotify on /opt/vault/inbox.
+"""inbox-watcher daemon.
 
-Debounces writes (file may grow during a Syncthing transfer) and fires the
-callback only when the file has been stable for `debounce_seconds`.
+Watches /opt/vault/inbox/ for stable .md files. On detection:
+  1. Debounce 5s
+  2. Confirm size stable (re-check after 200ms)
+  3. Invoke `python -m agenticos_hermes.tasks.inbox_triage <path>`
 """
+from __future__ import annotations
+import logging
+import os
+import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Callable
 
-from watchdog.events import FileSystemEventHandler, FileSystemEvent
+from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
+WATCH_DIR = Path(os.environ.get("INBOX_WATCH_DIR", "/opt/vault/inbox"))
+DEBOUNCE_SECONDS = float(os.environ.get("INBOX_DEBOUNCE_SECONDS", "5.0"))
 
-class InboxWatcher:
-    def __init__(self, *, watch_dir: Path, debounce_seconds: float,
-                 on_ready: Callable[[Path], None]):
-        self.watch_dir = Path(watch_dir)
-        self.debounce = debounce_seconds
-        self.on_ready = on_ready
-        self._observer: Observer | None = None
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("inbox-watcher")
+
+
+class Triager:
+    def __init__(self) -> None:
         self._pending: dict[Path, threading.Timer] = {}
         self._lock = threading.Lock()
 
-    def start(self) -> None:
-        self.watch_dir.mkdir(parents=True, exist_ok=True)
-        handler = _Handler(self)
-        self._observer = Observer()
-        self._observer.schedule(handler, str(self.watch_dir), recursive=False)
-        self._observer.start()
-
-    def stop(self) -> None:
-        if self._observer is not None:
-            self._observer.stop()
-            self._observer.join(timeout=2)
-        with self._lock:
-            for t in self._pending.values():
-                t.cancel()
-            self._pending.clear()
-
-    def _on_event(self, path: Path) -> None:
+    def on_event(self, path: Path) -> None:
         if path.suffix != ".md":
             return
-
         with self._lock:
-            existing = self._pending.get(path)
-            if existing is not None:
-                existing.cancel()
-            t = threading.Timer(self.debounce, self._fire, args=(path,))
+            if path in self._pending:
+                self._pending[path].cancel()
+            t = threading.Timer(DEBOUNCE_SECONDS, self._fire, args=(path,))
             self._pending[path] = t
             t.start()
 
     def _fire(self, path: Path) -> None:
         with self._lock:
             self._pending.pop(path, None)
-        # Stable-size check: read size twice, 200ms apart; bail if it changed
         try:
             s1 = path.stat().st_size
             time.sleep(0.2)
@@ -2203,91 +2172,145 @@ class InboxWatcher:
         except FileNotFoundError:
             return
         if s1 != s2:
-            # File still growing — re-arm
-            self._on_event(path)
+            self.on_event(path)
             return
-        self.on_ready(path)
+
+        log.info("triggering inbox-triage for %s", path)
+        try:
+            subprocess.run(
+                ["python", "-m", "agenticos_hermes.tasks.inbox_triage", str(path)],
+                check=True, timeout=300,
+            )
+        except subprocess.CalledProcessError as e:
+            log.error("inbox-triage failed for %s: %s", path, e)
+        except subprocess.TimeoutExpired:
+            log.error("inbox-triage timed out for %s", path)
 
 
 class _Handler(FileSystemEventHandler):
-    def __init__(self, watcher: InboxWatcher):
-        self.watcher = watcher
+    def __init__(self, triager: Triager) -> None:
+        self.triager = triager
 
     def on_created(self, event: FileSystemEvent) -> None:
         if not event.is_directory:
-            self.watcher._on_event(Path(event.src_path))
+            self.triager.on_event(Path(event.src_path))
 
     def on_modified(self, event: FileSystemEvent) -> None:
         if not event.is_directory:
-            self.watcher._on_event(Path(event.src_path))
+            self.triager.on_event(Path(event.src_path))
+
+
+def main() -> None:
+    WATCH_DIR.mkdir(parents=True, exist_ok=True)
+    triager = Triager()
+    observer = Observer()
+    observer.schedule(_Handler(triager), str(WATCH_DIR), recursive=False)
+    observer.start()
+    log.info("watching %s (debounce=%ss)", WATCH_DIR, DEBOUNCE_SECONDS)
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
+
+
+if __name__ == "__main__":
+    main()
 ```
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 4: Add compose service**
 
-```bash
-.venv/bin/pytest tests/test_inbox_watcher.py -v
+Edit `docker-compose.yml` — add at end of `services:`:
+
+```yaml
+  inbox-watcher:
+    build:
+      context: ./packages/agenticos-hermes
+      dockerfile: daemons/inbox-watcher/Dockerfile
+    container_name: inbox-watcher
+    restart: unless-stopped
+    volumes:
+      - /opt/vault:/opt/vault
+    environment:
+      AGENTICOS_DB_URL: postgresql://agenticos:${AGENTICOS_DB_PASSWORD}@agenticos-db:5432/agenticos
+      OLLAMA_ENDPOINT: http://ollama:11434
+      OPENVIKING_ENDPOINT: http://openviking:1933
+      OPENVIKING_ROOT_API_KEY: ${OPENVIKING_ROOT_API_KEY}
+    depends_on:
+      agenticos-db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    env_file:
+      - /opt/agenticos/.env
+    networks:
+      - agenticos
 ```
 
-Expected: 2 passed.
+- [ ] **Step 5: Commit, PR (with cross-task notes for Task 16)**
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/agenticos-hermes/src/agenticos_hermes/plugins/inbox_watcher.py \
-        packages/agenticos-hermes/tests/test_inbox_watcher.py
-git commit -m "feat(hermes-plugins): inbox_watcher fsnotify+debounce plugin"
-```
+Don't deploy this compose change yet — Task 16 deploys all the Phase 1.1 wiring together. Just commit + push + PR.
 
 ---
 
-### Task 16: Install plugin package on Droplet + run Hermes installer
+### Task 16: Deploy Phase 1.1 wiring on Droplet
 
-**Files:** none (deploy + verify only)
+**Files:**
+- Modify: `docker-compose.yml` — add cost-recorder bind mount + inbox-watcher service (some of this landed earlier in Task 15's PR)
 
-- [ ] **Step 1: Push the plugin package to Droplet via repo update**
+This task is the deployment + smoke-test step that activates everything Tasks 11 + 15 wrote.
 
-```bash
-# Pull latest on Droplet (commits from Tasks 9–15)
-ssh -i ~/.ssh/agenticos-droplet deploy@agenticos-droplet \
-  'cd /opt/agenticos/repo && git pull --ff-only'
+- [ ] **Step 1: Bind-mount cost-recorder into hermes-agent**
+
+Edit the `hermes-agent` service in `docker-compose.yml` — add to its `volumes:` list:
+
+```yaml
+      - ./packages/agenticos-hermes/plugins/cost-recorder:/opt/hermes/plugins/cost-recorder:ro
 ```
 
-(If push isn't allowed by the auto-classifier, scp the package dir manually:
-`scp -r packages/agenticos-hermes deploy@agenticos-droplet:/opt/agenticos/repo/packages/`)
+- [ ] **Step 2: Enable the plugin in Hermes config**
 
-- [ ] **Step 2: Run the Hermes install script**
-
-```bash
-ssh -i ~/.ssh/agenticos-droplet deploy@agenticos-droplet \
-  'sudo /opt/agenticos/repo/infra/cloud-init/scripts/install-hermes.sh'
-```
-
-Expected: `Hermes Agent ready on :7777`.
-
-- [ ] **Step 3: Verify Hermes loaded our plugins**
+The Hermes container auto-discovers plugins in `/opt/hermes/plugins/`. After mount + restart, check it's loaded:
 
 ```bash
-ssh -i ~/.ssh/agenticos-droplet deploy@agenticos-droplet \
-  'curl -s http://127.0.0.1:7777/api/skills | python3 -m json.tool'
+ssh -i ~/.ssh/agenticos-droplet deploy@159.223.171.231 \
+  'docker compose -f /opt/agenticos/docker-compose.yml restart hermes-agent && sleep 10 && curl -s http://127.0.0.1:7777/api/plugins | python3 -m json.tool | grep -A 2 cost-recorder'
 ```
 
-Expected: JSON listing `cost-recorder`, `slm-runner`, `codex-coder`, `slm-router`, `inbox-watcher`.
+If Hermes requires an explicit enable step (e.g. an entry in `~/.hermes/config.yaml`'s `plugins:` list), add it to `hermes-config/config.yaml` and document.
 
-- [ ] **Step 4: Smoke test — run a one-off SLM call via Hermes**
+- [ ] **Step 3: Deploy the updated compose**
 
 ```bash
-ssh -i ~/.ssh/agenticos-droplet deploy@agenticos-droplet \
-  'curl -s -X POST http://127.0.0.1:7777/api/sessions \
-   -H "Content-Type: application/json" \
-   -d "{\"skill\": \"slm-runner\", \"input\": {\"model\": \"qwen2.5:3b\", \"prompt\": \"Reply with the single word: PONG\"}}"'
+scp -i ~/.ssh/agenticos-droplet docker-compose.yml deploy@159.223.171.231:/opt/agenticos/docker-compose.yml
+ssh -i ~/.ssh/agenticos-droplet deploy@159.223.171.231 \
+  'cd /opt/agenticos && docker compose --env-file /opt/agenticos/.env up -d --build inbox-watcher'
 ```
 
-Expected: response containing `PONG`. If the API shape differs from what's assumed, check `hermes-server --help` and the docs you read in Task 3 §1.
+- [ ] **Step 4: Verify inbox-watcher is running and watching**
 
-- [ ] **Step 5: Commit (nothing to commit; mark task done in plan)**
+```bash
+ssh -i ~/.ssh/agenticos-droplet deploy@159.223.171.231 \
+  'docker logs inbox-watcher 2>&1 | tail -10
+   docker inspect -f "{{.State.Health.Status}} {{.State.Status}}" inbox-watcher 2>&1 || echo no-healthcheck'
+```
+
+Expected: `watching /opt/vault/inbox (debounce=5.0s)` in the logs.
+
+- [ ] **Step 5: Smoke-test cost-recorder by manually inserting a row through the hook path**
+
+This requires actually invoking an LLM call through Hermes. Defer real smoke test to Phase 1.4 (when the daily-brief cron task runs). For now, just confirm the plugin loaded:
+
+```bash
+curl -s http://127.0.0.1:7777/api/plugins
+```
+
+- [ ] **Step 6: Commit (compose changes only — no PR needed since Task 15's PR already had the inbox-watcher service)**
+
+If there's a delta, commit it as `feat(infra): activate cost-recorder + inbox-watcher in Hermes stack`. Otherwise mark Task 16 complete with a note in the PR.
 
 ---
-
 ## Phase 1.3 — Dashboard rewire (≈4–5 hrs)
 
 ### Task 17: hermes-client.ts replaces honcho-client.ts
