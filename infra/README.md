@@ -245,12 +245,11 @@ open https://agenticos.gatheringatthegrove.com
 
 1. **Cloudflare Google IdP setup** — prereq §4 above. OAuth credentials require interactive consent.
 2. **Tailscale tagOwners ACL** — prereq §5 above. The Tailscale provider doesn't manage ACLs.
-3. **App Platform → VPC attachment** — the DO provider (v2.40.x) doesn't expose `vpc_uuid`
-   on `digitalocean_app`. After apply, go to DO Console → Apps → `agenticos-dashboard` →
-   Settings → VPC → select `agenticos-vpc`. Until then, App Platform reaches the Droplet
-   over public IP (which is firewalled), not VPC-private.
-4. **`claude /login`** — Anthropic's device-code OAuth flow requires a human.
-5. **Syncthing pairing on Mac** — needs interactive device-ID exchange.
+3. **`claude /login`** — Anthropic's device-code OAuth flow requires a human.
+4. **Syncthing pairing on Mac** — needs interactive device-ID exchange.
+
+(App Platform VPC attachment was previously manual but is now automated via
+`digitalocean_app.spec.vpc.id` in `app-platform.tf` — DO provider 2.5x+ supports it.)
 
 ## Destroy
 
