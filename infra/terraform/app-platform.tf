@@ -1,16 +1,22 @@
 # DigitalOcean App Platform — Next.js dashboard.
 #
-# NOTE: At the time of writing, the digitalocean provider (v2.40.x) does not expose
-# a `vpc_uuid` attribute on `digitalocean_app`. Attaching the App to the VPC so it can
-# reach the Droplet over the private network is a one-time UI step:
-#   DO Console → Apps → agenticos-dashboard → Settings → VPC → select agenticos-vpc
-# Until then, set HONCHO_URL to the Droplet's *Tailscale* hostname or public IP
-# behind the firewall allowlist as a fallback.
+# VPC attachment: App Platform talks to the Droplet over the private DO VPC.
+# The provider's `spec.vpc { id = ... }` block (added in 2.5x+) does this
+# natively — earlier versions required a one-time UI step. We're now pinned
+# to the latest 2.x which has the field.
 
 resource "digitalocean_app" "dashboard" {
   spec {
     name   = "agenticos-dashboard"
     region = var.do_region
+
+    # Attach to the VPC where the Droplet lives so the App's HONCHO_URL
+    # (pointing at the Droplet's VPC-private IP) is reachable. Without
+    # VPC attachment, App Platform reaches Honcho only via the public IP
+    # which is firewalled.
+    vpc {
+      id = digitalocean_vpc.agenticos.id
+    }
 
     # Custom domain so App Platform serves traffic for the Cloudflare-proxied
     # hostname. Without this, App Platform would reject requests with this
