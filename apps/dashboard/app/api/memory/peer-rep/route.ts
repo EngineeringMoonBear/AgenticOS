@@ -1,22 +1,12 @@
 import "server-only";
 import { NextResponse } from "next/server";
-import { getHonchoClient } from "@/lib/agent";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const peerId = url.searchParams.get("peer") ?? "josh";
-
-  try {
-    const honcho = getHonchoClient();
-    const peer = await honcho.peer(peerId);
-    const rep = await peer.representation();
-    return NextResponse.json({ peer: peerId, representation: rep });
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "unknown" },
-      { status: 500 },
-    );
-  }
+// Honcho memory backend was removed in Spec 1; OpenViking takes over in Task 18.
+export async function GET() {
+  return NextResponse.json(
+    { error: "memory backend not implemented (Spec 1 transition)" },
+    { status: 501 },
+  );
 }

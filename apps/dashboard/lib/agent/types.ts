@@ -1,5 +1,61 @@
 import { z } from "zod";
 
+// ---------------------------------------------------------------------------
+// Hermes API task types (Spec 1)
+// ---------------------------------------------------------------------------
+
+export type TaskStatus = "queued" | "running" | "done" | "failed" | "budget-blocked";
+
+export interface Task {
+  id: string;
+  kind: string;
+  trigger: string;
+  status: TaskStatus;
+  started_at: string;
+  ended_at: string | null;
+  cost_cents: number;
+  error: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface Session {
+  id: string;
+  task_id: string;
+  hermes_skill: string;
+  started_at: string;
+  ended_at: string | null;
+  cost_cents: number;
+}
+
+export interface Call {
+  id: number;
+  session_id: string;
+  task_id: string;
+  provider: "openai" | "ollama";
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_cents: number;
+  latency_ms: number;
+  occurred_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface CreateTaskInput {
+  kind: string;
+  prompt: string;
+  trigger?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TaskWithDrillDown extends Task {
+  sessions: Array<Session & { calls: Call[] }>;
+}
+
+// ---------------------------------------------------------------------------
+// Legacy Claude Code stream-json / run record types (used by spawn.ts)
+// ---------------------------------------------------------------------------
+
 export const RunStatus = z.enum([
   "queued",
   "running",
