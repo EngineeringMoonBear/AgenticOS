@@ -184,6 +184,11 @@ runcmd:
         cp -a /opt/agenticos/repo/hermes-config/. /opt/agenticos/hermes-config/
         chown -R deploy:deploy /opt/agenticos/hermes-config
       fi
+      # Symlink packages/ so the docker-compose build context for inbox-watcher
+      # (./packages/agenticos-hermes/) resolves relative to /opt/agenticos/
+      # without having to copy the entire workspace. -sfn keeps this idempotent
+      # on re-runs (replaces existing link target without dereferencing).
+      ln -sfn /opt/agenticos/repo/packages /opt/agenticos/packages
       if [ ! -f /opt/agenticos/.env ]; then
         {
           echo "AGENTICOS_DB_PASSWORD=$(openssl rand -hex 32)"

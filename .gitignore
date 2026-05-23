@@ -10,6 +10,13 @@ out/
 .env.*.local
 !.env.example
 .DS_Store
+# macOS Finder/iCloud Drive copy-on-conflict artifacts.
+# Pattern: any path like "watcher 2.py" or "Dockerfile 3" — Finder/iCloud
+# appends " N" (with leading space) before any extension when it detects a
+# sibling already at the same path. Purely a sync-collision artifact, never
+# source. Globs cover both with-extension (* 2.*) and bare (* 2) cases.
+* [234].*
+* [234]
 .vscode/
 .idea/
 *.swp
