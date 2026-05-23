@@ -24,8 +24,12 @@ RUN pip install --no-cache-dir \
         'psycopg[binary]>=3.2' \
     && pip install --no-cache-dir -e /app/agenticos-hermes
 
-# Run as non-root (UID 10000 matches the vault bind-mount ownership convention).
-RUN useradd -m -u 10000 watcher
+# Run as UID 1000 to match the host `deploy` user that owns /opt/vault/.
+# Without this match, the watcher can't read inbox/ files placed by Syncthing
+# (also running as deploy) and triggers a permissions cascade that previously
+# required chmod 777 on the inbox dir as a workaround. UID alignment removes
+# the workaround entirely.
+RUN useradd -m -u 1000 watcher
 USER watcher
 
 ENV PYTHONUNBUFFERED=1

@@ -113,8 +113,43 @@ class _Handler(FileSystemEventHandler):
             self.triager.on_event(Path(event.src_path))
 
 
+def _ensure_watch_dir(path: Path) -> bool:
+    """Create the watch dir if missing; tolerate EACCES instead of crash-looping.
+
+    Earlier shape: ``path.mkdir(parents=True, exist_ok=True)`` raised
+    ``PermissionError`` when the parent (``/opt/vault``) was owned by a
+    different UID — three container restarts before the deploy could chown
+    the directory. Now we log and wait: the observer.schedule() below will
+    raise FileNotFoundError if the dir genuinely doesn't exist, which a
+    restart loop can recover from once the host fixes permissions.
+
+    Returns True if the dir is usable, False if we should wait/exit.
+    """
+    if path.is_dir():
+        return True
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return True
+    except PermissionError as e:
+        log.error(
+            "cannot create %s (permission denied: %s); waiting for the host to "
+            "fix ownership. Inside the container we run as UID %d.",
+            path, e, os.getuid(),
+        )
+        return False
+    except OSError as e:
+        log.error("cannot create %s: %s", path, e)
+        return False
+
+
 def main() -> None:
-    WATCH_DIR.mkdir(parents=True, exist_ok=True)
+    if not _ensure_watch_dir(WATCH_DIR):
+        # Sleep instead of crash-looping. systemd/docker restart policy can
+        # still escalate if we exit, but a delayed exit gives the operator a
+        # chance to see the log line before docker eats it.
+        log.info("waiting 60s before exit so a restart-loop is observable")
+        time.sleep(60)
+        sys.exit(1)
     triager = Triager()
     observer = Observer()
     observer.schedule(_Handler(triager), str(WATCH_DIR), recursive=False)
