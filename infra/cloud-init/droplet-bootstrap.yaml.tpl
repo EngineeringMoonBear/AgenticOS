@@ -225,6 +225,18 @@ runcmd:
   - chmod +x /opt/agenticos/repo/infra/cloud-init/scripts/run-migrations.sh
   - /opt/agenticos/repo/infra/cloud-init/scripts/run-migrations.sh
 
+  # --- Register AgenticOS cron jobs in Hermes ---
+  # Writes daily-brief + cost-report entries into the shared cron jobs.json
+  # via `hermes cron create`. Runs INSIDE the hermes-agent container (which
+  # is already healthy by the time compose-up returns). Idempotent — the
+  # script checks `cron list` for each job name before creating.
+  - |
+    if docker inspect hermes-agent >/dev/null 2>&1; then
+      docker cp /opt/agenticos/repo/infra/scripts/register-cron-jobs.sh hermes-agent:/tmp/register-cron-jobs.sh
+      docker exec hermes-agent /tmp/register-cron-jobs.sh || \
+        echo "WARN: cron-job registration failed; rerun manually with docker exec hermes-agent /tmp/register-cron-jobs.sh" >&2
+    fi
+
   # --- Ollama model pre-pull ---
   # Pre-pulls Qwen 2.5 3B (general SLM) and nomic-embed-text (embeddings for
   # OpenViking). Done after `docker compose up -d` so the container is alive.
