@@ -171,6 +171,10 @@ services:
       # discovered by Hermes's plugin loader at /opt/hermes/plugins/. See
       # PR #66 for the plugin contract (post_llm_call + on_session_end).
       - ./packages/agenticos-hermes/plugins/cost-recorder:/opt/hermes/plugins/cost-recorder:ro
+      # Phase 1.4 cron-script wrappers — Hermes resolves --script paths under
+      # $HERMES_HOME/scripts/ (= /opt/data/scripts/). Mounted here AND in
+      # the gateway sidecar below so both containers see the same scripts.
+      - ./packages/agenticos-hermes/wrappers/cron-scripts:/opt/data/scripts:ro
       # NOTE: we deliberately do NOT bind-mount /opt/agenticos/.env into the
       # container. The entrypoint passes the file through python-dotenv as
       # the `hermes` user (UID 10000), which can't read the host-side file
@@ -191,6 +195,10 @@ services:
       OPENVIKING_ACCOUNT: agenticos
       OPENVIKING_USER: deploy
       OPENVIKING_AGENT: hermes
+      # Cron expressions in jobs.json are interpreted in this TZ. Spec 1 §13
+      # locked America/New_York. Keep the same value on hermes-gateway below
+      # — they share the jobs.json file via the hermes-data volume.
+      TZ: America/New_York
     env_file:
       - /opt/agenticos/.env
     depends_on:
@@ -215,6 +223,65 @@ services:
       # Hermes ships Playwright + a full venv, so cold-start (entrypoint
       # bootstrap, gosu drop, dashboard FastAPI startup) takes ~20-40 s.
       start_period: 90s
+
+  # ---------------------------------------------------------------------------
+  # hermes-gateway — Hermes's cron scheduler tick daemon. The dashboard
+  # subcommand (running in hermes-agent above) serves the REST API but does
+  # NOT tick the scheduler. The gateway subcommand does, ticking jobs.json
+  # every 60s. We run both: the dashboard for human/dashboard access, the
+  # gateway for actually firing cron jobs.
+  #
+  # They share /opt/data (the hermes-data volume) so they see the same
+  # jobs.json + cron logs. The gateway also needs the cost-recorder plugin
+  # bind-mount because cron tasks make LLM calls that the hook should record.
+  #
+  # Image is the same overlay built for hermes-agent (agenticos/hermes-agent:local)
+  # so our agenticos_hermes Python package is present for cron-task subprocesses.
+  # ---------------------------------------------------------------------------
+  hermes-gateway:
+    image: agenticos/hermes-agent:local
+    container_name: hermes-gateway
+    restart: unless-stopped
+    # `gateway run` is the foreground variant (recommended for Docker). It
+    # ticks the scheduler every 60s. --accept-hooks silences the interactive
+    # approval prompt that gateway shows for unseen shell hooks; we're
+    # running in a non-TTY container so the prompt would hang anyway.
+    command:
+      - gateway
+      - run
+      - --accept-hooks
+    volumes:
+      # Same volumes as hermes-agent so cron's jobs.json + plugin code +
+      # cost-recorder + script wrappers are all consistent across containers.
+      - hermes-data:/opt/data
+      - /opt/vault:/opt/vault
+      - /opt/agenticos/hermes-config/config.yaml:/opt/data/config.yaml:ro
+      - ./packages/agenticos-hermes/plugins/cost-recorder:/opt/hermes/plugins/cost-recorder:ro
+      - ./packages/agenticos-hermes/wrappers/cron-scripts:/opt/data/scripts:ro
+    environment:
+      HERMES_HOME: /opt/data
+      AGENTICOS_DB_URL: postgresql://agenticos:${AGENTICOS_DB_PASSWORD}@agenticos-db:5432/agenticos
+      OPENVIKING_ENDPOINT: http://openviking:1933
+      OPENVIKING_API_KEY: ${OPENVIKING_ROOT_API_KEY}
+      OPENVIKING_ACCOUNT: agenticos
+      OPENVIKING_USER: deploy
+      OPENVIKING_AGENT: hermes
+      TZ: America/New_York
+    env_file:
+      - /opt/agenticos/.env
+    depends_on:
+      hermes-agent:
+        condition: service_healthy
+    healthcheck:
+      # Gateway has no HTTP surface; use a process-presence check via pgrep
+      # inside the container. Hermes gateway runs as a Python process whose
+      # cmdline contains "gateway run" — sufficient signal that the tick
+      # loop is alive.
+      test: ["CMD-SHELL", "pgrep -f 'hermes.*gateway.*run' > /dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   # ---------------------------------------------------------------------------
   # inbox-watcher — standalone daemon (NOT a Hermes plugin) that watches
