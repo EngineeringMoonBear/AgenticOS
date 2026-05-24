@@ -208,7 +208,11 @@ runcmd:
         OV_KEY=$(grep '^OPENVIKING_ROOT_API_KEY=' /opt/agenticos/.env | cut -d= -f2-)
         sed -i "s|__OPENVIKING_ROOT_API_KEY__|${OV_KEY}|g" /opt/agenticos/openviking-config/ov.conf
       fi
-      cd /opt/agenticos && sudo -u deploy docker compose -f /opt/agenticos/docker-compose.yml --env-file /opt/agenticos/.env up -d
+      # --build so the locally-tagged overlay image (agenticos/hermes-agent:local)
+      # is built from infra/docker/hermes-agent/Dockerfile on every fresh
+      # deploy. Idempotent: if the image already exists at the same content
+      # hash, Docker reuses it.
+      cd /opt/agenticos && sudo -u deploy docker compose -f /opt/agenticos/docker-compose.yml --env-file /opt/agenticos/.env up -d --build
     else
       echo "WARN: docker-compose.yml missing from repo; skipping db bring-up" >&2
     fi

@@ -135,7 +135,20 @@ services:
   # OPENVIKING_ROOT_API_KEY, so we re-export it as OPENVIKING_API_KEY to
   # match the plugin's expected variable name.
   hermes-agent:
-    image: nousresearch/hermes-agent:main
+    # Locally-built overlay image: nousresearch/hermes-agent:main + our
+    # agenticos-hermes package pip-installed into its venv so hook plugins
+    # (cost-recorder etc.) can `import agenticos_hermes`. See
+    # packages/agenticos-hermes/wrappers/hermes-agent/Dockerfile for the
+    # build steps and rationale. Image tag is LOCAL ONLY — never pushed to
+    # any public registry.
+    #
+    # Context matches inbox-watcher's (./packages/agenticos-hermes) so the
+    # /opt/agenticos/packages → /opt/agenticos/repo/packages symlink doesn't
+    # cross the build-context boundary (BuildKit forbids that).
+    build:
+      context: ./packages/agenticos-hermes
+      dockerfile: wrappers/hermes-agent/Dockerfile
+    image: agenticos/hermes-agent:local
     container_name: hermes-agent
     restart: unless-stopped
     command:
