@@ -49,7 +49,7 @@ def test_triage_file_routes_and_moves(
     assert "winter forage" in summary.read_text().lower()
 
     # Verify DB writes happened: tasks insert, sessions insert, calls insert,
-    # sessions update (ended_at), tasks update (completed_at).
+    # sessions update (ended_at), tasks update (ended_at).
     executed_sql = [c.args[0] for c in cursor.execute.call_args_list]
     assert any("INSERT INTO tasks" in s for s in executed_sql)
     assert any("INSERT INTO sessions" in s for s in executed_sql)

@@ -135,7 +135,7 @@ def record_task_completion(
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
             """UPDATE tasks
-               SET status = %s, completed_at = now(), error = %s
+               SET status = %s, ended_at = now(), error = %s
                WHERE id = %s""",
             (status, error, task_id),
         )
