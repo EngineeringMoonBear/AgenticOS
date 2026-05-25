@@ -1,6 +1,7 @@
 # Spec 1 — Orchestrator + Cost Observability
 
-> **Status:** Approved-pending-review (drafted 2026-05-22)
+> **Status:** Shipped (2026-05-24)
+> **Final summary:** All 32 plan tasks merged. Live Droplet healthy with 6 containers (agenticos-db, ollama, openviking, hermes-agent, hermes-gateway, inbox-watcher). End-to-end acceptance test passed in 21s at $0.00 cost (Mac→Syncthing→Droplet→SLM triage→vault→Mac round-trip). cron jobs (daily-brief 07:00 ET, cost-report 23:00 ET) registered and scheduled. Dashboard reskinned with forest+autumn palette + glass primitives per §10. See `docs/plans/spec1-orchestrator.md` for the task-by-task PR list, and §11 for resolved open-question results.
 > **Supersedes (partial):** Sections 5–6 of `2026-05-20-agenticos-foundation-v2-design.md` (memory + scheduler)
 > **Companion ADR:** `docs/adr/0005-orchestrator-hermes-headless.md` (to be written alongside)
 
