@@ -60,7 +60,7 @@
     "eslint": "^9",
     "eslint-config-next": "^16.2.6",
     "jsdom": "^29.1.1",
-    "node-pg-migrate": "^7.9.1",
+    "node-pg-migrate": "^8.0.4",
     "postcss": "^8.5.15",
     "tailwindcss": "^4",
     "typescript": "^6",
