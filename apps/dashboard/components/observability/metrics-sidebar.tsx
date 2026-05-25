@@ -58,7 +58,7 @@ export function MetricsSidebar({ filterActive, filteredCount }: MetricsSidebarPr
       style={{ borderLeft: "1px solid var(--border-subtle)" }}
     >
       {/* Metrics panel */}
-      <section>
+      <section className="rounded-2xl border border-white/10 bg-white/[0.06] backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.30)] p-4">
         <p
           className="text-[11px] font-semibold uppercase tracking-widest mb-3"
           style={{ color: "var(--text-muted)" }}
@@ -112,7 +112,7 @@ export function MetricsSidebar({ filterActive, filteredCount }: MetricsSidebarPr
       </section>
 
       {/* Costs sparkline panel */}
-      <section>
+      <section className="rounded-2xl border border-white/10 bg-white/[0.06] backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.30)] p-4">
         <p
           className="text-[11px] font-semibold uppercase tracking-widest mb-3"
           style={{ color: "var(--text-muted)" }}
@@ -129,7 +129,7 @@ export function MetricsSidebar({ filterActive, filteredCount }: MetricsSidebarPr
       </section>
 
       {/* Schedule panel — wired to useHermesCron */}
-      <section>
+      <section className="rounded-2xl border border-white/10 bg-white/[0.06] backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.30)] p-4">
         <p
           className="text-[11px] font-semibold uppercase tracking-widest mb-3"
           style={{ color: "var(--text-muted)" }}
