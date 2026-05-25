@@ -229,6 +229,23 @@
   --color-chart-3: var(--lane-hermes);
   --color-chart-4: var(--lane-sandcastle);
   --color-chart-5: var(--text-muted);
+
+  /* ═══════════════════════════════════════════════════════════
+     Spec 1 Forest + Autumn Palette (design spec §10 — locked tokens)
+     Additive tokens for the orchestrator/cost dashboard shell.
+     Generates utilities like bg-pine-bark, text-parchment, etc.
+     ═══════════════════════════════════════════════════════════ */
+  --color-pine-bark:     #0e1f1a;
+  --color-forest-floor:  #1a3a2e;
+  --color-moss-warm:     #3a4a2e;
+  --color-harvest:       #c2620b;
+  --color-madder:        #a83a1a;
+  --color-new-growth:    #7fb069;
+  --color-oak-amber:     #d4a574;
+  --color-parchment:     #f4ead5;
+  --color-driftwood:     #a89c80;
+  --color-glass:         rgba(255, 255, 255, 0.06);
+  --color-glass-dark:    rgba(0, 0, 0, 0.30);
 }
 
 @layer base {
@@ -237,8 +254,14 @@
   }
   body {
     @apply bg-background text-foreground;
-    background-color: var(--bg);
-    color: var(--text);
+    background: radial-gradient(
+      ellipse 80% 60% at top left,
+      var(--color-pine-bark) 0%,
+      var(--color-forest-floor) 50%,
+      var(--color-moss-warm) 100%
+    );
+    color: var(--color-parchment);
+    min-height: 100vh;
   }
   html {
     @apply font-sans;
