@@ -470,13 +470,33 @@ End-to-end, ~15–60 seconds. Cost: ~$0.18.
 
 ---
 
-## 11. Open questions to revisit at implementation time
+## 11. Open questions — RESOLVED at implementation time
 
-1. **OpenViking's `compact` operation** — documentation is sparse. We should verify in implementation whether to enable/configure it, or treat it as a no-op for Spec 1.
-2. **gpt-5-codex pricing exact rates** — needs to be pulled into `pricing.ts` from OpenAI's current schedule at implementation time.
-3. **Hermes plugin API stability** — we're authoring `inbox-watcher` + `slm-router` + `codex-coder` skills against Hermes's plugin contract. Pin the Hermes version in cloud-init and watch for breaking changes.
-4. **Cloudflare Access in front of dashboard's new SSE endpoint** — Access proxies need a long-poll/streaming config setting; verify it doesn't break SSE.
-5. **Droplet RAM budget headroom** — §3.3 estimates Ollama models use ~2.3 GB of 4 GB. Hermes + OpenViking + Postgres + system overhead claims the rest. If integration testing shows OOM pressure (likely under sustained inbox-triage bursts), we may need to either: (a) drop Qwen 2.5 3B to a smaller SLM (Gemma 2 2B, ~1.4 GB), or (b) upsize the Droplet to `s-2vcpu-8gb` (+$24/mo). Decide at acceptance-test time, not now.
+1. **OpenViking's `compact` operation** — Resolved: not enabled; the Phase 1.1-1.4 flows don't generate enough memory churn to warrant it. OpenViking idles at 274 MiB resident with default settings (`HOTNESS_ALPHA=0.2`, no scheduled compaction). Revisit if memory growth becomes a real signal.
+
+2. **gpt-5-codex pricing exact rates** — Resolved: `pricing.py` rate card last reviewed 2026-05-22 and matches `https://openai.com/api/pricing` at that date. **Cron-driven Codex calls currently record `cost_cents=0` because they don't route through the Hermes `post_llm_call` hook** (which the cost-recorder plugin observes). Follow-up: call `pricing.cost_cents()` inline in `tasks/daily_brief.py` after each Codex call. Tracked separately as a known gap; daily-brief hasn't fired yet (next: 07:00 ET tomorrow).
+
+3. **Hermes plugin API stability** — Resolved: contract documented in `docs/superpowers/specs/spec1-verified-api-shapes.md` §3. Hermes version pinned via custom overlay image (`agenticos/hermes-agent:local` built on each Droplet from `nousresearch/hermes-agent:main` — PR #84). Plugin hook signatures verified against `/opt/hermes/plugins/observability/langfuse/__init__.py:801` (PR #66).
+
+4. **Cloudflare Access in front of dashboard's SSE endpoint** — Resolved by Phase 1.3 not using SSE. Task 20 (`/api/tasks`) was simplified to GET+POST polling instead, since the plan's SSE complexity was YAGNI for a single-operator system. Polling at 5s via React Query is plenty responsive at our task rate (~1 inbox-triage per Mac note + 2 cron firings per day).
+
+5. **Droplet RAM budget headroom** — Resolved during Phase 1.0 deploys: 4 GiB Droplet runs comfortably at ~835 MiB idle with all 6 containers up (agenticos-db, ollama, openviking, hermes-agent, hermes-gateway, inbox-watcher). Acceptance test (Task 27) showed end-to-end triage doesn't push past 2 GiB resident even with Qwen 2.5 3B loaded for the SLM call. No Droplet upsize needed.
+
+### Acceptance results (2026-05-24)
+
+End-to-end test (PR #86) ran successfully after the `completed_at`→`ended_at` fix (PR #87):
+
+- **Pipeline latency:** Mac → Syncthing (6s) → inbox-watcher → SLM (6s) → file relocated + summary written → Syncthing back to Mac (9s). Total: ~21s.
+- **Cost:** $0.00 (local Ollama via Qwen 2.5 3B).
+- **Classification accuracy:** Qwen correctly identified "farming/pasture-management" from a 303-byte test note. Subfolder slug auto-generated.
+- **Telemetry:** 1 `tasks` row + 1 `sessions` row + 1 `calls` row, all with correct schema + cost data.
+- **Real bug caught:** Three cron tasks had `UPDATE tasks SET completed_at = now()` but the column is `ended_at`. Unit tests mocked `connect()` and missed it; acceptance hit the real Postgres and surfaced it immediately. Fixed via PR #87.
+
+### Cron-task validation
+
+- **cost-report (23:00 ET):** scheduled, will fire ~3 hours after this doc's writing. First real signal on whether the gateway sidecar's scheduler-tick is healthy.
+- **daily-brief (07:00 ET):** scheduled, fires tomorrow morning. First real Codex API call from production. Watch for: (a) Codex auth still valid, (b) cost row recorded with non-zero `cost_cents`, (c) brief file appears in `/opt/vault/daily-briefs/`.
+- **inbox-triage:** validated end-to-end via the acceptance test.
 
 ---
 
