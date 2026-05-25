@@ -26,8 +26,8 @@ SSH to the Droplet and run `claude /login` to complete the Claude Max OAuth devi
   - Node 22, pnpm 9.15.4, Claude Code CLI
   - Filesystem layout: `/opt/agenticos/repo`, `/opt/vault`, `/opt/backups`, `/etc/agenticos`
   - Repo cloned to `/opt/agenticos/repo`
-  - Honcho docker-compose stack started (if `docker-compose.yml` exists in the repo)
-  - `agenticos-curator.timer` enabled (3:00 nightly)
+  - AgenticOS docker-compose stack started (Hermes Agent + hermes-gateway + Ollama + Postgres) if `docker-compose.yml` exists in the repo
+  - Cron jobs registered via `hermes cron create` (daily-brief, cost-report)
 
 ## Cost
 
@@ -257,14 +257,17 @@ open https://agenticos.gatheringatthegrove.com
 terraform destroy
 ```
 
-⚠️ This will delete the Droplet and **its Docker volumes** (Honcho's pgvector data).
-Take a `pg_dump` first if you want to preserve memory:
+⚠️ This will delete the Droplet and **its Docker volumes** (Postgres task ledger + cost rows, Ollama model cache). The vault on `/opt/vault` is also lost unless it has been Syncthing-replicated to the Mac.
+
+Take a Postgres dump first if you want to preserve task history and cost data:
 
 ```bash
 ssh deploy@$(terraform output -raw droplet_public_ip) \
-  'docker compose -f /opt/agenticos/docker-compose.yml exec -T honcho-db pg_dump -U honcho honcho' \
-  > /tmp/honcho-backup.sql
+  'docker compose -f /opt/agenticos/docker-compose.yml exec -T agenticos-db pg_dump -U agenticos agenticos' \
+  > /tmp/agenticos-backup.sql
 ```
+
+Memory itself lives in the vault as markdown, so as long as Syncthing has replicated `/opt/vault` to your Mac, the agent's accumulated knowledge survives the rebuild.
 
 ## Credentials hygiene
 

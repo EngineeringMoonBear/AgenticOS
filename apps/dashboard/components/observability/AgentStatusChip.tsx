@@ -5,10 +5,10 @@ export function AgentStatusChip() {
   const { data } = useAgentHealth();
   const online = data?.status === "ok";
   const dotColor = online ? "var(--lane-hermes, #4db6ac)" : "var(--text-muted, #6b6157)";
-  const latency = data?.honcho?.latencyMs;
+  const latency = data?.memory?.latencyMs;
   const label = online
-    ? `Agent online · Honcho ${latency ?? "?"}ms`
-    : "Agent degraded — check Honcho connection";
+    ? `Agent online · Viking ${latency ?? "?"}ms`
+    : "Agent degraded — check Viking memory connection";
   return (
     <span
       className="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs rounded-sm"

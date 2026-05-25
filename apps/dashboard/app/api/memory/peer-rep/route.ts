@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// Honcho memory backend was removed in Spec 1; OpenViking takes over in Task 18.
+// Memory backend is OpenViking (filesystem over /opt/vault); peer-rep endpoint
+// pending wire-up. Stub remains so callers get a deterministic 501.
 export async function GET() {
   return NextResponse.json(
     { error: "memory backend not implemented (Spec 1 transition)" },

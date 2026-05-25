@@ -12,9 +12,9 @@ AgenticOS is the orchestration dashboard for a single-developer agent fleet. It 
 
 The architecture is intentionally a composition of best-in-class components rather than a monolith:
 
-- **Knowledge layer** — an Obsidian-format vault. Markdown files, wiki links, taxonomies. The vault is canonical knowledge.
-- **Memory layer** — [Honcho](https://honcho.dev) (self-hosted) for agent operational memory and dialectic user-modeling. Surfaces as MCP tools.
-- **Agent runtime** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) authenticated via a Claude Max subscription. Anthropic's intended channel for programmatic use of Max.
+- **Knowledge layer** — an Obsidian-format vault on disk. Markdown files, wiki links, taxonomies. The vault is canonical knowledge; Obsidian on the Mac is a read/write view of it via Syncthing — the Droplet never runs Obsidian itself.
+- **Memory layer** — [OpenViking](https://github.com/) (filesystem-native memory over `/opt/vault`) surfaced as MCP tools. Agents read and write the same markdown a human would; no separate memory store, no extra DB to operate.
+- **Agent runtime** — [Hermes Agent](https://github.com/NousResearch/hermes-agent) (headless orchestrator) + [Codex CLI](https://github.com/openai/codex) + local Ollama SLMs, all driven by [Claude Code](https://docs.anthropic.com/en/docs/claude-code) authenticated via a Claude Max subscription — Anthropic's intended channel for programmatic use of Max.
 - **Vault tools** — an MCP-to-vault server (in this repo, `apps/dashboard/lib/mcp-vault/`) exposing the vault to any MCP-capable agent.
 - **Dashboard** — Next.js 16 + shadcn/ui, deployed on DigitalOcean App Platform with auto-deploy on `push to main`.
 - **Auth** — Cloudflare Access (Google SSO) in front of the public dashboard URL.
@@ -41,11 +41,12 @@ The architecture is intentionally a composition of best-in-class components rath
                 ┌──────────────────────────────────────┐
                 │  DO Droplet                          │
                 │  - Claude Code (Max OAuth)           │
-                │  - Honcho + Postgres (Docker)        │
-                │  - MCP-to-vault server               │
+                │  - Hermes Agent (cron + orchestrator)│
+                │  - OpenViking (filesystem memory)    │
+                │  - Codex CLI + Ollama SLMs (workers) │
+                │  - Postgres (tasks + cost ledger)    │
                 │  - Vault filesystem (/opt/vault)     │
                 │  - Tailscale + Syncthing daemons     │
-                │  - systemd-timer (scheduled Curator) │
                 └──────────────────────┬───────────────┘
                                        │ Tailscale mesh
                           ┌────────────┴────────────┐
@@ -65,7 +66,7 @@ Phases 1–2 (vault editor, lint, taxonomy, MCP-to-vault server) are merged. Pha
 
 **v1 (MVP) scope:**
 
-- One Curator agent — nightly vault inbox triage, accumulating user model in Honcho
+- One Curator agent — nightly vault inbox triage, accumulating user model as markdown in the Viking-backed vault
 - Dashboard observability — runs, costs, memory inspection, Max quota
 - GitHub Actions CI/CD — push to `main` deploys both App Platform and Droplet
 
@@ -115,7 +116,7 @@ Once v1 is implemented, you'll need:
 - A Mac with Obsidian for vault editing
 - A custom domain for the dashboard
 
-**No LLM API spend.** Honcho and Claude Code run against the existing Max subscription.
+**No LLM API spend.** Claude Code runs against the existing Max subscription; OpenViking is filesystem-backed (no managed service); local SLMs run via Ollama on the Droplet for cheap parallel work.
 
 ## Development
 

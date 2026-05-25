@@ -1,5 +1,16 @@
 # AgenticOS Foundation v2 — MVP Implementation Plan
 
+> **⛔ SUPERSEDED (2026-05-22):** This plan was largely replaced by Spec 1 — see
+> [`docs/plans/spec1-orchestrator.md`](spec1-orchestrator.md). The agent runtime
+> changed from "Claude Code + Honcho memory + homemade Node scheduler" to
+> "Hermes Agent (orchestrator + cron) + OpenViking (filesystem memory over
+> `/opt/vault`) + Codex CLI + local Ollama SLMs". **Honcho is not used.** Memory
+> is filesystem-native markdown read/written by OpenViking; humans view the same
+> vault through Obsidian on the Mac via Syncthing. The infra phases (0, parts of
+> 2, parts of 7) are still relevant as historical sequencing; everything that
+> stands up Honcho, the Node scheduler, or the Claude-Code-only runtime is no
+> longer the path. Read with that lens.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship the v1 MVP of AgenticOS Foundation v2 — one nightly Curator agent running on a DigitalOcean Droplet (Claude Code + Honcho), an observability dashboard on App Platform, both deployed via GitHub Actions, all gated by Cloudflare Access + Tailscale.

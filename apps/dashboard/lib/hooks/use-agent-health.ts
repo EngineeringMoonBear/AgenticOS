@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 export interface AgentHealth {
   status: "ok" | "degraded";
-  honcho: { reachable: boolean; latencyMs: number; error?: string };
+  memory: { reachable: boolean; latencyMs: number; error?: string };
 }
 
 export function useAgentHealth() {
