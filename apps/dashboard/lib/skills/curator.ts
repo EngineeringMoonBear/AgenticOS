@@ -6,9 +6,9 @@ import "server-only";
  * this function which in turn shells out to /opt/agenticos/scripts/run-curator.sh
  * on the Droplet.
  *
- * In v1, the prompt + system message live in the script + Honcho user-model,
- * not here. This module is intentionally thin — its only job is to spawn
- * the canonical run-curator script and surface its run record.
+ * In v1, the prompt + system message live in the script + Viking-backed
+ * markdown vault, not here. This module is intentionally thin — its only job is
+ * to spawn the canonical run-curator script and surface its run record.
  */
 
 export const CURATOR_AGENT_ID = "curator";
