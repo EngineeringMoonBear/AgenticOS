@@ -62,10 +62,10 @@
     "eslint-config-next": "^16.2.6",
     "jsdom": "^29.1.1",
     "node-pg-migrate": "^8.0.4",
-    "postcss": "^8.4.49",
+    "postcss": "^8.5.15",
     "tailwindcss": "^4",
     "typescript": "^6",
-    "vite": "^8.0.13",
-    "vitest": "^4.1.6"
+    "vite": "^8.0.14",
+    "vitest": "^4.1.7"
   }
 }
