@@ -28,7 +28,7 @@ jobs:
     outputs:
       has_jsts: ${{ steps.check.outputs.has_jsts }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - id: check
         # hashFiles() can only be called inside a step, not in a job-level if:
         run: |
@@ -63,7 +63,7 @@ jobs:
       matrix:
         language: ['javascript-typescript']
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4

@@ -148,11 +148,7 @@ export function RunCard({ run }: RunCardProps) {
 
   return (
     <article
-      className="run-card group flex overflow-hidden rounded-lg"
-      style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border-brand)",
-      }}
+      className="run-card group flex overflow-hidden rounded-2xl border border-white/10 bg-white/[0.06] backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.30)]"
     >
       {/* Lane stripe — 2px, pulses when running */}
       <div
