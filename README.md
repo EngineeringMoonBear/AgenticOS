@@ -13,7 +13,7 @@ AgenticOS is the orchestration dashboard for a single-developer agent fleet. It 
 The architecture is intentionally a composition of best-in-class components rather than a monolith:
 
 - **Knowledge layer** — an Obsidian-format vault on disk. Markdown files, wiki links, taxonomies. The vault is canonical knowledge; Obsidian on the Mac is a read/write view of it via Syncthing — the Droplet never runs Obsidian itself.
-- **Memory layer** — [OpenViking](https://github.com/) (filesystem-native memory over `/opt/vault`) surfaced as MCP tools. Agents read and write the same markdown a human would; no separate memory store, no extra DB to operate.
+- **Memory layer** — [OpenViking](https://github.com/volcengine/OpenViking) (open-source context database) with filesystem-paradigm URIs (`viking://resources/…`, `viking://user/memories`, `viking://agent/skills`), L0/L1/L2 tiered loading, hybrid directory + semantic retrieval, and automatic session compression. Hermes has a first-class built-in Viking provider, so memory tools (`viking_remember`, `viking_recall`, `find`, `abstract`, …) are native to every agent. Viking runs on the Droplet alongside Hermes.
 - **Agent runtime** — [Hermes Agent](https://github.com/NousResearch/hermes-agent) (headless orchestrator) + [Codex CLI](https://github.com/openai/codex) + local Ollama SLMs, all driven by [Claude Code](https://docs.anthropic.com/en/docs/claude-code) authenticated via a Claude Max subscription — Anthropic's intended channel for programmatic use of Max.
 - **Vault tools** — an MCP-to-vault server (in this repo, `apps/dashboard/lib/mcp-vault/`) exposing the vault to any MCP-capable agent.
 - **Dashboard** — Next.js 16 + shadcn/ui, deployed on DigitalOcean App Platform with auto-deploy on `push to main`.
@@ -42,7 +42,7 @@ The architecture is intentionally a composition of best-in-class components rath
                 │  DO Droplet                          │
                 │  - Claude Code (Max OAuth)           │
                 │  - Hermes Agent (cron + orchestrator)│
-                │  - OpenViking (filesystem memory)    │
+                │  - OpenViking (context database)     │
                 │  - Codex CLI + Ollama SLMs (workers) │
                 │  - Postgres (tasks + cost ledger)    │
                 │  - Vault filesystem (/opt/vault)     │
@@ -116,7 +116,7 @@ Once v1 is implemented, you'll need:
 - A Mac with Obsidian for vault editing
 - A custom domain for the dashboard
 
-**No LLM API spend.** Claude Code runs against the existing Max subscription; OpenViking is filesystem-backed (no managed service); local SLMs run via Ollama on the Droplet for cheap parallel work.
+**No LLM API spend** — *modulo OpenViking's LLM dependencies.* Claude Code runs against the existing Max subscription; local SLMs run via Ollama on the Droplet for cheap parallel work. OpenViking's background pipelines (TreeBuilder, Compressor, IntentAnalyzer) need an LLM; the plan is to point those at local Ollama so no external API spend accrues. Verified configuration TBD — see open question in `docs/superpowers/specs/2026-05-22-spec1-orchestrator-cost-observability-design.md`.
 
 ## Development
 
