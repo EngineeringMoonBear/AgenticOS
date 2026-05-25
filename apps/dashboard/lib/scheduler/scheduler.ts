@@ -1,10 +1,10 @@
 import "server-only";
-import cron from "node-cron";
+import cron, { type ScheduledTask } from "node-cron";
 import { readSchedules, updateSchedule } from "./cron-io";
 import type { RunRecord } from "@/lib/agent";
 import type { ScheduleRecord } from "./types";
 
-const registered = new Map<string, cron.ScheduledTask>();
+const registered = new Map<string, ScheduledTask>();
 
 export async function bootScheduler(): Promise<void> {
   const schedules = await readSchedules();
