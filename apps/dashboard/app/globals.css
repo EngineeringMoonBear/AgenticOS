@@ -938,6 +938,13 @@
 .pill.err     { color: var(--russet); background: var(--russet-soft); border-color: rgba(203,97,81,0.4); }
 .pill.run     { color: var(--gold);   background: var(--gold-soft);   border-color: rgba(201,162,39,0.4); }
 .pill.stuck   { color: var(--russet); background: var(--russet-soft); border-color: rgba(203,97,81,0.4); }
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
 .pill .dot { width: 5px; height: 5px; background: currentColor; }
 
 .row-list {
