@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
  * TODO(v2): wire these to real endpoints. Today they are hardcoded to match
  * the approved mockup (`docs/design/v2-ui-mockup.html`). Future hookup:
  *   - todaySpend       → /api/cost/today (summary.today_cents + delta vs. yesterday)
- *   - activeRuns       → /api/tasks/queue-depth (running tasks + delta vs. last sample)
+ *   - activeRuns       → /api/tasks/active (running tasks + delta vs. last sample)
  *   - vaultFiles       → /api/ingest/status (total files + count added in last hour)
  *   - memoriesIndexed  → /api/memory/stats (total memory rows)
  */
