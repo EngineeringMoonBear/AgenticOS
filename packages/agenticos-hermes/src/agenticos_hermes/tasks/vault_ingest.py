@@ -51,12 +51,26 @@ class VaultItem:
     scope: str
 
 
+def _walk_dir(dir_path: Path, scope: str) -> Iterator["VaultItem"]:
+    """Recursively yield *.md under `dir_path`, pruning dotfile-prefixed
+    subdirectories at any depth (e.g. `.summaries/`, `.obsidian/`)."""
+    for entry in sorted(dir_path.iterdir()):
+        name = entry.name
+        if name.startswith("."):
+            continue
+        if entry.is_dir():
+            yield from _walk_dir(entry, scope)
+        elif entry.is_file() and name.endswith(".md"):
+            yield VaultItem(path=entry, scope=scope)
+
+
 def walk_vault(root: Path = Path("/opt/vault")) -> Iterator[VaultItem]:
     """Yield every ingestable *.md file under `root`.
 
     Rules (matches production /opt/vault layout, see plan Task 1.2):
-      - skip dotfile-prefixed top-level dirs (.stfolder etc.)
-      - skip the inbox/ dir (inbox-watcher daemon handles it)
+      - skip ANY dotfile-prefixed dir at ANY depth (.stfolder, .summaries,
+        .obsidian, etc.)
+      - skip the inbox/ dir at top level (inbox-watcher daemon handles it)
       - loose top-level *.md files → scope="notes"
       - *.md inside any other top-level dir → scope=<top_dir_name>, recursive
     """
@@ -69,10 +83,7 @@ def walk_vault(root: Path = Path("/opt/vault")) -> Iterator[VaultItem]:
         if entry.is_dir():
             if name == INBOX_DIRNAME:
                 continue
-            scope = name
-            for md in sorted(entry.rglob("*.md")):
-                if md.is_file():
-                    yield VaultItem(path=md, scope=scope)
+            yield from _walk_dir(entry, scope=name)
         elif entry.is_file() and name.endswith(".md"):
             yield VaultItem(path=entry, scope="notes")
 

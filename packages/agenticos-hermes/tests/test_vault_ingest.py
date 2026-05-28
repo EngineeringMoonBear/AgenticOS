@@ -61,6 +61,20 @@ def test_walk_vault_ignores_non_md_files(tmp_path: Path):
     assert items == {"x.md"}
 
 
+def test_walk_vault_skips_dotfile_dirs_recursively(tmp_path: Path):
+    """Regression: production probe 2026-05-28 found `.summaries/` files
+    were being ingested because rglob doesn't prune dotfile subdirs.
+    The fix walks recursively and excludes any dir whose name starts
+    with `.` at any depth."""
+    (tmp_path / "farming" / "pasture" / ".summaries").mkdir(parents=True)
+    (tmp_path / "farming" / "pasture" / ".summaries" / "rotation.md").write_text("skip")
+    (tmp_path / "farming" / "pasture" / "rotation.md").write_text("keep")
+    (tmp_path / "farming" / ".obsidian").mkdir()
+    (tmp_path / "farming" / ".obsidian" / "config.md").write_text("skip")
+    items = {(p.path.name, p.scope) for p in walk_vault(tmp_path)}
+    assert items == {("rotation.md", "farming")}
+
+
 def test_file_sha256_stable(tmp_path: Path):
     p = tmp_path / "x.md"
     p.write_text("hello")

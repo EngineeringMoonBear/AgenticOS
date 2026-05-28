@@ -16,6 +16,24 @@
 # containers in docker-compose.yml.
 set -euo pipefail
 
+# Self-re-exec as the `hermes` user if we were invoked as root. Critical
+# because `hermes cron create` rewrites $HERMES_HOME/cron/jobs.json with
+# the invoking user's ownership; if root writes it, the gateway process
+# (which drops to uid 1000/hermes after startup) can't read it back and
+# silently stops firing scheduled jobs. Discovered the hard way during
+# v2-unified-dashboard Phase 1 smoke test on 2026-05-28.
+if [ "$(id -u)" = "0" ]; then
+  if command -v runuser >/dev/null 2>&1; then
+    exec runuser -u hermes -- "$0" "$@"
+  elif command -v su >/dev/null 2>&1; then
+    # busybox / older images: su -s shell -c "<cmd>"
+    exec su -s /bin/bash -c "$0 $*" hermes
+  else
+    echo "register-cron-jobs: must run as hermes user (no runuser/su available)" >&2
+    exit 1
+  fi
+fi
+
 HERMES_BIN=${HERMES_BIN:-/opt/hermes/.venv/bin/hermes}
 
 # Use --name as the idempotency key. If `cron list` already lists the name,
