@@ -275,7 +275,16 @@ class HttpxVikingClient:
                 )
             upload.raise_for_status()
             body = upload.json()
-            temp_file_id = body.get("temp_file_id") or body.get("id")
+            # Viking wraps all responses in {"status": "ok"|"error", "result": <actual>}.
+            # Probe deployment 2026-05-28 (v0.3.19) showed:
+            #   temp_upload response = {"status":"ok","result":{"temp_file_id":"upload_xxx.md"}}
+            # The OpenAPI schema omits the envelope, so we unwrap defensively.
+            result = body.get("result") if isinstance(body.get("result"), dict) else {}
+            temp_file_id = (
+                result.get("temp_file_id")
+                or body.get("temp_file_id")
+                or body.get("id")
+            )
             if not temp_file_id:
                 raise RuntimeError(
                     f"temp_upload returned no temp_file_id: {body!r}"
