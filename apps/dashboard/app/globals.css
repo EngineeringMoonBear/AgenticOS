@@ -83,22 +83,147 @@
   --ease-standard:       cubic-bezier(0.4, 0.0, 0.2, 1);
   --ease-emphasized:     cubic-bezier(0.2, 0.0, 0.0, 1.0);
   --ease-decelerate:     cubic-bezier(0.0, 0.0, 0.2, 1);
+
+  /* ═══════════════════════════════════════════════════════════
+     v2 Unified Dashboard tokens (docs/design/v2-ui-mockup.html)
+     Forester's-almanac × observability console palette.
+     New canonical names; v1 names above remain for back-compat
+     and have been re-pointed to the new palette where they map
+     1:1 (e.g., --accent-gold-400 == --gold == #c9a227).
+     ═══════════════════════════════════════════════════════════ */
+
+  /* Surfaces — page goes deeper, cards lift toward the eye */
+  --ink:                #060f0b;
+  --surface-recessed:   #0c1611;
+  --surface-header:     #0c1813;
+
+  /* Hairlines — slightly warmer for the glass-rim catch */
+  --moss-line:          #2e4036;
+  --moss-strong:        #45604f;
+  --moss-faint:         #1f2c25;
+
+  /* Glass-pane effect tokens */
+  --rim-light:          rgba(255, 245, 215, 0.07);
+  --rim-light-strong:   rgba(255, 245, 215, 0.11);
+  --pane-shadow-deep:   rgba(0, 0, 0, 0.55);
+  --pane-shadow-close:  rgba(0, 0, 0, 0.4);
+  --pane-inner-dark:    rgba(0, 0, 0, 0.22);
+
+  /* Text — parchment family (v2 alias for --text*) */
+  --parchment:          #f0e6cf;
+  --parchment-muted:    #bdb195;
+  --parchment-faint:    #7c725b;
+  --ink-on-light:       #0d1612;
+
+  /* Brand + status — punchier, "lit" feel */
+  --gold:               #c9a227;        /* canonical brand — same as --accent-gold-400 */
+  --gold-bright:        #e0b73a;
+  --gold-soft:          rgba(201, 162, 39, 0.18);
+  --gold-ghost:         rgba(201, 162, 39, 0.08);
+  --gold-line:          rgba(224, 183, 58, 0.6);
+  --gold-glow:          rgba(224, 183, 58, 0.55);
+
+  --pine:               #6ba480;
+  --pine-bright:        #84c098;
+  --pine-soft:          rgba(107, 164, 128, 0.18);
+  --pine-glow:          rgba(132, 192, 152, 0.55);
+
+  --amber:              #ed9c38;
+  --amber-soft:         rgba(237, 156, 56, 0.18);
+  --amber-glow:         rgba(237, 156, 56, 0.5);
+
+  --russet:             #d76957;
+  --russet-soft:        rgba(215, 105, 87, 0.18);
+  --russet-glow:        rgba(215, 105, 87, 0.5);
+
+  --copper:             #dc8c5f;
+
+  /* Dusk console palette — KPI vista only */
+  --dusk-surface:       #0e1530;
+  --dusk-elevated:      #161e40;
+  --dusk-line:          #2c3760;
+  --dusk-rim:           rgba(224, 183, 58, 0.32);
+  --dusk-glow-warm:     rgba(224, 183, 58, 0.12);
+  --dusk-glow-cool:     rgba(126, 154, 230, 0.10);
+
+  /* Motion (v2 alias) */
+  --ease:               cubic-bezier(0.4, 0.0, 0.2, 1);
+
+  /* Geometry (v2) */
+  --radius-card:        10px;
+  --radius-chip:        999px;
+  --radius-button:      8px;
+
+  /* Type stacks (v2 canonical aliases) */
+  --serif:              'Iowan Old Style', 'Hoefler Text', 'Palatino', 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
+  --sans:               'Inter', system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --mono:               'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, 'Consolas', monospace;
+}
+
+/* v1 → v2 palette re-point. Existing components referencing the v1
+   token names continue to work; they now resolve to the new palette.
+   Listed last so they override the v1 defaults declared above. */
+:root {
+  /* Page + surfaces collapse to the v2 ink/surface family */
+  --bg:                 var(--ink);
+  --surface:            #182721;          /* v2 card body */
+  --surface-elevated:   #21332c;          /* v2 hover */
+  --surface-muted:      var(--surface-recessed);
+
+  /* Borders re-point to the moss family */
+  --border-brand:       var(--moss-line);
+  --border-subtle:      var(--moss-faint);
+  --border-strong:      var(--moss-strong);
+
+  /* Text re-point to parchment */
+  --text:               var(--parchment);
+  --text-secondary:     var(--parchment-muted);
+  --text-muted:         var(--parchment-faint);
+  --text-inverse:       var(--ink-on-light);
+
+  /* Plum accent retired — alias entire scale to gold so any lingering
+     plum references render on-brand rather than off-palette purple.
+     Follow-up sub-phases should migrate these call sites explicitly. */
+  --accent-plum-50:     var(--accent-gold-50);
+  --accent-plum-100:    var(--accent-gold-100);
+  --accent-plum-200:    var(--accent-gold-200);
+  --accent-plum-300:    var(--accent-gold-300);
+  --accent-plum-400:    var(--gold);
+  --accent-plum-500:    var(--accent-gold-500);
+  --accent-plum-600:    var(--accent-gold-600);
+  --accent-plum-700:    var(--accent-gold-700);
+  --accent-plum-800:    var(--accent-gold-800);
+  --accent-plum-900:    var(--accent-gold-900);
+  --accent-plum-950:    var(--accent-gold-950);
 }
 
 /* Light mode overrides (apply .light class to <html>) */
 .light {
-  --bg:                  #f7f4f0;
+  /* v2 canonical light-mode tokens */
+  --ink:                 #f7f4f0;
+  --surface-recessed:    #ece7df;
+  --surface-header:      #f0ece4;
+  --moss-line:           #c8d0c4;
+  --moss-strong:         #6b7a68;
+  --moss-faint:          #dfe3d8;
+  --parchment:           #1a1512;
+  --parchment-muted:     #5c5148;
+  --parchment-faint:     #9e9088;
+  --ink-on-light:        #1a1512;
+
+  /* v1 alias re-point for light mode */
+  --bg:                  var(--ink);
   --surface:             #ffffff;
   --surface-elevated:    #f0ece6;
-  --surface-muted:       #e8e3dc;
+  --surface-muted:       var(--surface-recessed);
 
-  --border-brand:        #d6cfc6;
-  --border-subtle:       #e8e2da;
-  --border-strong:       #b5a898;
+  --border-brand:        var(--moss-line);
+  --border-subtle:       var(--moss-faint);
+  --border-strong:       var(--moss-strong);
 
-  --text:                #1a1512;
-  --text-secondary:      #5c5148;
-  --text-muted:          #9e9088;
+  --text:                var(--parchment);
+  --text-secondary:      var(--parchment-muted);
+  --text-muted:          var(--parchment-faint);
   --text-inverse:        #f0ebe4;
 
   --success-bg:          #e8f9ef;
@@ -254,17 +379,26 @@
   }
   body {
     @apply bg-background text-foreground;
-    background: radial-gradient(
-      ellipse 80% 60% at top left,
-      var(--color-pine-bark) 0%,
-      var(--color-forest-floor) 50%,
-      var(--color-moss-warm) 100%
-    );
-    color: var(--color-parchment);
+    /* v2: solid ink — WCAG AA safe. Texture comes from body::before. */
+    background: var(--ink);
+    color: var(--parchment);
     min-height: 100vh;
   }
   html {
     @apply font-sans;
+  }
+
+  /* Paper-grain — barely visible, gives almanac warmth without
+     harming contrast. Ported verbatim from docs/design/v2-ui-mockup.html. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.4;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.93 0 0 0 0 0.89 0 0 0 0 0.81 0 0 0 0.05 0'/></filter><rect width='200' height='200' filter='url(%23n)'/></svg>");
+    mix-blend-mode: overlay;
   }
 }
 
