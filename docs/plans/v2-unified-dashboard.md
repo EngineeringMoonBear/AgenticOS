@@ -1462,6 +1462,151 @@ Expected: all green, no new failures vs baseline.
 
 ---
 
+## Phase 3.5 — v2 design-system migration (~18 hrs)
+
+> **Inserted 2026-05-29 after the v2 dashboard UI mockup was approved.** The mockup at `docs/design/v2-ui-mockup.html` (PR #101) is the canonical design reference. This phase ports the mockup's patterns — tokens, components, 4-tab structure, glass-pane card grammar, KPI vista with EKG, lantern-mushroom logo — into the actual `apps/dashboard/` codebase. After Phase 3.5 lands, Phase 4 (Memory tab) and beyond build against the new system.
+
+**The mockup IS the spec.** Each sub-phase below references specific sections of the mockup file rather than restating design decisions inline. Implementer subagents should open `docs/design/v2-ui-mockup.html` in a browser before starting to see what they're building.
+
+**Locked decisions from the mockup (do not re-litigate):**
+- Body background SOLID `#060f0b` (no gradient — fixes prior WCAG AA regression)
+- Forest+autumn palette with gold (`#c9a227`) + pine (`#6ba480`) accents
+- Dusk indigo (`#0e1530`) for KPI vista only; cards use surface (`#182721`)
+- Glass-pane cards: multi-layer shadow + state-colored top spine (gold/pine/amber/russet)
+- Lantern-mushroom logo (in mockup `<svg class="logo">` at the brand link)
+- Tab structure: Runs · Cost · Health · Memory (grouped by data source, not by abstract category)
+- KPI vista persistent above tabs (not in any single panel)
+- EKG sweep: 9s cycle with explicit dead time, JS-randomized beat pattern per cycle, opacity peak 0.30
+- Serif (`Iowan Old Style` / `Georgia` stack) for brand wordmark only; Inter elsewhere
+- No header chips for cost / openviking-latency / quota (removed as duplicate info)
+
+---
+
+### Task 3.5.1 — Design tokens (CSS variables) (~2 hrs)
+
+**Files:**
+- Modify: `apps/dashboard/app/globals.css`
+
+Replace the current `:root` block (lines 9-100 approx) with the token system from the mockup's `:root` (search the mockup file for `--ink:` to find). Bring in:
+
+- Surface tokens (`--ink`, `--surface`, `--surface-elevated`, `--surface-recessed`, `--surface-header`)
+- Border tokens (`--moss-line`, `--moss-strong`, `--moss-faint`)
+- Glass-pane effect tokens (`--rim-light`, `--rim-light-strong`, `--pane-shadow-deep`, `--pane-shadow-close`, `--pane-inner-dark`)
+- Text tokens (`--parchment`, `--parchment-muted`, `--parchment-faint`)
+- Brand + status (`--gold`, `--gold-bright`, `--gold-soft`, `--gold-glow`; `--pine`, `--pine-bright`, `--pine-soft`, `--pine-glow`; `--amber`, `--amber-soft`, `--amber-glow`; `--russet`, `--russet-soft`, `--russet-glow`; `--copper`)
+- Dusk console (`--dusk-surface`, `--dusk-elevated`, `--dusk-line`, `--dusk-rim`, `--dusk-glow-warm`, `--dusk-glow-cool`)
+- Motion (`--motion-fast`, `--motion-base`, `--ease`)
+- Geometry (`--radius-card`, `--radius-chip`, `--radius-button`)
+- Type stacks (`--serif`, `--sans`, `--mono`)
+
+Remove the body-level `radial-gradient` background (the WCAG AA regression). Set `body` to solid `var(--ink)` and add the paper-grain `body::before` from the mockup.
+
+Preserve the `.light` block for future light-mode support but update its values to match the new palette directionally.
+
+Run `pnpm typecheck && pnpm lint && pnpm test` — all green, no visual regressions tolerated EXCEPT the body-bg color change.
+
+### Task 3.5.2 — Lantern-mushroom logo component (~1 hr)
+
+**Files:**
+- Create: `apps/dashboard/components/brand/LanternMushroom.tsx`
+
+Wrap the mockup's `<svg class="logo">` SVG (the one with the gold cap + cream windows + stem + pine ellipse) as a React component accepting a `size` prop (default 26). Export as default. Place under `components/brand/` since it's a brand asset distinct from observability or shell components.
+
+### Task 3.5.3 — `SharedHeader` replacement + 4-tab routing (~2 hrs)
+
+**Files:**
+- Modify: `apps/dashboard/components/shell/SharedHeader.tsx`
+- Modify: `apps/dashboard/components/shell/TabBar.tsx`
+- Modify: `apps/dashboard/app/page.tsx` (root redirect)
+- Create: `apps/dashboard/app/cost/page.tsx`
+- Create: `apps/dashboard/app/health/page.tsx`
+- Rename / restructure: `apps/dashboard/app/live/` → `apps/dashboard/app/runs/`
+
+Replace the existing `SharedHeader` with the simplified mockup version: lantern mushroom + serif "AgenticOS" wordmark on left, search + settings on right (no chips). TabBar gets 4 entries: Runs (`/runs`), Cost (`/cost`), Health (`/health`), Memory (`/memory`).
+
+Update root `app/page.tsx` to redirect `?tab=` query to the right path, default `/runs`.
+
+The Phase 2/3 work created `app/live/page.tsx` — rename to `app/runs/page.tsx`. Stub `cost/` and `health/` pages with placeholder text; they'll get filled in by Task 3.5.6 + 3.5.7.
+
+Update count badges per mockup (Runs: live count, Cost: today's spend, Health: warn count, Memory: total memories).
+
+### Task 3.5.4 — `KpiVista` component with EKG (~3 hrs)
+
+**Files:**
+- Create: `apps/dashboard/components/shell/KpiVista.tsx`
+- Create: `apps/dashboard/components/shell/EkgSweep.tsx`
+- Create: `apps/dashboard/lib/hooks/use-kpi-data.ts`
+- Modify: `apps/dashboard/app/layout.tsx` (insert KpiVista above the panels)
+
+Port the mockup's `.kpi-vista` div as `KpiVista.tsx` — dusk-indigo surface, gold horizons, 4 KPI tiles, persistent live-meta indicator. Place ABOVE the tab content in the root layout so it shows across all tabs.
+
+Port the EKG SVG + JS randomizer as `EkgSweep.tsx`. The randomizer should run as `useEffect` listening for `animationiteration` on the trace path. CSS animation drives the sweep; JS regenerates the path each cycle.
+
+Data hook `useKpiData` fetches `/api/cost/today` for today's spend, `/api/tasks/queue-depth` for active run count, and surfaces vault file count + memories indexed (these last two need new API routes — file as follow-up tasks but stub for now).
+
+### Task 3.5.5 — Glass-pane `Card` grammar (~3 hrs)
+
+**Files:**
+- Create: `apps/dashboard/components/ui/Card.tsx`
+- Create: `apps/dashboard/components/ui/Pill.tsx`
+- Create: `apps/dashboard/components/ui/Row.tsx`
+- Create: `apps/dashboard/components/ui/BarRow.tsx`
+- Create: `apps/dashboard/components/ui/Progress.tsx`
+- Create: `apps/dashboard/components/ui/IconBtn.tsx`
+
+Build the card system as composable primitives. `Card` accepts `lane?: "gold" | "pine" | "amber" | "russet"` to switch the top-spine color (per mockup's `.card.lane--*` classes). Use the multi-layer box-shadow from mockup for the glass pop. Include hover lift.
+
+`Pill` has variants `ok` / `warn` / `err` / `run` / `stuck` matching mockup. `Row` is the 3-or-4-column grid pattern used inside cards. `BarRow` is the gold-fill bar used in OpenViking scopes. `Progress` is the labeled progress bar from Rate limits / System resources. `IconBtn` is the small square icon button with `alert` / `go` variants for retry / cancel / trigger-now actions.
+
+Add Vitest tests for each: render with default props, hover state, lane variant where applicable.
+
+### Task 3.5.6 — Re-skin existing Phase 3 cards (~3 hrs)
+
+**Files:**
+- Modify: `apps/dashboard/components/observability/QueueDepthPanel.tsx` → become `LiveRunsPanel.tsx` with elapsed time + stuck detection
+- Modify: `apps/dashboard/components/observability/RecentErrorsPanel.tsx` → add retry button per row using new `IconBtn`
+- Modify: `apps/dashboard/components/observability/CostBurndownChart.tsx` → use new `Card` grammar + gold sparkline ghost-fill
+
+Each becomes a thin wrapper using the new `Card` + subcomponents. Maintains the same data hooks (`useQuery` against `/api/tasks/*`, `/api/cost/burndown`).
+
+`QueueDepthPanel` → `LiveRunsPanel`: shows currently-executing tasks (not just counts), elapsed time per task, "stuck" classification when elapsed > 5 min without progress. Adds cancel icon button per row.
+
+Move the re-skinned components into the appropriate route segment (Runs panel for live runs, Cost panel for burndown, etc.).
+
+### Task 3.5.7 — New cards from mockup (~4 hrs)
+
+**Files (one component each):**
+- Create: `apps/dashboard/components/observability/ScheduledRunsPanel.tsx`
+- Create: `apps/dashboard/components/observability/AgentHealthPanel.tsx`
+- Create: `apps/dashboard/components/observability/SystemResourcesPanel.tsx`
+- Create: `apps/dashboard/components/observability/ExternalServicesPanel.tsx`
+- Create: `apps/dashboard/components/observability/BackupsPanel.tsx`
+- Create: `apps/dashboard/components/observability/CostProjectionPanel.tsx`
+- Create: `apps/dashboard/components/observability/OpenAICodexPanel.tsx`
+- Create: `apps/dashboard/components/observability/OllamaPanel.tsx`
+- Create: `apps/dashboard/components/observability/VaultIngestPanel.tsx`
+- Create: `apps/dashboard/components/memory/RecentVaultChangesPanel.tsx`
+- Create: `apps/dashboard/components/memory/SkillsCatalogPanel.tsx`
+
+Each card has a paired API route (`/api/health/system`, `/api/cost/projection`, etc.) or reuses existing routes (`/api/tasks/recent-errors` for the recent activity feed). API routes that don't have a real backend yet should return a 501 stub (the dashboard renders the empty/loading state cleanly per the mockup).
+
+Distribute components into the right panel pages:
+- **Runs panel:** VaultIngestPanel, LiveRunsPanel (from 3.5.6), ScheduledRunsPanel, RecentErrorsPanel (from 3.5.6), Recent activity feed (re-skinned)
+- **Cost panel:** CostBurndownChart (from 3.5.6), CostProjectionPanel, RateLimitsPanel (re-skin existing), OpenAICodexPanel, OllamaPanel
+- **Health panel:** AgentHealthPanel, SystemResourcesPanel, ExternalServicesPanel, BackupsPanel
+- **Memory panel:** OpenViking summary card, SkillsCatalogPanel, RecentVaultChangesPanel (3-card strip above the existing three-column browser)
+
+### Task 3.5.8 — Acceptance + cleanup (~1 hr)
+
+- [ ] Open every panel, confirm visual parity with mockup (compare against `docs/design/v2-ui-mockup.html`)
+- [ ] Run `pnpm typecheck && pnpm lint && pnpm test && pnpm test:e2e` — all green
+- [ ] Delete or archive orphaned files: original `components/layout/header.tsx`, `header-tabs.tsx` if still present
+- [ ] Update the `tests/e2e/dashboard-load.spec.ts` paths from `/live` to `/runs` etc.
+
+After Phase 3.5 lands, Phase 4 (Memory tab routes + components) builds against this new vocabulary — every card is already a `Card`, every pill is already a `Pill`, the Memory tab just adds the 3-column browser and 6 API routes on top.
+
+---
+
 ## Phase 4 — Memory tab (~7 hrs)
 
 Goal: Three-column browser, /api/memory/* routes, L0/L1/L2 progressive disclosure.
