@@ -38,6 +38,10 @@ This spec is a single coherent feature: extend the dashboard from "live-ops only
 | 6 | Retrieval trajectories | **Included in v1**, not deferred. `react-force-graph-2d` is already a dashboard dep; wire it to Viking's DebugService observer output. |
 | 7 | Viking LLM provider | **Ollama** (local, OpenAI-compatible API at `http://ollama:11434/v1`) for both embeddings and VLM. No external API spend. |
 
+> **Production-reality update (2026-05-28):** SSH probe of the live Droplet (`159.223.171.231`) found the deployed `OpenViking v0.3.19` already has Ollama-backed embedding wired in `/opt/agenticos/openviking-config/ov.conf` (`nomic-embed-text`). The config file is **JSON**, not YAML, and is read by the container via the `OPENVIKING_CONFIG_FILE` env. There is no explicit `vlm:` block; Viking v0.3.19 picks up `OLLAMA_BASE_URL` from compose env for chat/generation. Viking listens on port `1933` (not 7333). All `/api/v1/*` data calls require tenant headers `X-OpenViking-Account: agenticos` and `X-OpenViking-User: deploy`. RAM constraint (3.9 GB total) limits VLM to `qwen2.5:3b` — the 7b/14b targets in §9 are infeasible without a Droplet upsize. The live OpenAPI is snapshotted at `docs/reference/openviking-v0.3.19-openapi.json` and is the source of truth for endpoint shapes below.
+>
+> **WebDAV considered and rejected:** Viking exposes `/webdav/resources` — in theory Obsidian could mount this directly, bypassing the cron-ingester layer. Rejected because: (a) the WebDAV path exposes Viking's internal AGFS layout, not a clean publisher API; (b) Obsidian needs a stable filesystem vault layout — Viking may rewrite paths on indexing; (c) the indirection layer is *valuable* — it lets the local vault contain drafts and unfinished content that aren't pushed to Viking. Locked decision #3 (one-way ingestion via cron) stands.
+
 ## 4. Architecture (delta over Spec 1)
 
 ```
@@ -228,16 +232,21 @@ The viz is read-only and bounded to the last 30 days by default with a date rang
 
 ### 5.8 Dashboard API routes (new)
 
-| Route | Purpose | Verb |
-|-------|---------|------|
-| `/api/memory/tree?scope={scope}` | List Viking namespace tree under a scope | GET |
-| `/api/memory/abstracts?uri={uri}` | List L0 abstracts of children of a URI | GET |
-| `/api/memory/overview?uri={uri}` | Single L1 overview | GET |
-| `/api/memory/detail?uri={uri}` | Full L2 content (paginated for large files) | GET |
-| `/api/memory/trajectory?uri={uri}&since={ISO}` | Retrieval trajectory data for force-graph | GET |
-| `/api/ingest/status` | Last vault-ingest run summary | GET |
+The dashboard proxies to the live Viking REST API at `http://openviking:1933`. Every upstream call carries `Authorization: Bearer ${OPENVIKING_API_KEY}`, `X-OpenViking-Account: agenticos`, and `X-OpenViking-User: deploy` (the user can be overridden via env for multi-user deployments later). Endpoint shapes verified against `docs/reference/openviking-v0.3.19-openapi.json`.
 
-All read-only. All proxy to Viking's REST API (the existing `OpenViking client` from Spec 1 Task 18). No mutations from the dashboard — those happen in Obsidian or by agents.
+| Dashboard route | Verb | Upstream Viking call | Notes |
+|---|---|---|---|
+| `/api/memory/tree?scope={scope}` | GET | `GET /api/v1/fs/tree?uri=viking://{scope}` | Real upstream uses `uri` not `path`. Param normalization in the route handler. |
+| `/api/memory/abstracts?uri={uri}` | GET | `GET /api/v1/fs/ls?uri={uri}` then fan-out `GET /api/v1/content/abstract?uri={child}` for each child | No batch-abstracts endpoint; fan-out happens server-side and is cached. |
+| `/api/memory/overview?uri={uri}` | GET | `GET /api/v1/content/overview?uri={uri}` | 1:1 proxy. |
+| `/api/memory/detail?uri={uri}&offset=&limit=` | GET | `GET /api/v1/content/read?uri={uri}&offset=&limit=` | Real upstream supports offset/limit chunking; dashboard passes through. |
+| `/api/memory/trajectory?uri={uri}` | GET | `GET /api/v1/observer/retrieval` filtered client-side by URI, or `POST /api/v1/relations/build_graph` with body `{root_uri,since}` | Two candidate sources; pick during Phase 5 task 5.1 by inspecting actual responses. |
+| `/api/memory/search?q={q}&scope={scope}` | GET | `POST /api/v1/search/find` with JSON body `{query,target_uri}` | Bonus surface — wire from a "Find" affordance in the Memory tab. |
+| `/api/memory/stats` | GET | `GET /api/v1/stats/memories` (optionally `?category=`) | Pre-aggregated counts for the CategoryBrowser. |
+| `/api/ingest/status` | GET | (none — Postgres `tasks` table) | Last `vault-ingest` run summary. |
+| `/api/dashboard/summary` | GET | `GET /api/v1/console/dashboard/summary?timezone=America/New_York` | Bonus: Viking-side aggregated dashboard data. Used by the shared header where it removes a Postgres roundtrip. |
+
+All read-only. No mutations from the dashboard — those happen in Obsidian or by agents.
 
 ## 6. Data flow scenarios
 

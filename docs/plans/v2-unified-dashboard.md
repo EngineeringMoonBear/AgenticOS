@@ -73,6 +73,8 @@
 
 Goal: Viking on the Droplet uses local Ollama for embeddings + VLM with verified round-trip. Establish a known-good baseline before any new ingester writes hit it.
 
+> **STATUS (2026-05-28): substantially already complete in production.** SSH probe found the deployed `ov.conf` (JSON, at `/opt/agenticos/openviking-config/ov.conf`) already has `embedding.dense = {provider: ollama, model: nomic-embed-text, api_base: http://ollama:11434/v1}`. No `vlm:` block — Viking v0.3.19 auto-routes via `OLLAMA_BASE_URL` compose env. RAM constrains VLM to `qwen2.5:3b` (already pulled). **Task 0.3 below is obsolete** — running `configure-viking-llm.sh` as written would brick Viking (YAML over JSON, wrong path, clobbers root API key). Benchmark scripts (Tasks 0.1 / 0.2) are still useful tools. Phase 0 verification is reduced to a single round-trip test, captured at the end of this phase.
+
 ### Task 0.1: Benchmark Ollama embedding models
 
 **Files:**
@@ -161,7 +163,9 @@ git add infra/scripts/benchmark-ollama-vlm.sh
 git -c commit.gpgsign=false commit -m "infra: benchmark Ollama VLM candidates for Viking"
 ```
 
-### Task 0.3: Write Viking LLM configuration script
+### Task 0.3: Write Viking LLM configuration script — **OBSOLETE, DO NOT RUN**
+
+> The script `infra/scripts/configure-viking-llm.sh` was written speculatively against a YAML config shape that doesn't match the deployed JSON `ov.conf`. The deployed config is already correct. Skip steps 1–4 below. They are preserved here only as the historical record of what the plan thought was needed.
 
 **Files:**
 - Create: `infra/scripts/configure-viking-llm.sh`
@@ -1446,41 +1450,77 @@ Goal: Three-column browser, /api/memory/* routes, L0/L1/L2 progressive disclosur
 **Files:**
 - Modify (or Create if it doesn't yet exist): `apps/dashboard/lib/api/viking.ts`
 
+> **Endpoint shapes verified against `docs/reference/openviking-v0.3.19-openapi.json` on 2026-05-28.** Real Viking endpoints use `uri` (not `path`), `content/{abstract,overview,read}` (not bare `/abstract` etc.), and require tenant headers `X-OpenViking-Account` and `X-OpenViking-User`. There is no batch `/abstracts` endpoint — the client fans out one `content/abstract` call per child returned by `fs/ls`. Trajectory comes from `observer/retrieval` (no params) filtered client-side, with `relations/build_graph` (POST) as a richer fallback.
+
 - [ ] **Step 1: Locate the existing Viking client**
 
-Run: `grep -rn "viking" apps/dashboard/lib/ | head`. Spec 1 left a client somewhere (task 18). If it lives at `apps/dashboard/lib/agent/honcho-client.ts` historically but has been renamed to a viking client, find it and edit it; otherwise create `apps/dashboard/lib/api/viking.ts`.
+Run: `grep -rn "viking\|openviking" apps/dashboard/lib/ | head -20`. Spec 1 left a client somewhere. If a client already exists, modify it; otherwise create `apps/dashboard/lib/api/viking.ts`. Reuse whatever pattern Spec 1 established for tenant headers if any.
 
-- [ ] **Step 2: Add the five read functions**
+- [ ] **Step 2: Implement the read shim**
 
 ```ts
 // apps/dashboard/lib/api/viking.ts
 import "server-only";
 
-const BASE = process.env.VIKING_BASE_URL ?? "http://openviking:7333";
+const BASE    = process.env.OPENVIKING_ENDPOINT ?? "http://openviking:1933";
+const API_KEY = process.env.OPENVIKING_API_KEY  ?? "";
+const ACCOUNT = process.env.OPENVIKING_ACCOUNT  ?? "agenticos";
+const USER    = process.env.OPENVIKING_USER     ?? "deploy";
+
+function headers(): HeadersInit {
+  return {
+    Authorization: `Bearer ${API_KEY}`,
+    "X-OpenViking-Account": ACCOUNT,
+    "X-OpenViking-User":    USER,
+  };
+}
 
 async function get<T>(path: string): Promise<T> {
-  const r = await fetch(`${BASE}${path}`, { cache: "no-store" });
-  if (!r.ok) throw new Error(`Viking ${path} -> HTTP ${r.status}`);
+  const r = await fetch(`${BASE}${path}`, { headers: headers(), cache: "no-store" });
+  if (!r.ok) throw new Error(`Viking GET ${path} -> HTTP ${r.status}`);
   return r.json() as Promise<T>;
 }
 
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { ...headers(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!r.ok) throw new Error(`Viking POST ${path} -> HTTP ${r.status}`);
+  return r.json() as Promise<T>;
+}
+
+// Types — adapt to actual Viking response shapes when the implementer
+// observes the first real response. Field names below are based on the
+// OpenViking v0.3.19 conventions but should be verified.
 export interface TreeNode { uri: string; name: string; kind: "scope" | "dir" | "file"; }
+export interface FsEntry  { uri: string; name: string; is_dir: boolean; }
 export interface Abstract { uri: string; name: string; abstract: string; }
-export interface Overview  { uri: string; overview: string; }
-export interface Detail    { uri: string; content: string; total_chunks: number; chunk: number; }
-export interface Trajectory {
+export interface Overview { uri: string; overview: string; }
+export interface Detail   { uri: string; content: string; total_offset: number; offset: number; limit: number; }
+export interface Retrieval { uri: string; session_id: string; agent: string; at: string; query?: string; }
+export interface GraphData {
   nodes: { id: string; kind: "uri" | "session" | "agent"; label: string; size: number }[];
   links: { source: string; target: string; weight: number; at: string }[];
 }
 
-export const vikingTree       = (scope: string)               => get<{ nodes: TreeNode[] }>(`/api/v1/tree?scope=${encodeURIComponent(scope)}`);
-export const vikingAbstracts  = (uri: string)                 => get<{ items: Abstract[] }>(`/api/v1/abstracts?uri=${encodeURIComponent(uri)}`);
-export const vikingOverview   = (uri: string)                 => get<Overview>(`/api/v1/overview?uri=${encodeURIComponent(uri)}`);
-export const vikingDetail     = (uri: string, chunk = 0)      => get<Detail>(`/api/v1/detail?uri=${encodeURIComponent(uri)}&chunk=${chunk}`);
-export const vikingTrajectory = (uri: string, since: string)  => get<Trajectory>(`/api/v1/debug/trajectory?uri=${encodeURIComponent(uri)}&since=${encodeURIComponent(since)}`);
+const enc = encodeURIComponent;
+
+export const vikingFsTree   = (uri: string)                          => get<{ nodes: TreeNode[] }>(`/api/v1/fs/tree?uri=${enc(uri)}`);
+export const vikingFsLs     = (uri: string)                          => get<{ entries: FsEntry[] }>(`/api/v1/fs/ls?uri=${enc(uri)}&simple=true`);
+export const vikingAbstract = (uri: string)                          => get<Abstract>(`/api/v1/content/abstract?uri=${enc(uri)}`);
+export const vikingOverview = (uri: string)                          => get<Overview>(`/api/v1/content/overview?uri=${enc(uri)}`);
+export const vikingDetail   = (uri: string, offset = 0, limit = 8192) => get<Detail>(`/api/v1/content/read?uri=${enc(uri)}&offset=${offset}&limit=${limit}`);
+export const vikingRetrieval = ()                                    => get<{ events: Retrieval[] }>(`/api/v1/observer/retrieval`);
+export const vikingBuildGraph = (root_uri: string, since: string)    => post<GraphData>(`/api/v1/relations/build_graph`, { root_uri, since });
+export const vikingSearchFind = (query: string, target_uri?: string) => post<{ items: Abstract[] }>(`/api/v1/search/find`, { query, target_uri });
+export const vikingStatsMemories = (category?: string)               => get<{ counts: Record<string, number> }>(`/api/v1/stats/memories${category ? `?category=${enc(category)}` : ""}`);
+export const vikingDashboardSummary = (tz = "America/New_York")      => get<Record<string, unknown>>(`/api/v1/console/dashboard/summary?timezone=${enc(tz)}`);
 ```
 
-**Decision in implementation:** if Viking's actual REST paths differ, adjust here (single chokepoint). This is also where Phase 5 Task 5.1's verification of the DebugService endpoint shape lives.
+**Note on `abstracts` (the list view):** there is no batch-abstracts endpoint in v0.3.19. The dashboard route `/api/memory/abstracts` will call `vikingFsLs` then fan out one `vikingAbstract` per file child, in parallel, with a `Promise.all` cap of e.g. 8 to avoid hammering Ollama. The route handler in Task 4.2 covers this.
 
 - [ ] **Step 3: Commit**
 
@@ -1499,42 +1539,70 @@ git -c commit.gpgsign=false commit -m "feat(dashboard): viking read-client shim 
 - Create: `apps/dashboard/app/api/memory/trajectory/route.ts`
 - Create: `apps/dashboard/app/api/ingest/status/route.ts`
 
-- [ ] **Step 1: Implement `/api/memory/tree`**
+> **Routes rewritten 2026-05-28 against actual Viking v0.3.19 OpenAPI** (see `docs/reference/openviking-v0.3.19-openapi.json`). Real shapes use `uri` query, `content/{abstract,overview,read}` paths, offset/limit pagination (not chunk index), POST for `search/find` and `relations/build_graph`. No batch-abstracts endpoint — `/api/memory/abstracts` fans out one `content/abstract` per `fs/ls` child.
+
+- [ ] **Step 1: Implement `/api/memory/tree`** (normalizes scope to `viking://` URI)
 
 ```ts
 // apps/dashboard/app/api/memory/tree/route.ts
 import { NextResponse } from "next/server";
-import { vikingTree } from "@/lib/api/viking";
+import { vikingFsTree } from "@/lib/api/viking";
 
 export async function GET(req: Request) {
   const scope = new URL(req.url).searchParams.get("scope") ?? "resources";
+  const uri = scope.startsWith("viking://") ? scope : `viking://${scope}`;
   try {
-    return NextResponse.json(await vikingTree(scope));
+    return NextResponse.json(await vikingFsTree(uri));
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }
 }
 ```
 
-- [ ] **Step 2: Implement `/api/memory/abstracts`**
+- [ ] **Step 2: Implement `/api/memory/abstracts`** (fan-out — there is no batch endpoint)
 
 ```ts
 // apps/dashboard/app/api/memory/abstracts/route.ts
 import { NextResponse } from "next/server";
-import { vikingAbstracts } from "@/lib/api/viking";
+import { vikingFsLs, vikingAbstract } from "@/lib/api/viking";
+
+const PARALLEL_CAP = 8;
+
+async function pLimit<T, R>(items: T[], cap: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(cap, items.length) }, async () => {
+    while (true) {
+      const idx = i++;
+      if (idx >= items.length) return;
+      out[idx] = await fn(items[idx]);
+    }
+  }));
+  return out;
+}
 
 export async function GET(req: Request) {
   const uri = new URL(req.url).searchParams.get("uri");
   if (!uri) return NextResponse.json({ error: "uri required" }, { status: 400 });
   try {
-    return NextResponse.json(await vikingAbstracts(uri));
+    const { entries } = await vikingFsLs(uri);
+    const files = entries.filter((entry) => !entry.is_dir);
+    const items = await pLimit(files, PARALLEL_CAP, async (entry) => {
+      try {
+        const a = await vikingAbstract(entry.uri);
+        return { uri: entry.uri, name: entry.name, abstract: a.abstract };
+      } catch {
+        return { uri: entry.uri, name: entry.name, abstract: "" };
+      }
+    });
+    return NextResponse.json({ items });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }
 }
 ```
 
-- [ ] **Step 3: Implement `/api/memory/overview` (same shape, calls `vikingOverview`)**
+- [ ] **Step 3: Implement `/api/memory/overview`** (1:1 proxy)
 
 ```ts
 // apps/dashboard/app/api/memory/overview/route.ts
@@ -1552,45 +1620,70 @@ export async function GET(req: Request) {
 }
 ```
 
-- [ ] **Step 4: Implement `/api/memory/detail` (with chunk pagination)**
+- [ ] **Step 4: Implement `/api/memory/detail`** (offset/limit pagination matching upstream)
 
 ```ts
 // apps/dashboard/app/api/memory/detail/route.ts
 import { NextResponse } from "next/server";
 import { vikingDetail } from "@/lib/api/viking";
 
+const DEFAULT_LIMIT = 8192;
+
 export async function GET(req: Request) {
   const sp = new URL(req.url).searchParams;
   const uri = sp.get("uri");
-  const chunk = Number(sp.get("chunk") ?? "0");
+  const offset = Number(sp.get("offset") ?? "0");
+  const limit  = Number(sp.get("limit")  ?? `${DEFAULT_LIMIT}`);
   if (!uri) return NextResponse.json({ error: "uri required" }, { status: 400 });
-  if (!Number.isFinite(chunk) || chunk < 0) {
-    return NextResponse.json({ error: "chunk must be a non-negative integer" }, { status: 400 });
+  if (!Number.isFinite(offset) || offset < 0) {
+    return NextResponse.json({ error: "offset must be a non-negative integer" }, { status: 400 });
+  }
+  if (!Number.isFinite(limit) || limit <= 0 || limit > 65536) {
+    return NextResponse.json({ error: "limit must be in (0, 65536]" }, { status: 400 });
   }
   try {
-    return NextResponse.json(await vikingDetail(uri, chunk));
+    return NextResponse.json(await vikingDetail(uri, offset, limit));
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }
 }
 ```
 
-- [ ] **Step 5: Implement `/api/memory/trajectory`**
+- [ ] **Step 5: Implement `/api/memory/trajectory`** (try `relations/build_graph` first, fall back to filtered observer events)
 
 ```ts
 // apps/dashboard/app/api/memory/trajectory/route.ts
 import { NextResponse } from "next/server";
-import { vikingTrajectory } from "@/lib/api/viking";
+import { vikingBuildGraph, vikingRetrieval } from "@/lib/api/viking";
 
 export async function GET(req: Request) {
   const sp = new URL(req.url).searchParams;
   const uri = sp.get("uri");
   const since = sp.get("since") ?? new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
   if (!uri) return NextResponse.json({ error: "uri required" }, { status: 400 });
+
+  // Richer graph first — falls back if Viking's relations service is empty or unavailable.
   try {
-    return NextResponse.json(await vikingTrajectory(uri, since));
+    const graph = await vikingBuildGraph(uri, since);
+    if (graph?.nodes?.length) return NextResponse.json(graph);
+  } catch { /* fall through */ }
+
+  try {
+    const { events } = await vikingRetrieval();
+    const sinceMs = Date.parse(since);
+    const relevant = events.filter((ev) => ev.uri === uri && Date.parse(ev.at) >= sinceMs);
+    const sessions = new Map<string, number>();
+    for (const ev of relevant) sessions.set(ev.session_id, (sessions.get(ev.session_id) ?? 0) + 1);
+    return NextResponse.json({
+      nodes: [
+        { id: uri, kind: "uri", label: uri.split("/").pop() ?? uri, size: relevant.length },
+        ...Array.from(sessions.entries()).map(([id, n]) => ({
+          id, kind: "session" as const, label: id.slice(0, 8), size: n,
+        })),
+      ],
+      links: relevant.map((ev) => ({ source: ev.session_id, target: uri, weight: 1, at: ev.at })),
+    });
   } catch (e) {
-    // Soft-fail: memory tab degrades gracefully if DebugService isn't available.
     return NextResponse.json({ error: (e as Error).message, available: false }, { status: 503 });
   }
 }
@@ -1695,10 +1788,10 @@ export function useMemoryDetail(uri: string | null, chunk: number) {
 // apps/dashboard/lib/hooks/use-trajectory.ts
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import type { Trajectory } from "@/lib/api/viking";
+import type { GraphData } from "@/lib/api/viking";
 
 export function useTrajectory(uri: string | null, since: string) {
-  return useQuery<Trajectory & { available?: boolean }>({
+  return useQuery<GraphData & { available?: boolean }>({
     queryKey: ["memory-trajectory", uri, since],
     enabled: !!uri,
     retry: false,
@@ -1965,20 +2058,21 @@ git -c commit.gpgsign=false commit -m "feat(dashboard): memory tab three-column 
 
 Goal: Replace the `RetrievalTrajectoryGraph` stub with a real `react-force-graph-2d` view backed by Viking's DebugService.
 
-### Task 5.1: Verify Viking DebugService shape
+### Task 5.1: Verify trajectory endpoint shape — **ANSWERED**
 
-- [ ] **Step 1: Curl the endpoint with a known URI**
+> Resolved 2026-05-28 via `docs/reference/openviking-v0.3.19-openapi.json`. Viking v0.3.19 exposes two relevant endpoints: `GET /api/v1/observer/retrieval` (recent retrieval events, no query params — filter client-side) and `POST /api/v1/relations/build_graph` (richer graph response with body `{root_uri, since}`). The route handler in Task 4.2 Step 5 tries `build_graph` first and falls back to `observer/retrieval`. No further verification step needed; proceed to 5.2.
 
-Run on Droplet (or via SSH tunnel):
+- [ ] **Step 1: Sanity-check both endpoints with curl from Droplet**
+
+Run on Droplet:
 ```bash
-curl -fsS "http://localhost:7333/api/v1/debug/trajectory?uri=viking://agent/skills/v2-smoke-test.md&since=2026-04-25T00:00:00Z" | jq .
+APIKEY="$(jq -r .server.root_api_key /opt/agenticos/openviking-config/ov.conf)"
+HDRS=(-H "Authorization: Bearer $APIKEY" -H "X-OpenViking-Account: agenticos" -H "X-OpenViking-User: deploy")
+curl -fsS "http://localhost:1933/api/v1/observer/retrieval" "${HDRS[@]}" | jq . | head -40
+curl -fsS -X POST "http://localhost:1933/api/v1/relations/build_graph" "${HDRS[@]}" -H "Content-Type: application/json" -d '{"root_uri":"viking://resources","since":"2026-04-28T00:00:00Z"}' | jq . | head -40
 ```
 
-Expected: a JSON object — record its actual shape. If keys differ from the `Trajectory` type in `lib/api/viking.ts`, update the type *and* the normalizer in step 5.2.
-
-- [ ] **Step 2: If the endpoint does not exist or returns 404 / 501**
-
-The route handler in `/api/memory/trajectory/route.ts` already soft-fails to 503. The graph component will then render the "not available" empty state. Note this in `docs/superpowers/specs/2026-05-25-v2-unified-dashboard-design.md` §9 open question 2.
+If the response shapes don't match the `Retrieval` / `GraphData` types in `lib/api/viking.ts`, update the types in one place — the rest of the code paths normalize through that file.
 
 ### Task 5.2: Implement `RetrievalTrajectoryGraph`
 
