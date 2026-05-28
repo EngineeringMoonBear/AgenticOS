@@ -1,8 +1,11 @@
+import { CostBurndownChart } from "@/components/observability/CostBurndownChart";
+
 export default function CostPage() {
   return (
-    <section className="p-6">
-      <h1 className="text-2xl font-semibold">Cost</h1>
-      <p className="text-sm opacity-70">Cards filling in during Task 3.5.7.</p>
-    </section>
+    <div className="grid grid-cols-12 gap-4 p-4">
+      <section className="col-span-12 lg:col-span-8">
+        <CostBurndownChart />
+      </section>
+    </div>
   );
 }

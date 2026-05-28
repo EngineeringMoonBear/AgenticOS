@@ -1,8 +1,7 @@
 import { LiveRunsStrip } from "@/components/observability/live-runs-strip";
 import { RateLimitsPanel } from "@/components/observability/RateLimitsPanel";
-import { QueueDepthPanel } from "@/components/observability/QueueDepthPanel";
+import { LiveRunsPanel } from "@/components/observability/LiveRunsPanel";
 import { RecentErrorsPanel } from "@/components/observability/RecentErrorsPanel";
-import { CostBurndownChart } from "@/components/observability/CostBurndownChart";
 import { LiveRunFeedSection } from "./live-run-feed-section";
 
 export default function LiveOpsPage() {
@@ -11,17 +10,14 @@ export default function LiveOpsPage() {
       <section className="col-span-12">
         <LiveRunsStrip />
       </section>
-      <section className="col-span-12 lg:col-span-8">
-        <CostBurndownChart />
-      </section>
-      <section className="col-span-12 lg:col-span-4">
-        <RateLimitsPanel />
-      </section>
       <section className="col-span-12 lg:col-span-6">
-        <QueueDepthPanel />
+        <LiveRunsPanel />
       </section>
       <section className="col-span-12 lg:col-span-6">
         <RecentErrorsPanel />
+      </section>
+      <section className="col-span-12 lg:col-span-6">
+        <RateLimitsPanel />
       </section>
       <section className="col-span-12">
         <LiveRunFeedSection />
