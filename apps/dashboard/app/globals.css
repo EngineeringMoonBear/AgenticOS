@@ -808,3 +808,252 @@
   .kpi-grid { grid-template-columns: 1fr 1fr; gap: 20px; }
   .kpi .value { font-size: 32px; }
 }
+
+/* ════════════════════════════════════════════════════════════
+   Card grammar — glass-pane primitives (Sub-phase 3.5.5)
+   Ported verbatim from docs/design/v2-ui-mockup.html.
+   ════════════════════════════════════════════════════════════ */
+
+.card {
+  position: relative;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 245, 215, 0.028) 0%,
+      rgba(255, 245, 215, 0.008) 28%,
+      transparent 55%,
+      var(--pane-inner-dark) 100%
+    ),
+    var(--surface);
+  border: 1px solid var(--moss-line);
+  border-radius: var(--radius-card);
+  padding: 18px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-light),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.45),
+    0 12px 28px -12px var(--pane-shadow-deep),
+    0 2px 6px -2px var(--pane-shadow-close);
+  transition:
+    transform var(--motion-base) var(--ease),
+    border-color var(--motion-base) var(--ease),
+    background var(--motion-base) var(--ease),
+    box-shadow var(--motion-base) var(--ease);
+}
+.card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--moss-strong);
+  opacity: 0.6;
+  z-index: 1;
+}
+.card.lane--gold::before {
+  background: var(--gold-bright);
+  opacity: 0.95;
+  box-shadow: 0 0 12px 0 var(--gold-glow), 0 1px 0 0 var(--gold-bright);
+}
+.card.lane--pine::before {
+  background: var(--pine-bright);
+  opacity: 0.95;
+  box-shadow: 0 0 12px 0 var(--pine-glow), 0 1px 0 0 var(--pine-bright);
+}
+.card.lane--amber::before {
+  background: var(--amber);
+  opacity: 0.95;
+  box-shadow: 0 0 12px 0 var(--amber-glow), 0 1px 0 0 var(--amber);
+}
+.card.lane--russet::before {
+  background: var(--russet);
+  opacity: 0.95;
+  box-shadow: 0 0 12px 0 var(--russet-glow), 0 1px 0 0 var(--russet);
+}
+.card:hover {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 245, 215, 0.045) 0%,
+      rgba(255, 245, 215, 0.012) 28%,
+      transparent 55%,
+      var(--pane-inner-dark) 100%
+    ),
+    var(--surface-elevated);
+  border-color: var(--moss-strong);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-light-strong),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.45),
+    0 18px 36px -12px rgba(0, 0, 0, 0.65),
+    0 4px 10px -2px var(--pane-shadow-close);
+}
+.card.span-2 { grid-column: span 2; }
+.card.span-full { grid-column: 1 / -1; }
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--parchment-muted);
+}
+.card-title svg {
+  width: 14px;
+  height: 14px;
+  color: var(--gold);
+  flex-shrink: 0;
+}
+.card-action {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--parchment-faint);
+  letter-spacing: 0.02em;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-chip);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid currentColor;
+}
+.pill.ok      { color: var(--pine);   background: var(--pine-soft);   border-color: rgba(107, 164, 128, 0.4); }
+.pill.warn    { color: var(--amber);  background: var(--amber-soft);  border-color: rgba(227,144,46,0.4); }
+.pill.err     { color: var(--russet); background: var(--russet-soft); border-color: rgba(203,97,81,0.4); }
+.pill.run     { color: var(--gold);   background: var(--gold-soft);   border-color: rgba(201,162,39,0.4); }
+.pill.stuck   { color: var(--russet); background: var(--russet-soft); border-color: rgba(203,97,81,0.4); }
+.pill .dot { width: 5px; height: 5px; background: currentColor; }
+
+.row-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  min-height: 22px;
+}
+.row .label-strong { color: var(--parchment); font-weight: 500; }
+.row .meta { color: var(--parchment-muted); font-size: 12px; }
+.row .num  { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--parchment); }
+.row .num.muted { color: var(--parchment-muted); }
+
+.row.stuck {
+  background: linear-gradient(90deg, var(--russet-soft) 0%, transparent 60%);
+  border-left: 2px solid var(--russet);
+  padding: 6px 10px;
+  margin: -2px -10px;
+  border-radius: 4px;
+}
+.row.stuck .label-strong { color: var(--russet); }
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 60px;
+  gap: 12px;
+  align-items: center;
+  font-size: 13px;
+}
+.bar-row .name { color: var(--parchment); }
+.bar-row .scope { font-family: var(--mono); color: var(--parchment-muted); font-size: 11px; }
+.bar-row .track {
+  height: 6px;
+  background: var(--surface-recessed);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+.bar-row .fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gold) 0%, rgba(201, 162, 39, 0.55) 100%);
+  border-radius: 3px;
+}
+.bar-row .count {
+  font-family: var(--mono);
+  text-align: right;
+  color: var(--parchment);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+}
+.progress-head .pname { color: var(--parchment); }
+.progress-head .pcount {
+  font-family: var(--mono);
+  color: var(--parchment-muted);
+  font-variant-numeric: tabular-nums;
+}
+.progress-track {
+  height: 7px;
+  background: var(--surface-recessed);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width var(--motion-base) var(--ease);
+}
+.progress-fill.pine  { background: linear-gradient(90deg, var(--pine), var(--pine-glow)); }
+.progress-fill.amber { background: linear-gradient(90deg, var(--amber), rgba(227,144,46,0.6)); }
+.progress-fill.gold  { background: linear-gradient(90deg, var(--gold),  rgba(201,162,39,0.6)); }
+
+.icon-btn {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--moss-line);
+  border-radius: 5px;
+  color: var(--parchment-muted);
+  cursor: pointer;
+  padding: 0;
+  transition: all var(--motion-fast) var(--ease);
+  flex-shrink: 0;
+}
+.icon-btn svg { width: 12px; height: 12px; }
+.icon-btn:hover {
+  color: var(--parchment);
+  border-color: var(--moss-strong);
+  background: var(--surface-recessed);
+}
+.icon-btn.alert:hover {
+  color: var(--russet);
+  border-color: var(--russet);
+}
+.icon-btn.go:hover {
+  color: var(--gold-bright);
+  border-color: var(--gold);
+}
