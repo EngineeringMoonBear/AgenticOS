@@ -38,8 +38,9 @@ register() {
     --no-agent
 }
 
-register daily-brief "0 7 * * *"  daily-brief.sh
-register cost-report "0 23 * * *" cost-report.sh
+register daily-brief  "0 7 * * *"  daily-brief.sh
+register cost-report  "0 23 * * *" cost-report.sh
+register vault-ingest "0 * * * *"  vault-ingest.sh
 
 echo "register-cron-jobs: done"
 "$HERMES_BIN" cron list 2>&1 | head -20
