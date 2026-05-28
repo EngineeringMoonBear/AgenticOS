@@ -248,6 +248,13 @@ git -c commit.gpgsign=false commit -m "infra: idempotent Viking LLM config (Olla
 
 Goal: An hourly Hermes cron job that walks `/opt/vault/`, hash-dedups via Postgres, and pushes changed files into Viking.
 
+> **Production-reality notes for Phase 1 (probed 2026-05-28):**
+> - **Vault layout:** `/opt/vault/` contains `farming/`, `inbox/`, `.stfolder` (Syncthing internal), and two `HELLO-*.md` test files. No `skills/` or `resources/` subdir. The walker must (a) skip `inbox/` (already handled by `inbox-watcher` daemon — a separate concern) and `.stfolder/`, (b) scope each file by its top-level directory name (`farming/pasture-management/foo.md` → `viking://agent/skills/farming/...` or simply `viking://resources/farming/...` per decision below), (c) accept top-level loose `.md` files into `viking://resources/notes/`.
+> - **Cron mechanism:** Hermes uses the `hermes cron create` CLI invoked from inside a Hermes container — `jobs.json` is persisted in the `hermes-data` Docker volume. Bootstrap script `infra/scripts/register-cron-jobs.sh` is the idempotent source-of-truth. Cron scripts are bash wrappers under `packages/agenticos-hermes/wrappers/cron-scripts/` that invoke `python -m agenticos_hermes.tasks.<name>`.
+> - **Python Viking access pattern:** existing tasks (`daily_brief.py`) call Viking inline via `httpx` against `OPENVIKING_ENDPOINT` with `Authorization: Bearer ${OPENVIKING_ROOT_API_KEY}` and tenant headers (`X-OpenViking-Account: agenticos`, `X-OpenViking-User: deploy`). No shared `viking_client.py` module exists — the ingester follows the same inline pattern.
+> - **Task ledger pattern:** existing tasks INSERT with `status='running'` at start and UPDATE to `'done'` / `'failed'` at end, via `record_task_start` / `record_task_completion` helpers in `tasks/daily_brief.py`. The vault_ingest task must match that pattern (not the plan's earlier direct-`'done'`-insert shortcut).
+> - **Scope decision (one-way ingestion):** all vault files land under `viking://resources/<top-level-dir>/...` (e.g. `viking://resources/farming/pasture-management/rotation.md`). Skill content under `viking://agent/skills/` is created by the agent itself via `viking.add_resource`, not pushed from the vault. This keeps the vault as "what the human authored" and Viking's agent-skills scope as "what the agent has learned to do."
+
 ### Task 1.1: Create `vault_ingest_state` migration
 
 **Files:**
@@ -723,36 +730,50 @@ git add packages/agenticos-hermes/
 git -c commit.gpgsign=false commit -m "feat(hermes): emit tasks ledger row from vault_ingest"
 ```
 
-### Task 1.6: Register the cron entry
+### Task 1.6: Register the cron entry (wrapper script + register-cron-jobs.sh)
 
 **Files:**
-- Modify: `infra/cloud-init/agenticos-droplet.yaml` (or wherever Hermes cron is declared — search `hermes cron create` in `infra/`)
+- Create: `packages/agenticos-hermes/wrappers/cron-scripts/vault-ingest.sh`
+- Modify: `infra/scripts/register-cron-jobs.sh` (add a `register vault-ingest` line)
 
-- [ ] **Step 1: Find the existing cron declaration**
-
-Run: `grep -rn "hermes cron create" infra/ packages/`
-Expected: a `hermes cron create daily-brief ...` line — add a sibling.
-
-- [ ] **Step 2: Add `vault-ingest` registration**
-
-Add the line (adapt the surrounding context):
+- [ ] **Step 1: Create the cron wrapper (one-liner, matches existing pattern)**
 
 ```bash
-hermes cron create vault-ingest \
-  --schedule "0 * * * *" \
-  --module "agenticos_hermes.tasks.vault_ingest:run_ingest"
+# packages/agenticos-hermes/wrappers/cron-scripts/vault-ingest.sh
+#!/bin/bash
+# Hermes cron wrapper for the vault-ingest task.
+# Walks /opt/vault and pushes changed files into OpenViking. See
+# agenticos_hermes.tasks.vault_ingest for the implementation.
+set -euo pipefail
+exec /opt/hermes/.venv/bin/python -m agenticos_hermes.tasks.vault_ingest
 ```
 
-- [ ] **Step 3: Re-run cloud-init or apply manually on Droplet**
+`chmod +x` it.
 
-Run on Droplet: `hermes cron create vault-ingest --schedule "0 * * * *" --module "agenticos_hermes.tasks.vault_ingest:run_ingest"`
-Verify: `hermes cron list | grep vault-ingest` → shows the new entry.
+- [ ] **Step 2: Add the registration line to `infra/scripts/register-cron-jobs.sh`**
+
+After the existing `register cost-report ...` line, insert:
+
+```bash
+register vault-ingest "0 * * * *" vault-ingest.sh
+```
+
+This is idempotent (the script's `register()` helper skips if `hermes cron list` already shows the name).
+
+- [ ] **Step 3: Apply on the Droplet**
+
+```bash
+ssh deploy@159.223.171.231 'docker exec hermes-agent /opt/agenticos/repo/infra/scripts/register-cron-jobs.sh'
+```
+
+Verify: `ssh deploy@159.223.171.231 'docker exec hermes-agent /opt/hermes/.venv/bin/hermes cron list'` shows a `vault-ingest` row.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add infra/
-git -c commit.gpgsign=false commit -m "infra: register vault-ingest hourly cron"
+git add packages/agenticos-hermes/wrappers/cron-scripts/vault-ingest.sh \
+        infra/scripts/register-cron-jobs.sh
+git -c commit.gpgsign=false commit -m "infra: register hourly vault-ingest cron"
 ```
 
 ### Task 1.7: End-to-end smoke test on Droplet
