@@ -3,6 +3,7 @@
 import { Send, MoreHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { GlassCard } from "@/components/ui/glass-card";
 import type { Skill } from "@/lib/fixtures/skills";
 
 interface SkillCardProps {
@@ -31,24 +32,10 @@ export function SkillCard({ skill }: SkillCardProps) {
   }
 
   return (
-    <article
-      className="group/card flex flex-col rounded-lg transition-colors"
-      style={{
-        backgroundColor: "var(--surface)",
-        border: "1px solid var(--border)",
-        minHeight: 160,
-      }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.backgroundColor =
-          "var(--surface-elevated)";
-        (e.currentTarget as HTMLElement).style.borderColor =
-          "var(--border-strong)";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.backgroundColor =
-          "var(--surface)";
-        (e.currentTarget as HTMLElement).style.borderColor = "var(--border)";
-      }}
+    <GlassCard
+      role="article"
+      className="group/card flex flex-col p-0 transition-colors hover:bg-white/[0.09] hover:border-white/20"
+      style={{ minHeight: 160 }}
     >
       {/* Card body */}
       <div className="flex flex-col gap-3 p-4 flex-1">
@@ -141,6 +128,6 @@ export function SkillCard({ skill }: SkillCardProps) {
           Dispatch
         </Button>
       </div>
-    </article>
+    </GlassCard>
   );
 }
