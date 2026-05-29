@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useFilter } from "@/lib/filter/use-filter";
 import { SKILL_FIXTURES } from "@/lib/fixtures/skills";
 import { SkillCard } from "@/components/skills/skill-card";
+import { ArchitectureVista } from "@/components/shell/ArchitectureVista";
 
 const DOMAIN_CHIPS: { id: string; label: string }[] = [
   { id: "farm", label: "Farm" },
@@ -29,6 +30,8 @@ export default function ArchitecturePage() {
   }
 
   return (
+    <>
+    <ArchitectureVista />
     <div className="flex flex-col gap-6 px-6 py-6">
       {/* Page header */}
       <div className="flex items-start justify-between gap-4">
@@ -159,5 +162,6 @@ export default function ArchitecturePage() {
         </div>
       )}
     </div>
+    </>
   );
 }
