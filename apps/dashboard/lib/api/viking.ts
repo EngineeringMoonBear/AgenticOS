@@ -64,12 +64,6 @@ export interface Retrieval {
   [k: string]: unknown;
 }
 
-export interface GraphData {
-  nodes?: Array<Record<string, unknown>>;
-  edges?: Array<Record<string, unknown>>;
-  [k: string]: unknown;
-}
-
 // ---------- Internals ----------
 
 function tenantHeaders(extra?: Record<string, string>): Record<string, string> {
@@ -141,8 +135,20 @@ export function vikingRetrieval(): Promise<Retrieval> {
   return vget<Retrieval>("/api/v1/observer/retrieval");
 }
 
-export function vikingBuildGraph(root_uri: string, since: string): Promise<GraphData> {
-  return vpost<GraphData>("/api/v1/relations/build_graph", { root_uri, since });
+/**
+ * Materializes a relations graph: reads from `space_uris`, writes the
+ * computed graph to `output_uri`. Side-effecting / write op — not a
+ * query. The dashboard's Memory trajectory view should derive its data
+ * from `vikingRetrieval()` events, NOT from this endpoint.
+ */
+export function vikingBuildGraph(
+  space_uris: string[],
+  output_uri: string,
+): Promise<Record<string, unknown>> {
+  return vpost<Record<string, unknown>>("/api/v1/relations/build_graph", {
+    space_uris,
+    output_uri,
+  });
 }
 
 export function vikingSearchFind(

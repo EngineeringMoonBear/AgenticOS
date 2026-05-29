@@ -161,9 +161,12 @@ describe("vikingRetrieval", () => {
 
 describe("vikingBuildGraph", () => {
   it("POSTs /api/v1/relations/build_graph with JSON body", async () => {
-    fetchMock.mockResolvedValueOnce(okJson({ nodes: [], edges: [] }));
+    fetchMock.mockResolvedValueOnce(okJson({ task_id: "t1" }));
     const { vikingBuildGraph } = await importShim();
-    await vikingBuildGraph("viking://m", "2026-05-01T00:00:00Z");
+    await vikingBuildGraph(
+      ["viking://m/a", "viking://m/b"],
+      "viking://graphs/out",
+    );
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe(`${ENDPOINT}/api/v1/relations/build_graph`);
     const r = init as RequestInit;
@@ -172,8 +175,10 @@ describe("vikingBuildGraph", () => {
     expect(h["Content-Type"]).toBe("application/json");
     expectStdHeaders(r);
     const body = JSON.parse(r.body as string);
-    expect(body.root_uri).toBe("viking://m");
-    expect(body.since).toBe("2026-05-01T00:00:00Z");
+    expect(body).toEqual({
+      space_uris: ["viking://m/a", "viking://m/b"],
+      output_uri: "viking://graphs/out",
+    });
   });
 });
 
