@@ -3,12 +3,12 @@ import { CostProjectionPanel } from "@/components/observability/CostProjectionPa
 import { OllamaPanel } from "@/components/observability/OllamaPanel";
 import { OpenAICodexPanel } from "@/components/observability/OpenAICodexPanel";
 import { RateLimitsPanel } from "@/components/observability/RateLimitsPanel";
-import { KpiVista } from "@/components/shell/KpiVista";
+import { CostVista } from "@/components/shell/CostVista";
 
 export default function CostPage() {
   return (
     <>
-      <KpiVista />
+      <CostVista />
       <div className="grid grid-cols-12 gap-4 p-4">
         <section className="col-span-12 md:col-span-6 lg:col-span-4">
           <CostBurndownChart />

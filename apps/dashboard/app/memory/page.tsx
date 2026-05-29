@@ -11,7 +11,7 @@ import { GraphCanvas } from "@/components/memory/GraphCanvas";
 import { OpenVikingSummaryPanel } from "@/components/memory/OpenVikingSummaryPanel";
 import { RecentVaultChangesPanel } from "@/components/memory/RecentVaultChangesPanel";
 import { SkillsCatalogPanel } from "@/components/memory/SkillsCatalogPanel";
-import { KpiVista } from "@/components/shell/KpiVista";
+import { MemoryVista } from "@/components/shell/MemoryVista";
 
 export default function MemoryPage() {
   const [selectedPath, setSelectedPath] = useQueryState(
@@ -37,7 +37,7 @@ export default function MemoryPage() {
 
   return (
     <>
-    <KpiVista />
+    <MemoryVista />
     <div className="flex flex-col flex-1 overflow-hidden" style={{ height: "calc(100vh - 56px)" }}>
       {/* Summary strip — OpenViking scopes, skills, vault changes */}
       <div className="grid grid-cols-12 gap-4 p-4 shrink-0">
