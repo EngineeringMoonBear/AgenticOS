@@ -137,6 +137,13 @@
   --russet-glow:        rgba(215, 105, 87, 0.5);
 
   --copper:             #dc8c5f;
+  --copper-glow:        rgba(220, 140, 95, 0.55);
+
+  --amber:              #f0b347;
+  --amber-glow:         rgba(240, 179, 71, 0.55);
+
+  --sage:               #7fa085;          /* moss-warm green — Memory accent */
+  --sage-glow:          rgba(127, 160, 133, 0.55);
 
   /* Dusk console palette — KPI vista only */
   --dusk-surface:       #0e1530;
@@ -807,6 +814,322 @@
   .kpi-vista { margin: 16px; width: calc(100% - 32px); padding: 24px 20px 28px; }
   .kpi-grid { grid-template-columns: 1fr 1fr; gap: 20px; }
   .kpi .value { font-size: 32px; }
+}
+
+/* ─── Per-tab vista accents (data-accent on .kpi-vista) ───────── */
+.kpi-vista[data-accent="copper"] .vista-meta .live-dot {
+  background: var(--copper);
+  box-shadow: 0 0 0 0 var(--copper-glow);
+  animation: vista-live-pulse-copper 2.2s ease-in-out infinite;
+}
+.kpi-vista[data-accent="copper"] .kpi .value {
+  text-shadow: 0 0 36px rgba(220, 140, 95, 0.22), 0 0 12px rgba(220, 140, 95, 0.14);
+}
+@keyframes vista-live-pulse-copper {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 140, 95, 0.6); }
+  50%      { box-shadow: 0 0 0 7px rgba(220, 140, 95, 0); }
+}
+.kpi-vista[data-accent="amber"] .vista-meta .live-dot {
+  background: var(--amber);
+  box-shadow: 0 0 0 0 var(--amber-glow);
+  animation: vista-live-pulse-amber 2.2s ease-in-out infinite;
+}
+.kpi-vista[data-accent="amber"] .kpi .value {
+  text-shadow: 0 0 36px rgba(240, 179, 71, 0.22), 0 0 12px rgba(240, 179, 71, 0.14);
+}
+@keyframes vista-live-pulse-amber {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(240, 179, 71, 0.6); }
+  50%      { box-shadow: 0 0 0 7px rgba(240, 179, 71, 0); }
+}
+.kpi-vista[data-accent="pine"] .vista-meta .live-dot {
+  background: var(--pine-bright);
+  box-shadow: 0 0 0 0 var(--pine-glow);
+  animation: vista-live-pulse-pine 2.2s ease-in-out infinite;
+}
+.kpi-vista[data-accent="pine"] .kpi .value {
+  text-shadow: 0 0 36px rgba(132, 192, 152, 0.22), 0 0 12px rgba(132, 192, 152, 0.14);
+}
+@keyframes vista-live-pulse-pine {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(132, 192, 152, 0.6); }
+  50%      { box-shadow: 0 0 0 7px rgba(132, 192, 152, 0); }
+}
+.kpi-vista[data-accent="sage"] .vista-meta .live-dot {
+  background: var(--sage);
+  box-shadow: 0 0 0 0 var(--sage-glow);
+  animation: vista-live-pulse-sage 2.2s ease-in-out infinite;
+}
+.kpi-vista[data-accent="sage"] .kpi .value {
+  text-shadow: 0 0 36px rgba(127, 160, 133, 0.22), 0 0 12px rgba(127, 160, 133, 0.14);
+}
+@keyframes vista-live-pulse-sage {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(127, 160, 133, 0.6); }
+  50%      { box-shadow: 0 0 0 7px rgba(127, 160, 133, 0); }
+}
+
+/* ─── ActivityStripBackdrop (Runs vista) ──────────────────────── */
+.activity-strip {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+  border-radius: var(--radius-card);
+}
+.activity-strip svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.activity-baseline {
+  stroke: rgba(224, 183, 58, 0.10);
+  stroke-width: 0.6;
+}
+.activity-minute {
+  stroke: rgba(224, 183, 58, 0.06);
+  stroke-width: 0.5;
+}
+.activity-strip .tick-done {
+  stroke: var(--pine-bright);
+  stroke-width: 1.6;
+  opacity: 0.55;
+}
+.activity-strip .tick-failed {
+  stroke: var(--russet);
+  stroke-width: 1.8;
+  opacity: 0.75;
+}
+.activity-strip .tick-failed-stem {
+  stroke: var(--russet);
+  stroke-width: 1.2;
+  opacity: 0.4;
+}
+.activity-strip .tick-running {
+  stroke: var(--gold-bright);
+  stroke-width: 2;
+  opacity: 0.85;
+  animation: activity-running-pulse 1.6s ease-in-out infinite;
+}
+@keyframes activity-running-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+.activity-now-edge {
+  stroke: var(--gold-bright);
+  stroke-width: 1.2;
+  opacity: 0.55;
+}
+.activity-now-dot {
+  fill: var(--gold-bright);
+  opacity: 0.95;
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity-strip .tick-running { animation: none; opacity: 0.85; }
+}
+
+/* ─── SkillGalaxyBackdrop (Architecture vista) ────────────────── */
+.skill-galaxy {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+  border-radius: var(--radius-card);
+}
+.skill-galaxy svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.galaxy-core {
+  fill: var(--copper);
+  opacity: 0.35;
+}
+.galaxy-spoke {
+  stroke: var(--copper);
+  stroke-width: 0.6;
+  opacity: 0.10;
+}
+.galaxy-node {
+  fill: var(--copper);
+  opacity: 0.32;
+}
+.galaxy-node-max {
+  fill: var(--copper);
+  opacity: 0.55;
+}
+.galaxy-node-empty {
+  fill: none;
+  stroke: var(--copper);
+  stroke-width: 1;
+  opacity: 0.25;
+}
+
+/* ─── BurndownProjectionBackdrop (Cost vista) ─────────────────── */
+.burndown-projection {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+  border-radius: var(--radius-card);
+}
+.burndown-projection svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.burndown-baseline {
+  stroke: rgba(240, 179, 71, 0.12);
+  stroke-width: 0.6;
+}
+.burndown-cap {
+  stroke: var(--russet);
+  stroke-width: 0.8;
+  opacity: 0.30;
+  stroke-dasharray: 2 6;
+}
+.burndown-cap-label {
+  fill: var(--russet);
+  opacity: 0.5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+.burndown-area {
+  opacity: 0.55;
+}
+.burndown-actual {
+  fill: none;
+  stroke: var(--gold-bright);
+  stroke-width: 1.4;
+  opacity: 0.85;
+}
+.burndown-projection-line {
+  fill: none;
+  stroke: var(--russet);
+  stroke-width: 1.4;
+  stroke-dasharray: 3 4;
+  opacity: 0.75;
+  animation: burndown-dash-scroll 8s linear infinite;
+}
+@keyframes burndown-dash-scroll {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -28; }
+}
+.burndown-now-edge {
+  stroke: rgba(240, 179, 71, 0.32);
+  stroke-width: 0.8;
+}
+.burndown-now-dot {
+  fill: var(--gold-bright);
+  opacity: 0.95;
+}
+@media (prefers-reduced-motion: reduce) {
+  .burndown-projection-line { animation: none; }
+}
+
+/* ─── LatencyOscilloscopeBackdrop (Health vista) ──────────────── */
+.latency-oscilloscope {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+  border-radius: var(--radius-card);
+}
+.latency-oscilloscope svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.osc-baseline {
+  stroke: var(--pine);
+  stroke-width: 0.5;
+  opacity: 0.18;
+}
+.osc-label {
+  fill: var(--pine);
+  opacity: 0.55;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-anchor: end;
+}
+.osc-trace {
+  fill: none;
+  stroke: var(--pine-bright);
+  stroke-width: 1.4;
+  opacity: 0.85;
+  stroke-dasharray: 1380 1380;
+  stroke-dashoffset: 1380;
+  animation: osc-sweep var(--osc-speed, 6s) linear infinite;
+}
+@keyframes osc-sweep {
+  0%   { stroke-dashoffset: 1380; opacity: 0.0; }
+  10%  { opacity: 0.85; }
+  85%  { opacity: 0.85; }
+  100% { stroke-dashoffset: 0; opacity: 0.0; }
+}
+.osc-now-tick {
+  stroke: var(--pine-bright);
+  stroke-width: 1.4;
+  opacity: 0.8;
+}
+@media (prefers-reduced-motion: reduce) {
+  .osc-trace {
+    animation: none;
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+    opacity: 0.75;
+  }
+}
+
+/* ─── MemoryAccumulationBackdrop (Memory vista) ───────────────── */
+.memory-accumulation {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+  border-radius: var(--radius-card);
+}
+.memory-accumulation svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.memory-layer {
+  fill: var(--sage);
+  stroke: none;
+}
+.memory-layer-resources { opacity: 0.60; }
+.memory-layer-user      { opacity: 0.45; }
+.memory-layer-session   { opacity: 0.30; }
+.memory-layer-skills    { opacity: 0.18; }
+.memory-top-edge {
+  fill: none;
+  stroke: var(--sage);
+  stroke-width: 1.2;
+  opacity: 0.85;
+  stroke-dasharray: 80 1400;
+  stroke-dashoffset: 0;
+  animation: memory-edge-scroll 14s linear infinite;
+}
+@keyframes memory-edge-scroll {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -1480; }
+}
+.memory-now-dot {
+  fill: var(--sage);
+  opacity: 0.95;
+}
+@media (prefers-reduced-motion: reduce) {
+  .memory-top-edge {
+    animation: none;
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+    opacity: 0.55;
+  }
 }
 
 /* ════════════════════════════════════════════════════════════

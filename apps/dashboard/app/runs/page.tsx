@@ -3,10 +3,13 @@ import { LiveRunsPanel } from "@/components/observability/LiveRunsPanel";
 import { RecentErrorsPanel } from "@/components/observability/RecentErrorsPanel";
 import { ScheduledRunsPanel } from "@/components/observability/ScheduledRunsPanel";
 import { VaultIngestPanel } from "@/components/observability/VaultIngestPanel";
+import { RunsVista } from "@/components/shell/RunsVista";
 import { LiveRunFeedSection } from "./live-run-feed-section";
 
 export default function LiveOpsPage() {
   return (
+    <>
+    <RunsVista />
     <div className="grid grid-cols-12 gap-4 p-4">
       <section className="col-span-12">
         <LiveRunsStrip />
@@ -27,5 +30,6 @@ export default function LiveOpsPage() {
         <LiveRunFeedSection />
       </section>
     </div>
+    </>
   );
 }
