@@ -2,59 +2,53 @@
 import { useMemo } from "react";
 import { VistaShell } from "./VistaShell";
 import { KpiTile } from "./KpiTile";
-import {
-  ActivityStripBackdrop,
-  type ActivityStripEvent,
-} from "./backdrops/ActivityStripBackdrop";
+import { ActivityStripBackdrop } from "./backdrops/ActivityStripBackdrop";
+import { useRecentRunEvents } from "@/lib/hooks/use-recent-run-events";
+import { useRunsStats } from "@/lib/hooks/use-runs-stats";
 
 /**
  * Runs tab hero vista. Composes the {@link VistaShell} chrome with the
- * {@link ActivityStripBackdrop} swimlane and the four Runs-specific KPI
- * tiles. Stub data lives here until Dispatch 2 wires it to the live
- * runs query.
+ * {@link ActivityStripBackdrop} throughput chart and four Runs-specific
+ * KPI tiles backed by the Postgres `tasks` telemetry table:
+ *
+ *  - `/api/tasks/recent-events?windowMin=60` feeds the chart
+ *  - `/api/tasks/stats` feeds the four tiles
+ *
+ * Both poll every 30s. The chart's `now` reference is pinned to the
+ * page mount so bars don't jitter between refetches.
  */
+const PLACEHOLDER = "—";
 
-function buildStubEvents(nowMs: number): ActivityStripEvent[] {
-  const events: ActivityStripEvent[] = [];
+function formatActiveSublabel(activeKinds: string[] | undefined): string {
+  if (!activeKinds || activeKinds.length === 0) return "no runs in flight";
+  if (activeKinds.length <= 3) return activeKinds.join(" · ");
+  const head = activeKinds.slice(0, 2).join(" · ");
+  const extra = activeKinds.length - 2;
+  return `${head} · +${extra} more`;
+}
 
-  // ~3 running in the last 5 min.
-  for (let i = 0; i < 3; i++) {
-    const ageMin = 0.5 + i * 1.4; // 0.5, 1.9, 3.3 min ago
-    events.push({
-      at: new Date(nowMs - ageMin * 60_000).toISOString(),
-      status: "running",
-    });
+function formatDuration(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) {
+    return PLACEHOLDER;
   }
-
-  // ~2 failed scattered through the hour.
-  for (const ageMin of [14, 41]) {
-    events.push({
-      at: new Date(nowMs - ageMin * 60_000).toISOString(),
-      status: "failed",
-    });
-  }
-
-  // ~25 done, evenly distributed but jittered.
-  for (let i = 0; i < 25; i++) {
-    const base = (i + 0.5) * (60 / 25); // ~2.4 min apart
-    // Deterministic jitter — pseudo-random but stable across renders.
-    const jitter = ((i * 31) % 17) / 17 - 0.5;
-    const ageMin = Math.max(0.2, Math.min(59.8, base + jitter));
-    events.push({
-      at: new Date(nowMs - ageMin * 60_000).toISOString(),
-      status: "done",
-    });
-  }
-
-  return events;
+  if (seconds < 60) return `${seconds.toFixed(0)}s`;
+  const min = Math.floor(seconds / 60);
+  const sec = Math.round(seconds - min * 60);
+  return `${min}m ${sec.toString().padStart(2, "0")}s`;
 }
 
 export function RunsVista() {
-  // Pin `now` to mount time so the strip is stable for the lifetime of
-  // the page render (avoids new positions on every re-render).
+  // Pin `now` to mount time so the chart axis stays stable for the
+  // lifetime of the page render. Refetched data drops into the same
+  // 60-minute window without the right edge sliding.
   const nowIso = useMemo(() => new Date().toISOString(), []);
-  const nowMs = useMemo(() => new Date(nowIso).getTime(), [nowIso]);
-  const events = useMemo(() => buildStubEvents(nowMs), [nowMs]);
+
+  const eventsQuery = useRecentRunEvents(60);
+  const statsQuery = useRunsStats();
+
+  const events = eventsQuery.data ?? [];
+  const stats = statsQuery.data;
+  const statsLoaded = !!stats;
 
   return (
     <VistaShell
@@ -63,36 +57,32 @@ export function RunsVista() {
       backdrop={<ActivityStripBackdrop events={events} now={nowIso} />}
     >
       <KpiTile
-        value={
-          <>
-            3<span className="delta up">+1</span>
-          </>
-        }
+        value={statsLoaded ? String(stats.activeCount) : PLACEHOLDER}
         label="active runs"
-        sublabel="curator · daily-brief · vault-ingest"
-      />
-      <KpiTile
-        value="2"
-        label="failed today"
-        sublabel="codex-rate-limit · vault-sync"
-      />
-      <KpiTile
-        value={
-          <>
-            1m 47s
-          </>
+        sublabel={
+          statsLoaded ? formatActiveSublabel(stats.activeKinds) : "loading…"
         }
+      />
+      <KpiTile
+        value={statsLoaded ? String(stats.failedToday) : PLACEHOLDER}
+        label="failed today"
+        sublabel={
+          statsLoaded && stats.failedToday > 0
+            ? "since midnight UTC"
+            : statsLoaded
+              ? "clean run"
+              : "loading…"
+        }
+      />
+      <KpiTile
+        value={statsLoaded ? formatDuration(stats.avgDurationSec) : PLACEHOLDER}
         label="avg duration"
         sublabel="p50 · last 24h"
       />
       <KpiTile
-        value={
-          <>
-            vault-ingest<span className="unit"> in 4m</span>
-          </>
-        }
+        value={PLACEHOLDER}
         label="next scheduled"
-        sublabel="cron · 0,15,30,45 * * * *"
+        sublabel="cron source pending"
       />
     </VistaShell>
   );
