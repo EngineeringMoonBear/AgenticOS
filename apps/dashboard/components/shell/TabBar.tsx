@@ -11,6 +11,7 @@ interface TabDef {
 
 const TABS: readonly TabDef[] = [
   { href: "/runs", label: "Runs", count: "3" },
+  { href: "/architecture", label: "Architecture", count: "11" },
   { href: "/cost", label: "Cost", count: "$2.41" },
   { href: "/health", label: "Health", count: "2 warn" },
   { href: "/memory", label: "Memory", count: "1,652" },

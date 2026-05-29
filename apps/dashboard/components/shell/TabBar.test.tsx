@@ -8,11 +8,14 @@ vi.mock("next/navigation", () => ({
 import { TabBar } from "./TabBar";
 
 describe("TabBar", () => {
-  it("renders all four tabs with the expected hrefs", () => {
+  it("renders all five tabs with the expected hrefs", () => {
     render(<TabBar />);
     expect(screen.getByRole("tab", { name: /Runs/ }).getAttribute("href")).toBe(
       "/runs",
     );
+    expect(
+      screen.getByRole("tab", { name: /Architecture/ }).getAttribute("href"),
+    ).toBe("/architecture");
     expect(screen.getByRole("tab", { name: /Cost/ }).getAttribute("href")).toBe(
       "/cost",
     );
@@ -29,7 +32,7 @@ describe("TabBar", () => {
     expect(
       screen.getByRole("tab", { name: /Runs/ }).getAttribute("aria-selected"),
     ).toBe("true");
-    for (const name of [/Cost/, /Health/, /Memory/]) {
+    for (const name of [/Architecture/, /Cost/, /Health/, /Memory/]) {
       expect(
         screen.getByRole("tab", { name }).getAttribute("aria-selected"),
       ).toBe("false");
@@ -39,6 +42,7 @@ describe("TabBar", () => {
   it("renders hard-coded count badges per the 3.5.3 spec", () => {
     render(<TabBar />);
     expect(screen.getByText("3")).toBeTruthy();
+    expect(screen.getByText("11")).toBeTruthy();
     expect(screen.getByText("$2.41")).toBeTruthy();
     expect(screen.getByText("2 warn")).toBeTruthy();
     expect(screen.getByText("1,652")).toBeTruthy();
