@@ -867,6 +867,11 @@
 }
 
 /* ─── ActivityStripBackdrop (Runs vista) ──────────────────────── */
+/* Stacked-bar throughput chart of the last 60 min of run activity,
+   bucketed at 5 min, status-stacked. Reads as a real graph: axis
+   labels, gridlines, baseline, with a slow gold sweep line that
+   suggests active polling and a glowing pulse on the latest bucket
+   when runs are still in flight. */
 .activity-strip {
   position: absolute;
   inset: 0;
@@ -880,50 +885,77 @@
   height: 100%;
   display: block;
 }
+
+/* Axes + gridlines */
 .activity-baseline {
-  stroke: rgba(224, 183, 58, 0.10);
-  stroke-width: 0.6;
+  stroke: rgba(224, 183, 58, 0.22);
+  stroke-width: 0.7;
 }
-.activity-minute {
-  stroke: rgba(224, 183, 58, 0.06);
+.activity-gridline {
+  stroke: rgba(224, 183, 58, 0.07);
   stroke-width: 0.5;
+  stroke-dasharray: 2 4;
 }
-.activity-strip .tick-done {
-  stroke: var(--pine-bright);
-  stroke-width: 1.6;
-  opacity: 0.55;
+.activity-y-label,
+.activity-x-label {
+  fill: rgba(224, 183, 58, 0.55);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 9px;
+  letter-spacing: 0.04em;
 }
-.activity-strip .tick-failed {
-  stroke: var(--russet);
-  stroke-width: 1.8;
-  opacity: 0.75;
+.activity-y-title {
+  fill: rgba(224, 183, 58, 0.42);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
-.activity-strip .tick-failed-stem {
-  stroke: var(--russet);
-  stroke-width: 1.2;
-  opacity: 0.4;
+.activity-x-label--now {
+  fill: var(--gold-bright);
+  font-weight: 600;
 }
-.activity-strip .tick-running {
-  stroke: var(--gold-bright);
-  stroke-width: 2;
-  opacity: 0.85;
+
+/* Stacked bars: pine (done) · russet (failed) · gold (running on top) */
+.activity-bar-done {
+  fill: var(--pine-bright);
+  opacity: 0.42;
+}
+.activity-bar-failed {
+  fill: var(--russet);
+  opacity: 0.65;
+}
+.activity-bar-running {
+  fill: var(--gold-bright);
+  opacity: 0.78;
+}
+.activity-bar-running--latest {
   animation: activity-running-pulse 1.6s ease-in-out infinite;
 }
-@keyframes activity-running-pulse {
-  0%, 100% { opacity: 0.55; }
-  50%      { opacity: 1; }
-}
-.activity-now-edge {
-  stroke: var(--gold-bright);
-  stroke-width: 1.2;
-  opacity: 0.55;
-}
-.activity-now-dot {
+.activity-latest-dot {
   fill: var(--gold-bright);
   opacity: 0.95;
 }
+@keyframes activity-running-pulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}
+
+/* Sweep line — slow scan across the plot area to feel "live". */
+.activity-sweep {
+  transform: translateX(0);
+  animation: activity-sweep var(--sweep-duration, 8s) linear infinite;
+  mix-blend-mode: screen;
+}
+@keyframes activity-sweep {
+  0%   { transform: translateX(0); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateX(var(--sweep-distance, 1000px)); opacity: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .activity-strip .tick-running { animation: none; opacity: 0.85; }
+  .activity-bar-running--latest { animation: none; opacity: 0.9; }
+  .activity-sweep { animation: none; opacity: 0; }
 }
 
 /* ─── SkillGalaxyBackdrop (Architecture vista) ────────────────── */
