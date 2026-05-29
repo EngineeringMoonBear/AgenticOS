@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 const TAB_ROUTES: Record<string, string> = {
   runs: "/runs",
+  architecture: "/architecture",
   cost: "/cost",
   health: "/health",
   memory: "/memory",
