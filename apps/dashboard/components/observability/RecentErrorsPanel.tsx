@@ -1,6 +1,9 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 
+import { Card, CardAction, CardHead, CardTitle } from "@/components/ui/Card";
+import { IconBtn } from "@/components/ui/IconBtn";
+
 interface RecentErrorRow {
   id: string;
   kind: string;
@@ -8,15 +11,57 @@ interface RecentErrorRow {
   started_at: string;
 }
 
-function formatTimestamp(ts: string): string {
+function formatRelative(ts: string, now: Date = new Date()): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts;
-  return d.toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  const diffSec = Math.max(0, (now.getTime() - d.getTime()) / 1000);
+  if (diffSec < 60) return `${Math.floor(diffSec)}s ago`;
+  const mins = diffSec / 60;
+  if (mins < 60) return `${Math.floor(mins)}m ago`;
+  const hours = mins / 60;
+  if (hours < 24) return `${Math.floor(hours)}h ago`;
+  const days = hours / 24;
+  return `${Math.floor(days)}d ago`;
 }
+
+function shortId(id: string): string {
+  return id.length > 10 ? id.slice(0, 10) : id;
+}
+
+async function retryTask(id: string): Promise<void> {
+  await fetch(`/api/tasks/${id}/retry`, { method: "POST" }).catch(() => {});
+}
+
+const AlertIcon = (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.5}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.4 0z" />
+    <line x1="12" y1="9" x2="12" y2="13" />
+    <circle cx="12" cy="17" r="0.7" fill="currentColor" />
+  </svg>
+);
+
+const RetryIcon = (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.7}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <polyline points="3 4 3 10 9 10" />
+    <path d="M3.5 14a8 8 0 1 0 2-8.5L3 10" />
+  </svg>
+);
 
 export function RecentErrorsPanel() {
   const { data, isLoading } = useQuery<{ rows: RecentErrorRow[] }>({
@@ -29,39 +74,43 @@ export function RecentErrorsPanel() {
     refetchInterval: 30_000,
   });
 
+  const rows = data?.rows ?? [];
+
   return (
-    <div className="p-4 space-y-3 border rounded-md">
-      <h3 className="text-sm font-medium">Recent errors</h3>
+    <Card lane="russet">
+      <CardHead>
+        <CardTitle icon={AlertIcon}>Recent errors</CardTitle>
+        <CardAction>last 24h</CardAction>
+      </CardHead>
       {isLoading ? (
-        <div className="text-sm text-muted-foreground">Loading…</div>
-      ) : !data || data.rows.length === 0 ? (
-        <div className="text-sm text-muted-foreground">No failed tasks.</div>
+        <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
+          Loading…
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
+          No failed tasks.
+        </div>
       ) : (
-        <ul className="space-y-2 text-xs">
-          {data.rows.map((r) => (
-            <li
-              key={r.id}
-              className="flex flex-col gap-1 border-b pb-2 last:border-b-0 last:pb-0"
-              style={{ borderColor: "var(--border-subtle)" }}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[10px] text-muted-foreground truncate">
-                  {r.id}
-                </span>
-                <span className="font-mono text-[10px] text-muted-foreground shrink-0">
-                  {formatTimestamp(r.started_at)}
-                </span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+          {rows.map((r) => (
+            <div key={r.id} className="err-row">
+              <div className="id">{shortId(r.id)}</div>
+              <div className="msg">
+                <span className="kind">{r.kind}</span>
+                {r.error ?? ""}
               </div>
-              <div className="flex items-baseline gap-2">
-                <span className="font-medium">{r.kind}</span>
-                {r.error ? (
-                  <span className="text-muted-foreground truncate">{r.error}</span>
-                ) : null}
-              </div>
-            </li>
+              <div className="ts">{formatRelative(r.started_at)}</div>
+              <IconBtn
+                variant="alert"
+                ariaLabel={`Retry ${r.kind}`}
+                onClick={() => retryTask(r.id)}
+              >
+                {RetryIcon}
+              </IconBtn>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
-    </div>
+    </Card>
   );
 }

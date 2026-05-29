@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { RecentErrorsPanel } from "./RecentErrorsPanel";
@@ -17,14 +17,23 @@ describe("RecentErrorsPanel", () => {
     error: string | null;
     started_at: string;
   }> = [];
+  const fetchSpy = vi.fn();
 
   beforeEach(() => {
-    vi.spyOn(global, "fetch").mockImplementation(async () => {
+    fetchSpy.mockReset();
+    fetchSpy.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return new Response(JSON.stringify({ error: "not implemented" }), {
+          status: 501,
+          headers: { "content-type": "application/json" },
+        });
+      }
       return new Response(JSON.stringify({ rows: mockRows }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     });
+    vi.spyOn(global, "fetch").mockImplementation(fetchSpy as typeof fetch);
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -38,20 +47,40 @@ describe("RecentErrorsPanel", () => {
     });
   });
 
-  it("renders an error row with kind and message", async () => {
+  it("renders an error row with id, kind, and message", async () => {
     mockRows = [
       {
-        id: "task_abc123",
-        kind: "ingest",
-        error: "boom",
-        started_at: "2026-05-28T12:00:00Z",
+        id: "5464de072e1f",
+        kind: "vault-ingest",
+        error: "Cannot remove URI: 404",
+        started_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
       },
     ];
     renderWithClient(<RecentErrorsPanel />);
     await waitFor(() => {
-      expect(screen.getByText("task_abc123")).toBeInTheDocument();
-      expect(screen.getByText("ingest")).toBeInTheDocument();
-      expect(screen.getByText("boom")).toBeInTheDocument();
+      expect(screen.getByText("5464de072e")).toBeInTheDocument();
+      expect(screen.getByText("vault-ingest")).toBeInTheDocument();
+      expect(screen.getByText(/cannot remove uri/i)).toBeInTheDocument();
+    });
+  });
+
+  it("POSTs to the retry endpoint when retry button is clicked", async () => {
+    mockRows = [
+      {
+        id: "abc123def4",
+        kind: "curator",
+        error: "boom",
+        started_at: new Date().toISOString(),
+      },
+    ];
+    renderWithClient(<RecentErrorsPanel />);
+    const btn = await screen.findByRole("button", { name: /retry curator/i });
+    fireEvent.click(btn);
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "/api/tasks/abc123def4/retry",
+        expect.objectContaining({ method: "POST" }),
+      );
     });
   });
 });

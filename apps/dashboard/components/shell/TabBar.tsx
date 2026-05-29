@@ -1,17 +1,25 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { cn } from "@/lib/utils";
 
-const TABS = [
-  { href: "/live", label: "Live Ops" },
-  { href: "/memory", label: "Memory" },
+interface TabDef {
+  href: string;
+  label: string;
+  /** Hard-coded count badge for Phase 3.5.3 — wired to live data in Task 3.5.4. */
+  count: string;
+}
+
+const TABS: readonly TabDef[] = [
+  { href: "/runs", label: "Runs", count: "3" },
+  { href: "/cost", label: "Cost", count: "$2.41" },
+  { href: "/health", label: "Health", count: "2 warn" },
+  { href: "/memory", label: "Memory", count: "1,652" },
 ] as const;
 
 export function TabBar() {
   const pathname = usePathname();
   return (
-    <nav className="flex gap-1 border-b" role="tablist" aria-label="Dashboard tabs">
+    <nav className="shell-tabs" role="tablist" aria-label="Dashboard">
       {TABS.map((t) => {
         const active = pathname === t.href || pathname.startsWith(t.href + "/");
         return (
@@ -20,14 +28,10 @@ export function TabBar() {
             href={t.href}
             role="tab"
             aria-selected={active}
-            className={cn(
-              "px-4 py-2 text-sm border-b-2 -mb-px transition-colors",
-              active
-                ? "border-foreground text-foreground"
-                : "border-transparent opacity-60 hover:opacity-100"
-            )}
+            className="shell-tab"
           >
             {t.label}
+            <span className="count">{t.count}</span>
           </Link>
         );
       })}

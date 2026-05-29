@@ -8,6 +8,9 @@ import { MemoryRail } from "@/components/memory/MemoryRail";
 import { MemorySyncIndicator } from "@/components/memory/MemorySyncIndicator";
 import { InboxQueue } from "@/components/memory/InboxQueue";
 import { GraphCanvas } from "@/components/memory/GraphCanvas";
+import { OpenVikingSummaryPanel } from "@/components/memory/OpenVikingSummaryPanel";
+import { RecentVaultChangesPanel } from "@/components/memory/RecentVaultChangesPanel";
+import { SkillsCatalogPanel } from "@/components/memory/SkillsCatalogPanel";
 
 export default function MemoryPage() {
   const [selectedPath, setSelectedPath] = useQueryState(
@@ -33,6 +36,19 @@ export default function MemoryPage() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden" style={{ height: "calc(100vh - 56px)" }}>
+      {/* Summary strip — OpenViking scopes, skills, vault changes */}
+      <div className="grid grid-cols-12 gap-4 p-4 shrink-0">
+        <div className="col-span-12 md:col-span-6 lg:col-span-4">
+          <OpenVikingSummaryPanel />
+        </div>
+        <div className="col-span-12 md:col-span-6 lg:col-span-4">
+          <SkillsCatalogPanel />
+        </div>
+        <div className="col-span-12 md:col-span-6 lg:col-span-4">
+          <RecentVaultChangesPanel />
+        </div>
+      </div>
+
       {/* Memory view header */}
       <div
         className="flex items-center justify-between px-4 py-2 border-b shrink-0"

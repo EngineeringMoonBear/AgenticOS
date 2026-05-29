@@ -83,22 +83,147 @@
   --ease-standard:       cubic-bezier(0.4, 0.0, 0.2, 1);
   --ease-emphasized:     cubic-bezier(0.2, 0.0, 0.0, 1.0);
   --ease-decelerate:     cubic-bezier(0.0, 0.0, 0.2, 1);
+
+  /* ═══════════════════════════════════════════════════════════
+     v2 Unified Dashboard tokens (docs/design/v2-ui-mockup.html)
+     Forester's-almanac × observability console palette.
+     New canonical names; v1 names above remain for back-compat
+     and have been re-pointed to the new palette where they map
+     1:1 (e.g., --accent-gold-400 == --gold == #c9a227).
+     ═══════════════════════════════════════════════════════════ */
+
+  /* Surfaces — page goes deeper, cards lift toward the eye */
+  --ink:                #060f0b;
+  --surface-recessed:   #0c1611;
+  --surface-header:     #0c1813;
+
+  /* Hairlines — slightly warmer for the glass-rim catch */
+  --moss-line:          #2e4036;
+  --moss-strong:        #45604f;
+  --moss-faint:         #1f2c25;
+
+  /* Glass-pane effect tokens */
+  --rim-light:          rgba(255, 245, 215, 0.07);
+  --rim-light-strong:   rgba(255, 245, 215, 0.11);
+  --pane-shadow-deep:   rgba(0, 0, 0, 0.55);
+  --pane-shadow-close:  rgba(0, 0, 0, 0.4);
+  --pane-inner-dark:    rgba(0, 0, 0, 0.22);
+
+  /* Text — parchment family (v2 alias for --text*) */
+  --parchment:          #f0e6cf;
+  --parchment-muted:    #bdb195;
+  --parchment-faint:    #7c725b;
+  --ink-on-light:       #0d1612;
+
+  /* Brand + status — punchier, "lit" feel */
+  --gold:               #c9a227;        /* canonical brand — same as --accent-gold-400 */
+  --gold-bright:        #e0b73a;
+  --gold-soft:          rgba(201, 162, 39, 0.18);
+  --gold-ghost:         rgba(201, 162, 39, 0.08);
+  --gold-line:          rgba(224, 183, 58, 0.6);
+  --gold-glow:          rgba(224, 183, 58, 0.55);
+
+  --pine:               #6ba480;
+  --pine-bright:        #84c098;
+  --pine-soft:          rgba(107, 164, 128, 0.18);
+  --pine-glow:          rgba(132, 192, 152, 0.55);
+
+  --amber:              #ed9c38;
+  --amber-soft:         rgba(237, 156, 56, 0.18);
+  --amber-glow:         rgba(237, 156, 56, 0.5);
+
+  --russet:             #d76957;
+  --russet-soft:        rgba(215, 105, 87, 0.18);
+  --russet-glow:        rgba(215, 105, 87, 0.5);
+
+  --copper:             #dc8c5f;
+
+  /* Dusk console palette — KPI vista only */
+  --dusk-surface:       #0e1530;
+  --dusk-elevated:      #161e40;
+  --dusk-line:          #2c3760;
+  --dusk-rim:           rgba(224, 183, 58, 0.32);
+  --dusk-glow-warm:     rgba(224, 183, 58, 0.12);
+  --dusk-glow-cool:     rgba(126, 154, 230, 0.10);
+
+  /* Motion (v2 alias) */
+  --ease:               cubic-bezier(0.4, 0.0, 0.2, 1);
+
+  /* Geometry (v2) */
+  --radius-card:        10px;
+  --radius-chip:        999px;
+  --radius-button:      8px;
+
+  /* Type stacks (v2 canonical aliases) */
+  --serif:              'Iowan Old Style', 'Hoefler Text', 'Palatino', 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
+  --sans:               'Inter', system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --mono:               'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, 'Consolas', monospace;
+}
+
+/* v1 → v2 palette re-point. Existing components referencing the v1
+   token names continue to work; they now resolve to the new palette.
+   Listed last so they override the v1 defaults declared above. */
+:root {
+  /* Page + surfaces collapse to the v2 ink/surface family */
+  --bg:                 var(--ink);
+  --surface:            #182721;          /* v2 card body */
+  --surface-elevated:   #21332c;          /* v2 hover */
+  --surface-muted:      var(--surface-recessed);
+
+  /* Borders re-point to the moss family */
+  --border-brand:       var(--moss-line);
+  --border-subtle:      var(--moss-faint);
+  --border-strong:      var(--moss-strong);
+
+  /* Text re-point to parchment */
+  --text:               var(--parchment);
+  --text-secondary:     var(--parchment-muted);
+  --text-muted:         var(--parchment-faint);
+  --text-inverse:       var(--ink-on-light);
+
+  /* Plum accent retired — alias entire scale to gold so any lingering
+     plum references render on-brand rather than off-palette purple.
+     Follow-up sub-phases should migrate these call sites explicitly. */
+  --accent-plum-50:     var(--accent-gold-50);
+  --accent-plum-100:    var(--accent-gold-100);
+  --accent-plum-200:    var(--accent-gold-200);
+  --accent-plum-300:    var(--accent-gold-300);
+  --accent-plum-400:    var(--gold);
+  --accent-plum-500:    var(--accent-gold-500);
+  --accent-plum-600:    var(--accent-gold-600);
+  --accent-plum-700:    var(--accent-gold-700);
+  --accent-plum-800:    var(--accent-gold-800);
+  --accent-plum-900:    var(--accent-gold-900);
+  --accent-plum-950:    var(--accent-gold-950);
 }
 
 /* Light mode overrides (apply .light class to <html>) */
 .light {
-  --bg:                  #f7f4f0;
+  /* v2 canonical light-mode tokens */
+  --ink:                 #f7f4f0;
+  --surface-recessed:    #ece7df;
+  --surface-header:      #f0ece4;
+  --moss-line:           #c8d0c4;
+  --moss-strong:         #6b7a68;
+  --moss-faint:          #dfe3d8;
+  --parchment:           #1a1512;
+  --parchment-muted:     #5c5148;
+  --parchment-faint:     #9e9088;
+  --ink-on-light:        #1a1512;
+
+  /* v1 alias re-point for light mode */
+  --bg:                  var(--ink);
   --surface:             #ffffff;
   --surface-elevated:    #f0ece6;
-  --surface-muted:       #e8e3dc;
+  --surface-muted:       var(--surface-recessed);
 
-  --border-brand:        #d6cfc6;
-  --border-subtle:       #e8e2da;
-  --border-strong:       #b5a898;
+  --border-brand:        var(--moss-line);
+  --border-subtle:       var(--moss-faint);
+  --border-strong:       var(--moss-strong);
 
-  --text:                #1a1512;
-  --text-secondary:      #5c5148;
-  --text-muted:          #9e9088;
+  --text:                var(--parchment);
+  --text-secondary:      var(--parchment-muted);
+  --text-muted:          var(--parchment-faint);
   --text-inverse:        #f0ebe4;
 
   --success-bg:          #e8f9ef;
@@ -254,17 +379,26 @@
   }
   body {
     @apply bg-background text-foreground;
-    background: radial-gradient(
-      ellipse 80% 60% at top left,
-      var(--color-pine-bark) 0%,
-      var(--color-forest-floor) 50%,
-      var(--color-moss-warm) 100%
-    );
-    color: var(--color-parchment);
+    /* v2: solid ink — WCAG AA safe. Texture comes from body::before. */
+    background: var(--ink);
+    color: var(--parchment);
     min-height: 100vh;
   }
   html {
     @apply font-sans;
+  }
+
+  /* Paper-grain — barely visible, gives almanac warmth without
+     harming contrast. Ported verbatim from docs/design/v2-ui-mockup.html. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.4;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.93 0 0 0 0 0.89 0 0 0 0 0.81 0 0 0 0.05 0'/></filter><rect width='200' height='200' filter='url(%23n)'/></svg>");
+    mix-blend-mode: overlay;
   }
 }
 
@@ -281,4 +415,749 @@
 
 .run-stripe-pulse {
   animation: run-stripe-pulse 2s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Shared header shell — v2 mockup port (Phase 3.5.3)
+   Sticky chrome with gold/pine diagonal gradient ornament,
+   brand wordmark, tool buttons, and 4-tab nav with count badges.
+   Ported from docs/design/v2-ui-mockup.html (lines 120–339).
+   ═══════════════════════════════════════════════════════════ */
+
+.shell-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--surface-header);
+  border-bottom: 1px solid var(--moss-line);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.shell-header::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    rgba(201, 162, 39, 0.06) 0%,
+    rgba(201, 162, 39, 0.02) 30%,
+    transparent 55%,
+    rgba(107, 164, 128, 0.06) 90%
+  );
+  z-index: 0;
+}
+
+.shell-header-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 28px;
+  gap: 24px;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.shell-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  color: var(--parchment);
+}
+
+.shell-wordmark {
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  font-variant: small-caps;
+  color: var(--parchment);
+}
+.shell-wordmark .agentic { letter-spacing: 0.05em; }
+.shell-wordmark .os { color: var(--gold); margin-left: 1px; }
+
+.shell-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-button);
+  border: 1px solid var(--moss-line);
+  background: var(--surface);
+  color: var(--parchment-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--ease);
+}
+.shell-tool:hover { color: var(--parchment); border-color: var(--moss-strong); }
+.shell-tool .kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 1px 5px;
+  border: 1px solid var(--moss-line);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--parchment-faint);
+  background: var(--surface-recessed);
+}
+
+.shell-tool-icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-button);
+  color: var(--parchment-muted);
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--ease);
+}
+.shell-tool-icon:hover { color: var(--parchment); border-color: var(--moss-line); }
+.shell-tool-icon svg { width: 16px; height: 16px; }
+
+.shell-tabs {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 0;
+  padding: 0 28px;
+  border-top: 1px solid var(--moss-faint);
+  max-width: 1600px;
+  margin: 0 auto;
+}
+.shell-tab {
+  position: relative;
+  padding: 10px 16px 11px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--parchment-muted);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--motion-fast) var(--ease);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+}
+.shell-tab:hover { color: var(--parchment); }
+.shell-tab[aria-selected="true"] {
+  color: var(--gold);
+  border-bottom-color: var(--gold);
+}
+.shell-tab .count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--parchment-faint);
+  background: var(--surface-recessed);
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+.shell-tab[aria-selected="true"] .count { color: var(--gold); }
+
+@media (max-width: 720px) {
+  .shell-header-row { padding: 12px 16px; gap: 12px; }
+  .shell-tabs { padding: 0 16px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   KPI vista (3.5.4) — persistent dusk console above all tabs.
+   Ported verbatim from docs/design/v2-ui-mockup.html.
+   ═══════════════════════════════════════════════════════════════ */
+
+.kpi-vista {
+  position: relative;
+  padding: 32px 32px 36px;
+  margin: 28px 28px 28px;
+  max-width: 1600px;
+  align-self: center;
+  width: calc(100% - 56px);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--dusk-line);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 245, 215, 0.06) 0%,
+      rgba(255, 245, 215, 0.015) 28%,
+      transparent 55%,
+      rgba(0, 0, 0, 0.35) 100%
+    ),
+    var(--dusk-surface);
+  box-shadow:
+    inset 0 1px 0 0 var(--dusk-rim),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.55),
+    0 24px 48px -16px rgba(0, 0, 0, 0.7),
+    0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.kpi-vista::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      ellipse 60% 70% at 50% 50%,
+      var(--dusk-glow-warm) 0%,
+      rgba(201, 162, 39, 0.04) 30%,
+      transparent 65%
+    ),
+    radial-gradient(
+      ellipse 80% 90% at 50% 100%,
+      var(--dusk-glow-cool) 0%,
+      transparent 60%
+    );
+  z-index: 0;
+}
+.kpi-vista > * {
+  position: relative;
+  z-index: 1;
+}
+
+.horizon {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--gold-line) 12%,
+    var(--gold-line) 88%,
+    transparent 100%
+  );
+}
+.horizon.top    { margin-bottom: 28px; }
+.horizon.bottom { margin-top: 28px; }
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 32px;
+}
+.kpi {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kpi:not(:first-child)::before {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(224, 183, 58, 0.32) 18%,
+    rgba(224, 183, 58, 0.14) 50%,
+    rgba(224, 183, 58, 0.32) 82%,
+    transparent 100%
+  );
+}
+
+.vista-meta {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--parchment-muted);
+  text-transform: uppercase;
+  z-index: 2;
+}
+.vista-meta .live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gold-bright);
+  box-shadow: 0 0 0 0 var(--gold-glow);
+  animation: vista-live-pulse 2.2s ease-in-out infinite;
+}
+@keyframes vista-live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(224, 183, 58, 0.6); }
+  50%      { box-shadow: 0 0 0 7px rgba(224, 183, 58, 0); }
+}
+
+.ekg-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+  border-radius: var(--radius-card);
+}
+.ekg-backdrop svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.ekg-baseline {
+  stroke: rgba(224, 183, 58, 0.05);
+  stroke-width: 0.5;
+}
+.ekg-trace {
+  stroke: #f0d265;
+  stroke-width: 1.2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 3200;
+  stroke-dashoffset: 3200;
+  opacity: 0;
+  animation: ekg-sweep 9s linear infinite;
+}
+@keyframes ekg-sweep {
+  0%   { stroke-dashoffset: 3200; opacity: 0; }
+  5%   { opacity: 0.28; }
+  55%  { stroke-dashoffset: 0; opacity: 0.28; }
+  62%  { stroke-dashoffset: 0; opacity: 0.28; }
+  75%  { stroke-dashoffset: 0; opacity: 0; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+.kpi-vista > .ekg-backdrop { z-index: 0; }
+
+.kpi-vista .kpi .value {
+  text-shadow: 0 0 36px rgba(224, 183, 58, 0.22), 0 0 12px rgba(224, 183, 58, 0.12);
+}
+.kpi .value {
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 44px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--parchment);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum", "ss01", "cv11";
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  text-shadow: 0 0 32px rgba(224, 183, 58, 0.16);
+}
+.kpi .value .unit {
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--parchment-muted);
+  letter-spacing: -0.01em;
+}
+.kpi .value .delta {
+  font-size: 13px;
+  font-weight: 500;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: var(--radius-chip);
+  font-variant-numeric: tabular-nums;
+}
+.kpi .value .delta.up   { color: var(--pine);  background: var(--pine-soft); }
+.kpi .value .delta.down { color: var(--russet); background: var(--russet-soft); }
+.kpi .label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--parchment-muted);
+}
+.kpi .sublabel {
+  font-size: 12px;
+  color: var(--parchment-faint);
+  font-family: var(--mono);
+}
+
+/* Reduced motion: hold the EKG trace + live-dot pulse as a static glow. */
+@media (prefers-reduced-motion: reduce) {
+  .ekg-trace {
+    animation: none;
+    stroke-dashoffset: 0;
+    opacity: 0.18;
+  }
+  .vista-meta .live-dot {
+    animation: none;
+    box-shadow: 0 0 0 3px rgba(224, 183, 58, 0.18);
+  }
+}
+
+@media (max-width: 1100px) {
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 28px 32px; }
+}
+@media (max-width: 720px) {
+  .kpi-vista { margin: 16px; width: calc(100% - 32px); padding: 24px 20px 28px; }
+  .kpi-grid { grid-template-columns: 1fr 1fr; gap: 20px; }
+  .kpi .value { font-size: 32px; }
+}
+
+/* ════════════════════════════════════════════════════════════
+   Card grammar — glass-pane primitives (Sub-phase 3.5.5)
+   Ported verbatim from docs/design/v2-ui-mockup.html.
+   ════════════════════════════════════════════════════════════ */
+
+.card {
+  position: relative;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 245, 215, 0.028) 0%,
+      rgba(255, 245, 215, 0.008) 28%,
+      transparent 55%,
+      var(--pane-inner-dark) 100%
+    ),
+    var(--surface);
+  border: 1px solid var(--moss-line);
+  border-radius: var(--radius-card);
+  padding: 18px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-light),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.45),
+    0 12px 28px -12px var(--pane-shadow-deep),
+    0 2px 6px -2px var(--pane-shadow-close);
+  transition:
+    transform var(--motion-base) var(--ease),
+    border-color var(--motion-base) var(--ease),
+    background var(--motion-base) var(--ease),
+    box-shadow var(--motion-base) var(--ease);
+}
+.card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--moss-strong);
+  opacity: 0.6;
+  z-index: 1;
+}
+.card.lane--gold::before {
+  background: var(--gold-bright);
+  opacity: 0.95;
+  box-shadow: 0 0 12px 0 var(--gold-glow), 0 1px 0 0 var(--gold-bright);
+}
+.card.lane--pine::before {
+  background: var(--pine-bright);
+  opacity: 0.95;
+  box-shadow: 0 0 12px 0 var(--pine-glow), 0 1px 0 0 var(--pine-bright);
+}
+.card.lane--amber::before {
+  background: var(--amber);
+  opacity: 0.95;
+  box-shadow: 0 0 12px 0 var(--amber-glow), 0 1px 0 0 var(--amber);
+}
+.card.lane--russet::before {
+  background: var(--russet);
+  opacity: 0.95;
+  box-shadow: 0 0 12px 0 var(--russet-glow), 0 1px 0 0 var(--russet);
+}
+.card:hover {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 245, 215, 0.045) 0%,
+      rgba(255, 245, 215, 0.012) 28%,
+      transparent 55%,
+      var(--pane-inner-dark) 100%
+    ),
+    var(--surface-elevated);
+  border-color: var(--moss-strong);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-light-strong),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.45),
+    0 18px 36px -12px rgba(0, 0, 0, 0.65),
+    0 4px 10px -2px var(--pane-shadow-close);
+}
+.card.span-2 { grid-column: span 2; }
+.card.span-full { grid-column: 1 / -1; }
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--parchment-muted);
+}
+.card-title svg {
+  width: 14px;
+  height: 14px;
+  color: var(--gold);
+  flex-shrink: 0;
+}
+.card-action {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--parchment-faint);
+  letter-spacing: 0.02em;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-chip);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid currentColor;
+}
+.pill.ok      { color: var(--pine);   background: var(--pine-soft);   border-color: rgba(107, 164, 128, 0.4); }
+.pill.warn    { color: var(--amber);  background: var(--amber-soft);  border-color: rgba(227,144,46,0.4); }
+.pill.err     { color: var(--russet); background: var(--russet-soft); border-color: rgba(203,97,81,0.4); }
+.pill.run     { color: var(--gold);   background: var(--gold-soft);   border-color: rgba(201,162,39,0.4); }
+.pill.stuck   { color: var(--russet); background: var(--russet-soft); border-color: rgba(203,97,81,0.4); }
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pill .dot { width: 5px; height: 5px; background: currentColor; }
+
+.row-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  min-height: 22px;
+}
+.row .label-strong { color: var(--parchment); font-weight: 500; }
+.row .meta { color: var(--parchment-muted); font-size: 12px; }
+.row .num  { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--parchment); }
+.row .num.muted { color: var(--parchment-muted); }
+
+.row.stuck {
+  background: linear-gradient(90deg, var(--russet-soft) 0%, transparent 60%);
+  border-left: 2px solid var(--russet);
+  padding: 6px 10px;
+  margin: -2px -10px;
+  border-radius: 4px;
+}
+.row.stuck .label-strong { color: var(--russet); }
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 60px;
+  gap: 12px;
+  align-items: center;
+  font-size: 13px;
+}
+.bar-row .name { color: var(--parchment); }
+.bar-row .scope { font-family: var(--mono); color: var(--parchment-muted); font-size: 11px; }
+.bar-row .track {
+  height: 6px;
+  background: var(--surface-recessed);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+.bar-row .fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gold) 0%, rgba(201, 162, 39, 0.55) 100%);
+  border-radius: 3px;
+}
+.bar-row .count {
+  font-family: var(--mono);
+  text-align: right;
+  color: var(--parchment);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+}
+.progress-head .pname { color: var(--parchment); }
+.progress-head .pcount {
+  font-family: var(--mono);
+  color: var(--parchment-muted);
+  font-variant-numeric: tabular-nums;
+}
+.progress-track {
+  height: 7px;
+  background: var(--surface-recessed);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width var(--motion-base) var(--ease);
+}
+.progress-fill.pine  { background: linear-gradient(90deg, var(--pine), var(--pine-glow)); }
+.progress-fill.amber { background: linear-gradient(90deg, var(--amber), rgba(227,144,46,0.6)); }
+.progress-fill.gold  { background: linear-gradient(90deg, var(--gold),  rgba(201,162,39,0.6)); }
+
+.icon-btn {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--moss-line);
+  border-radius: 5px;
+  color: var(--parchment-muted);
+  cursor: pointer;
+  padding: 0;
+  transition: all var(--motion-fast) var(--ease);
+  flex-shrink: 0;
+}
+.icon-btn svg { width: 12px; height: 12px; }
+.icon-btn:hover {
+  color: var(--parchment);
+  border-color: var(--moss-strong);
+  background: var(--surface-recessed);
+}
+.icon-btn.alert:hover {
+  color: var(--russet);
+  border-color: var(--russet);
+}
+.icon-btn.go:hover {
+  color: var(--gold-bright);
+  border-color: var(--gold);
+}
+
+/* ════════════════════════════════════════════════════════════
+   Err-row, sparkline, big-num — added in Sub-phase 3.5.6.
+   Ported verbatim from docs/design/v2-ui-mockup.html.
+   ════════════════════════════════════════════════════════════ */
+
+.err-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--surface-recessed);
+  border-radius: 6px;
+  border-left: 2px solid var(--russet);
+  font-size: 12px;
+  align-items: center;
+}
+.err-row .id  { font-family: var(--mono); color: var(--parchment-muted); }
+.err-row .msg { color: var(--parchment); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.err-row .msg .kind { color: var(--parchment-faint); margin-right: 6px; }
+.err-row .ts  { font-family: var(--mono); color: var(--parchment-faint); font-size: 11px; }
+
+.spark-wrap {
+  position: relative;
+  height: 64px;
+  width: 100%;
+}
+.spark-wrap svg { width: 100%; height: 100%; display: block; }
+.spark-line { fill: none; stroke: var(--gold); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.spark-dot  { fill: var(--gold); stroke: var(--ink); stroke-width: 2; }
+.spark-tooltip {
+  position: absolute;
+  background: var(--surface-elevated);
+  color: var(--parchment);
+  border: 1px solid var(--moss-strong);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 8px));
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease);
+  z-index: 20;
+  white-space: nowrap;
+}
+.spark-tooltip.visible { opacity: 1; }
+.spark-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid var(--moss-strong);
+}
+
+.big-num {
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 26px;
+  line-height: 1;
+  color: var(--parchment);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.big-num .of {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--parchment-muted);
+}
+
+.range-toggle {
+  display: inline-flex;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.range-toggle button {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--parchment-faint);
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: 0.02em;
+}
+.range-toggle button:hover { color: var(--parchment-muted); }
+.range-toggle button[aria-selected="true"] {
+  color: var(--gold);
 }

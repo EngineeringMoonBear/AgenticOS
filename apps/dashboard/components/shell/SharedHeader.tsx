@@ -1,70 +1,50 @@
 import Link from "next/link";
-import { SlidersHorizontal } from "lucide-react";
-import { CostBurnChip } from "./CostBurnChip";
-import { MaxQuotaChip } from "./MaxQuotaChip";
-import { AgentStatusChip } from "@/components/observability/AgentStatusChip";
+import { LanternMushroom } from "@/components/brand/LanternMushroom";
 import { TabBar } from "./TabBar";
 import { PaletteTrigger } from "@/components/layout/palette-trigger";
 import { FilterChip } from "@/components/filter/filter-chip";
 
-/** AgenticOS logo mark — plum ring with gold inner dot at 2-o'clock position */
-function LogoMark() {
+/** Settings cog icon — inline SVG to avoid extra lucide-react surface here. */
+function SettingsIcon() {
   return (
     <svg
-      width="20"
-      height="20"
-      viewBox="0 0 20 20"
+      viewBox="0 0 24 24"
       fill="none"
-      xmlns="http://www.w3.org/2000/svg"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
       aria-hidden="true"
     >
-      <circle cx="10" cy="10" r="8" stroke="var(--accent-plum-400)" strokeWidth="1.5" fill="none" />
-      <circle cx="14" cy="6" r="1.5" fill="var(--accent-gold-400)" />
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
 }
 
 export function SharedHeader() {
   return (
-    <header
-      className="sticky top-0 z-50 border-b"
-      style={{
-        backgroundColor: "color-mix(in srgb, var(--surface-elevated) 90%, transparent)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
-        borderBottomColor: "var(--border-subtle)",
-      }}
-    >
-      <div className="flex items-center justify-between px-4 py-3 gap-4">
-        {/* Left: brand */}
-        <Link
-          href="/"
-          className="flex items-center gap-2 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[--accent-plum-400] rounded-md"
-          aria-label="AgenticOS — home"
-        >
-          <LogoMark />
-          <span
-            className="text-[15px] font-medium tracking-tight"
-            style={{ color: "var(--text)" }}
-          >
-            AgenticOS
+    <header className="shell-header">
+      <div className="shell-header-row">
+        {/* Left: brand mark + wordmark */}
+        <Link href="/" className="shell-brand" aria-label="AgenticOS — home">
+          <LanternMushroom size={26} />
+          <span className="shell-wordmark">
+            <span className="agentic">Agentic</span>
+            <span className="os">OS</span>
           </span>
         </Link>
 
-        {/* Right: chips + utilities */}
-        <div className="flex items-center gap-2 shrink-0">
-          <CostBurnChip />
-          <AgentStatusChip />
-          <MaxQuotaChip />
+        {/* Right: utility buttons (no status chips — those moved to KpiVista) */}
+        <div className="shell-header-right">
           <FilterChip />
           <PaletteTrigger />
           <Link
             href="/settings"
-            className="flex items-center justify-center rounded-md p-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[--accent-plum-400]"
-            style={{ color: "var(--text-muted)" }}
+            className="shell-tool-icon"
             aria-label="Settings"
           >
-            <SlidersHorizontal size={16} strokeWidth={1.5} aria-hidden="true" />
+            <SettingsIcon />
           </Link>
         </div>
       </div>
