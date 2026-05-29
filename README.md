@@ -14,7 +14,7 @@ The architecture is intentionally a composition of best-in-class components rath
 
 - **Knowledge layer** — an Obsidian-format vault on disk. Markdown files, wiki links, taxonomies. The vault is canonical knowledge; Obsidian on the Mac is a read/write view of it via Syncthing — the Droplet never runs Obsidian itself.
 - **Memory layer** — [OpenViking](https://github.com/volcengine/OpenViking) (open-source context database by Volcengine / ByteDance) with filesystem-paradigm URIs (`viking://resources/…`, `viking://user/memories`, `viking://agent/skills`), L0/L1/L2 tiered loading, hybrid directory + semantic retrieval, and automatic memory extraction into 6 categories on session commit. OpenViking is one of the [memory providers Hermes ships with](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory-providers) — set `memory.provider: openviking` in `config.yaml` and the agent's memory tools (`viking_remember`, `viking_recall`, `find`, `abstract`, …) are wired natively. Viking runs on the Droplet alongside Hermes and uses local Ollama for its own embedding + summarization pipelines.
-- **Agent runtime** — [Hermes Agent](https://github.com/NousResearch/hermes-agent) (headless orchestrator) driving an OpenAI reasoning model (`gpt-5-codex` for heavy reasoning, `gpt-4o-mini` for Hermes-internal routing) + local Ollama SLMs for embeddings and lightweight inference. Hermes' [model providers](https://hermes-agent.nousresearch.com/docs/) offers two OpenAI auth modes that we treat as interchangeable at the config layer: `provider: openai` (API key in `OPENAI_API_KEY`, per-token billing) — what we run today — and `provider: codex` (OAuth via ChatGPT Pro subscription, flat ~$20/mo, no per-token charges). Anthropic/Claude is a third drop-in option for if/when those cost models stop being competitive.
+- **Agent runtime** — [Hermes Agent](https://github.com/NousResearch/hermes-agent) (headless orchestrator) running on a two-provider configuration: **main reasoning** on `provider: openai-codex` (OAuth via ChatGPT account, flat subscription cost — what we run today) with `gpt-5-codex` for heavy work and `gpt-4o-mini` for Hermes-internal routing; **auxiliary tasks** (embeddings, vision, compression) routed via Hermes' `auxiliary.*.provider` config to a `provider: custom` endpoint pointed at local Ollama (`nomic-embed-text` + `qwen2.5:3b`). Hermes supports [40+ model providers](https://hermes-agent.nousresearch.com/docs/integrations/providers) — switching the main model to Claude (`anthropic`), Gemini (`gemini`), OpenRouter (`openrouter`), or any of the others is a config change in `model.provider`, not a code change.
 - **Vault tools** — an MCP-to-vault server (in this repo, `apps/dashboard/lib/mcp-vault/`) exposing the vault to any MCP-capable agent.
 - **Dashboard** — Next.js 16 + shadcn/ui, deployed on DigitalOcean App Platform with auto-deploy on `push to main`.
 - **Auth** — Cloudflare Access (Google SSO) in front of the public dashboard URL.
@@ -110,22 +110,26 @@ docs/
 Once v1 is implemented, you'll need:
 
 - DigitalOcean account (Droplet + App Platform — ~$29/mo marginal)
-- OpenAI API key (Codex / `gpt-5-codex` for reasoning, `gpt-4o-mini` for orchestration — projected ~$50/mo at current burn rate; see Cost tab for live tracking)
+- ChatGPT Pro/Plus account for Codex OAuth (~$20/mo flat — no per-token billing in this mode)
 - Tailscale account (free tier)
 - Cloudflare account (free tier; Access requires only the free plan)
 - A Mac with Obsidian for vault editing
 - A custom domain for the dashboard
 
-**Cost envelope today (`provider: openai` + API key): OpenAI tokens + DigitalOcean ≈ ~$80/mo.** Local Ollama (running on the Droplet) handles all embeddings + OpenViking's background pipelines (TreeBuilder, Compressor, IntentAnalyzer) — verified during Phase 1 against `nomic-embed-text` + `qwen2.5:3b` (4 GB RAM Droplet). The only paid AI surface is the OpenAI provider — `gpt-5-codex` for heavy reasoning, `gpt-4o-mini` for Hermes-internal routing. The dashboard's Cost tab shows live burndown and month-end projection; a monthly cap is enforceable via the budget table.
+**Cost envelope today: ~$49/mo total.** Main reasoning runs on `provider: openai-codex` (OAuth via ChatGPT Pro — flat ~$20/mo, no per-token charges). Local Ollama (`provider: custom` on the Droplet) handles all embeddings + OpenViking's background pipelines (TreeBuilder, Compressor, IntentAnalyzer) — verified during Phase 1 against `nomic-embed-text` + `qwen2.5:3b` on the 4 GB RAM Droplet — at zero marginal cost. The dashboard's Cost tab tracks any per-token spend if you swap into a metered provider later.
 
-**Cost-optimization paths via Hermes config (no code change required):**
+**Hermes supports 40+ providers** via `model.provider` config. Cheap subset for this project's likely-future swaps:
 
-| Switch to | Auth | Cost model | Trade-off |
+| Provider value | Auth | Cost model | When you'd switch |
 |---|---|---|---|
-| `provider: codex` | OAuth via ChatGPT Pro subscription | ~$20/mo flat | One-time browser OAuth per Droplet; no per-token bill; subscription fixed regardless of usage |
-| `provider: anthropic` | Claude Code's Max OAuth (Anthropic's intended channel for programmatic Max use) | ~$100/mo flat (Claude Max tier) | Higher fixed cost but a different model strain at scale |
+| `openai-codex` *(current)* | ChatGPT account OAuth | ~$20/mo flat | Today's default — best $/token at our usage |
+| `anthropic` | Claude Code Max OAuth or API key | ~$100/mo Max tier OR per-token API | Want Claude's reasoning at scale |
+| `openrouter` | `OPENROUTER_API_KEY` | Per-token across 100+ models | Want fast A/B between models without re-auth |
+| `openai-api` | `OPENAI_API_KEY` | Per-token | Need a model not on Codex (e.g. fine-tuned) |
+| `gemini` / `google-gemini-cli` | API key / OAuth | Generous free tier | Experimenting with Gemini |
+| `custom` (Ollama Cloud, vLLM, llama.cpp) | Optional | Self-hosted / free | Self-hosted model parity |
 
-Each is a `model.provider` change in `/opt/agenticos/hermes-config/config.yaml` plus restarting Hermes — no code in this repo needs to move.
+Each is a `model.provider` change in `/opt/agenticos/hermes-config/config.yaml` plus a credential and restart. No code in this repo needs to move.
 
 ## Development
 
