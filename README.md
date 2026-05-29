@@ -13,8 +13,8 @@ AgenticOS is the orchestration dashboard for a single-developer agent fleet. It 
 The architecture is intentionally a composition of best-in-class components rather than a monolith:
 
 - **Knowledge layer** — an Obsidian-format vault on disk. Markdown files, wiki links, taxonomies. The vault is canonical knowledge; Obsidian on the Mac is a read/write view of it via Syncthing — the Droplet never runs Obsidian itself.
-- **Memory layer** — [OpenViking](https://github.com/volcengine/OpenViking) (open-source context database) with filesystem-paradigm URIs (`viking://resources/…`, `viking://user/memories`, `viking://agent/skills`), L0/L1/L2 tiered loading, hybrid directory + semantic retrieval, and automatic session compression. Hermes has a first-class built-in Viking provider, so memory tools (`viking_remember`, `viking_recall`, `find`, `abstract`, …) are native to every agent. Viking runs on the Droplet alongside Hermes.
-- **Agent runtime** — [Hermes Agent](https://github.com/NousResearch/hermes-agent) (headless orchestrator) + [Codex CLI](https://github.com/openai/codex) + local Ollama SLMs, all driven by [Claude Code](https://docs.anthropic.com/en/docs/claude-code) authenticated via a Claude Max subscription — Anthropic's intended channel for programmatic use of Max.
+- **Memory layer** — [OpenViking](https://github.com/volcengine/OpenViking) (open-source context database by Volcengine / ByteDance) with filesystem-paradigm URIs (`viking://resources/…`, `viking://user/memories`, `viking://agent/skills`), L0/L1/L2 tiered loading, hybrid directory + semantic retrieval, and automatic memory extraction into 6 categories on session commit. OpenViking is one of the [memory providers Hermes ships with](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory-providers) — set `memory.provider: openviking` in `config.yaml` and the agent's memory tools (`viking_remember`, `viking_recall`, `find`, `abstract`, …) are wired natively. Viking runs on the Droplet alongside Hermes and uses local Ollama for its own embedding + summarization pipelines.
+- **Agent runtime** — [Hermes Agent](https://github.com/NousResearch/hermes-agent) (headless orchestrator) running on a two-provider configuration: **main reasoning** on `provider: openai-codex` (OAuth via ChatGPT account, flat subscription cost — what we run today) with `gpt-5-codex` for heavy work and `gpt-4o-mini` for Hermes-internal routing; **auxiliary tasks** (embeddings, vision, compression) routed via Hermes' `auxiliary.*.provider` config to a `provider: custom` endpoint pointed at local Ollama (`nomic-embed-text` + `qwen2.5:3b`). Hermes supports [40+ model providers](https://hermes-agent.nousresearch.com/docs/integrations/providers) — switching the main model to Claude (`anthropic`), Gemini (`gemini`), OpenRouter (`openrouter`), or any of the others is a config change in `model.provider`, not a code change.
 - **Vault tools** — an MCP-to-vault server (in this repo, `apps/dashboard/lib/mcp-vault/`) exposing the vault to any MCP-capable agent.
 - **Dashboard** — Next.js 16 + shadcn/ui, deployed on DigitalOcean App Platform with auto-deploy on `push to main`.
 - **Auth** — Cloudflare Access (Google SSO) in front of the public dashboard URL.
@@ -38,16 +38,16 @@ The architecture is intentionally a composition of best-in-class components rath
                 └────────────┬─────────────────┘
                              │ DO VPC private network
                              ▼
-                ┌──────────────────────────────────────┐
-                │  DO Droplet                          │
-                │  - Claude Code (Max OAuth)           │
-                │  - Hermes Agent (cron + orchestrator)│
-                │  - OpenViking (context database)     │
-                │  - Codex CLI + Ollama SLMs (workers) │
-                │  - Postgres (tasks + cost ledger)    │
-                │  - Vault filesystem (/opt/vault)     │
-                │  - Tailscale + Syncthing daemons     │
-                └──────────────────────┬───────────────┘
+                ┌────────────────────────────────────────┐
+                │  DO Droplet                            │
+                │  - Hermes Agent (cron + orchestrator)  │
+                │    → OpenAI Codex API (reasoning)      │
+                │  - OpenViking (memory · context DB)    │
+                │  - Ollama (embeddings + lightweight)   │
+                │  - Postgres (tasks + cost ledger)      │
+                │  - Vault filesystem (/opt/vault)       │
+                │  - Tailscale + Syncthing daemons       │
+                └──────────────────────┬─────────────────┘
                                        │ Tailscale mesh
                           ┌────────────┴────────────┐
                           ▼                         ▼
@@ -67,7 +67,7 @@ Phases 1–2 (vault editor, lint, taxonomy, MCP-to-vault server) are merged. Pha
 **v1 (MVP) scope:**
 
 - One Curator agent — nightly vault inbox triage, accumulating user model as markdown in the Viking-backed vault
-- Dashboard observability — runs, costs, memory inspection, Max quota
+- Dashboard observability — runs (live + scheduled + stuck-detection), costs (burndown + projection), memory inspection, system health, skills catalog
 - GitHub Actions CI/CD — push to `main` deploys both App Platform and Droplet
 
 **Deferred to v2 and beyond:**
@@ -110,13 +110,26 @@ docs/
 Once v1 is implemented, you'll need:
 
 - DigitalOcean account (Droplet + App Platform — ~$29/mo marginal)
-- Claude Max subscription ($100/mo, used for in-policy programmatic agent execution)
+- ChatGPT Pro/Plus account for Codex OAuth (~$20/mo flat — no per-token billing in this mode)
 - Tailscale account (free tier)
 - Cloudflare account (free tier; Access requires only the free plan)
 - A Mac with Obsidian for vault editing
 - A custom domain for the dashboard
 
-**No LLM API spend** — *modulo OpenViking's LLM dependencies.* Claude Code runs against the existing Max subscription; local SLMs run via Ollama on the Droplet for cheap parallel work. OpenViking's background pipelines (TreeBuilder, Compressor, IntentAnalyzer) need an LLM; the plan is to point those at local Ollama so no external API spend accrues. Verified configuration TBD — see open question in `docs/superpowers/specs/2026-05-22-spec1-orchestrator-cost-observability-design.md`.
+**Cost envelope today: ~$49/mo total.** Main reasoning runs on `provider: openai-codex` (OAuth via ChatGPT Pro — flat ~$20/mo, no per-token charges). Local Ollama (`provider: custom` on the Droplet) handles all embeddings + OpenViking's background pipelines (TreeBuilder, Compressor, IntentAnalyzer) — verified during Phase 1 against `nomic-embed-text` + `qwen2.5:3b` on the 4 GB RAM Droplet — at zero marginal cost. The dashboard's Cost tab tracks any per-token spend if you swap into a metered provider later.
+
+**Hermes supports 40+ providers** via `model.provider` config. Cheap subset for this project's likely-future swaps:
+
+| Provider value | Auth | Cost model | When you'd switch |
+|---|---|---|---|
+| `openai-codex` *(current)* | ChatGPT account OAuth | ~$20/mo flat | Today's default — best $/token at our usage |
+| `anthropic` | Claude Code Max OAuth or API key | ~$100/mo Max tier OR per-token API | Want Claude's reasoning at scale |
+| `openrouter` | `OPENROUTER_API_KEY` | Per-token across 100+ models | Want fast A/B between models without re-auth |
+| `openai-api` | `OPENAI_API_KEY` | Per-token | Need a model not on Codex (e.g. fine-tuned) |
+| `gemini` / `google-gemini-cli` | API key / OAuth | Generous free tier | Experimenting with Gemini |
+| `custom` (Ollama Cloud, vLLM, llama.cpp) | Optional | Self-hosted / free | Self-hosted model parity |
+
+Each is a `model.provider` change in `/opt/agenticos/hermes-config/config.yaml` plus a credential and restart. No code in this repo needs to move.
 
 ## Development
 

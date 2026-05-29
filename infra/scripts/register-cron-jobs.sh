@@ -13,7 +13,17 @@
 #
 # Schedule format: standard cron (minute hour dom month dow). Timezone is
 # whatever the container sees — we set TZ=America/New_York on both Hermes
-# containers in docker-compose.yml.
+# containers in docker-compose.yml. Hermes also accepts natural-language
+# schedules like "every 1h" per its docs; we use cron expressions for
+# explicitness.
+#
+# Why --no-agent + --script (no prompt argument): the canonical
+# `hermes cron create <schedule> <prompt>` form invokes an LLM on every
+# scheduler tick with the given prompt. We don't want that — vault-ingest,
+# cost-report, etc. are deterministic shell scripts, not agentic prompts.
+# The --no-agent flag combined with --script tells Hermes "just run this
+# shell file on the schedule, no LLM involvement." The CLI tolerates the
+# missing prompt positional in this mode.
 set -euo pipefail
 
 # Self-re-exec as the `hermes` user if we were invoked as root. Critical

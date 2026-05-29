@@ -9,12 +9,14 @@
 
 ## 1. Goal
 
-Turn the working Spec 1 stack (Hermes + OpenViking + Codex + Ollama + Postgres cost ledger) into the **one pane of glass** AgenticOS was originally pitched as — observability, memory inspection, cost, and agent monitoring in a single dashboard — **without adding any new paid service**. The cost envelope remains Claude Max + DigitalOcean only.
+Turn the working Spec 1 stack (Hermes + OpenViking + Codex + Ollama + Postgres cost ledger) into the **one pane of glass** AgenticOS was originally pitched as — observability, memory inspection, cost, and agent monitoring in a single dashboard — **without adding any new paid service**. The cost envelope is OpenAI Codex API (for Hermes-driven reasoning) + DigitalOcean (Droplet + App Platform). Local Ollama handles all embeddings + OpenViking's background pipelines, so no additional AI-API spend accrues beyond Codex.
+
+> **Provider flexibility note (2026-05-29):** Hermes' `model.provider` config is swappable. The cost-envelope target is "Codex + DO" today because Codex is the simplest to wire and has predictable per-token billing. If Claude Max ever becomes the cheaper option for our usage shape, the runtime supports drop-in switching to `anthropic` via config change. The dashboard's Cost tab is provider-agnostic and will track whichever provider is configured.
 
 The user-stated priority list this design serves:
 
 - **High** — One dashboard for observability + memory + cost + agent monitoring.
-- **High** — No new cost beyond Claude Max + DO.
+- **High** — No new paid services beyond the configured LLM provider (Codex today; swappable).
 - **High** — Smart curated memory + autonomous 24/7 tasks.
 - **Medium** — Beautiful customizable UI/UX the user can extend.
 - **Medium** — Prioritize work between local and cloud agents.
@@ -30,11 +32,11 @@ This spec is a single coherent feature: extend the dashboard from "live-ops only
 
 | # | Question | Decision |
 |---|----------|----------|
-| 1 | Memory layer | **OpenViking** (volcengine/OpenViking). Hermes has a first-class Viking memory provider, so no bespoke MCP plumbing. Honcho is not used. mem0 is not used. |
+| 1 | Memory layer | **OpenViking** (volcengine/OpenViking), one of the [memory providers Hermes ships with](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory-providers). Set `memory.provider: openviking` in `config.yaml` and the agent's memory tools (`viking_remember`, `viking_recall`, `find`, `abstract`) are wired natively — no bespoke MCP plumbing. Honcho (also Hermes-shipped) is not used. mem0 (also Hermes-shipped) is not used. |
 | 2 | Human authoring layer | **Obsidian on Mac**, against a markdown vault. Obsidian is the long-term structure, taxonomy, and storage for *resources and finished skills*. Obsidian never runs on the Droplet. |
 | 3 | Vault ↔ Viking sync direction | **One-way ingestion**: vault → Viking. Auto-extracted memory stays in Viking and is surfaced via the dashboard's Memory tab. |
 | 4 | Ingestion cadence | **Hourly cron job**, run by Hermes (not a Node scheduler, not inotify). Hash-based dedup so unchanged files cost nothing. |
-| 5 | Dashboard layout | **D3 — equal-weight tabbed** (Live-ops tab and Memory tab) with a shared header for always-relevant status (cost burn, agent health, Max quota). |
+| 5 | Dashboard layout | **D3 — equal-weight tabbed** (Live-ops tab and Memory tab) with a shared header for always-relevant status. **Updated 2026-05-29:** during implementation the 4-tab structure replaced the 2-tab one (`Runs · Architecture · Cost · Health · Memory`), and the persistent KpiVista replaced the chip-based shared status — both shipped in PR #102 / #104. |
 | 6 | Retrieval trajectories | **Included in v1**, not deferred. `react-force-graph-2d` is already a dashboard dep; wire it to Viking's DebugService observer output. |
 | 7 | Viking LLM provider | **Ollama** (local, OpenAI-compatible API at `http://ollama:11434/v1`) for both embeddings and VLM. No external API spend. |
 
@@ -178,6 +180,8 @@ Three chips, always visible, polling every 30 seconds via TanStack Query:
 1. **Cost burn** — today's spend / today's budget, color tier based on remaining budget. Tap → opens cost detail drawer.
 2. **Agent health** — green/yellow/red, with the Viking latency (already implemented as `AgentStatusChip` in Spec 1, just relocated into the shared header).
 3. **Max quota** — Claude Max remaining quota indicator (Spec 1 has the data shape; v2 just surfaces it).
+
+> **Superseded 2026-05-29:** during PR #102 the chip cluster was found to duplicate information already in tab-level cards (Cost burndown, Agent health). All three chips were removed. The Max-quota chip in particular was ambiguous (didn't make clear whether it was usage or remaining), and the underlying Claude Max integration was deprecated in favor of OpenAI Codex API. Today the shared header is just brand + search + settings; cost / health / quota status now live in per-tab cards. Section 5.4 left here for historical context.
 
 ### 5.5 Live-Ops tab
 

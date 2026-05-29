@@ -1,8 +1,10 @@
 # AgenticOS Infrastructure (Terraform + cloud-init)
 
 This directory provisions the AgenticOS Foundation v2 MVP infrastructure end-to-end.
-After a successful `terraform apply`, exactly **one** manual step remains:
-SSH to the Droplet and run `claude /login` to complete the Claude Max OAuth device-code flow.
+After a successful `terraform apply`, one manual step remains:
+SSH to the Droplet and complete the Codex OAuth flow so Hermes can reach
+ChatGPT for agent reasoning. (Hermes supports 40+ LLM providers; we currently use
+`provider: openai-codex` for its flat subscription cost model.)
 
 ## What gets provisioned
 
@@ -23,7 +25,7 @@ SSH to the Droplet and run `claude /login` to complete the Claude Max OAuth devi
   - Docker Engine + Compose
   - Tailscale (joined with auth key, no browser interaction)
   - Syncthing (user-service for `deploy`, GUI exposed only on `tailscale0`)
-  - Node 22, pnpm 9.15.4, Claude Code CLI
+  - Node 22, pnpm 9.15.4, OpenAI Codex CLI (Hermes' `openai-codex` provider can import the CLI's OAuth credentials from `~/.codex/auth.json` if present)
   - Filesystem layout: `/opt/agenticos/repo`, `/opt/vault`, `/opt/backups`, `/etc/agenticos`
   - Repo cloned to `/opt/agenticos/repo`
   - AgenticOS docker-compose stack started (Hermes Agent + hermes-gateway + Ollama + Postgres) if `docker-compose.yml` exists in the repo
@@ -221,13 +223,67 @@ ssh -i ~/.ssh/agenticos-droplet root@$(terraform output -raw droplet_public_ip) 
 
 When you see `AgenticOS Droplet bootstrap complete.`, you're done with the automation.
 
-## The one remaining manual step
+## The remaining manual step — Codex OAuth
+
+The Droplet boots with the docker-compose stack running, but Hermes needs auth credentials
+for whatever LLM provider you've configured. Terraform deliberately doesn't put credentials
+into state. We default to `provider: openai-codex` — OAuth via ChatGPT account, ~$20/mo flat
+subscription — because it has the best $/token at this project's usage shape.
+
+### Codex OAuth — current default
 
 ```bash
 ssh -i ~/.ssh/agenticos-droplet deploy@$(terraform output -raw droplet_public_ip)
-claude /login        # opens a device-code URL — paste into your browser
-claude --print "hello"   # smoke test
+
+# Confirm hermes-config/config.yaml has model.provider: openai-codex
+sudo grep -A2 'model:' /opt/agenticos/hermes-config/config.yaml
+
+# Run interactive auth — opens a device-code URL you paste into your browser
+docker exec -it hermes-agent /opt/hermes/.venv/bin/hermes model
+
+# In the menu, select "Codex" and follow the browser OAuth prompt to sign in
+# with your ChatGPT Pro/Plus account.
+# Hermes stores resulting credentials at ~/.hermes/auth.json. If the Codex CLI
+# is already auth'd (~/.codex/auth.json exists on the Droplet), Hermes imports
+# from there automatically — you may not need the interactive step at all.
+
+# Restart so the gateway picks up the new auth
+cd /opt/agenticos && docker compose restart hermes-agent hermes-gateway
+
+# Smoke test — should print a completion
+docker exec hermes-agent /opt/hermes/.venv/bin/hermes \
+  --print "Reply with exactly the word 'ready'."
 ```
+
+ChatGPT Pro/Plus subscription required. No API key, no per-token billing.
+
+### Alternative — `provider: openai-api` + API key (per-token)
+
+If you need a model the Codex provider doesn't expose (custom fine-tune, etc.), or you'd
+rather pay per-token than via subscription:
+
+```bash
+# Append the API key to the env file the compose stack reads
+echo 'OPENAI_API_KEY=sk-proj-...' | sudo tee -a /opt/agenticos/.env
+
+# Switch provider in config
+sudo sed -i 's/provider: "openai-codex"/provider: "openai-api"/' \
+  /opt/agenticos/hermes-config/config.yaml
+
+# Restart so the new env + provider take effect
+cd /opt/agenticos && docker compose restart hermes-agent hermes-gateway
+```
+
+Key lives in 1Password under `AgenticOS Infra` → `openai_api_key` (project-scoped `sk-proj-...`).
+Dashboard's Cost tab will track daily / monthly per-token burn.
+
+### Switching to another provider entirely
+
+Hermes supports 40+ providers — Anthropic (Claude), Gemini, OpenRouter, Grok, DeepSeek, AWS
+Bedrock, Azure AI Foundry, local Ollama Cloud, and many more. Each is a `model.provider`
+change in `/opt/agenticos/hermes-config/config.yaml` plus the appropriate credential and a
+restart. See the [Hermes providers reference](https://hermes-agent.nousresearch.com/docs/integrations/providers)
+for the full list.
 
 ## Verify
 
@@ -245,7 +301,7 @@ open https://agenticos.gatheringatthegrove.com
 
 1. **Cloudflare Google IdP setup** — prereq §4 above. OAuth credentials require interactive consent.
 2. **Tailscale tagOwners ACL** — prereq §5 above. The Tailscale provider doesn't manage ACLs.
-3. **`claude /login`** — Anthropic's device-code OAuth flow requires a human.
+3. **Codex OAuth (or API-key fallback)** — kept out of Terraform state on purpose (subscription auth tokens and API secrets are long-running risks if persisted there). Run `hermes model` interactively post-bootstrap, or seed `OPENAI_API_KEY` into `/opt/agenticos/.env` if you've chosen the per-token path. See "The remaining manual step" above.
 4. **Syncthing pairing on Mac** — needs interactive device-ID exchange.
 
 (App Platform VPC attachment was previously manual but is now automated via
