@@ -55,6 +55,13 @@ export interface Detail {
   content?: string;
   offset?: number;
   limit?: number;
+  /**
+   * Total bytes available for this resource. `total_offset` is the canonical
+   * name from OpenViking v0.3.19's `/api/v1/content/read` response; `total`
+   * is kept as an alias for older fixtures. Pagination computes
+   * `hasNext = offset + limit < (total_offset ?? total ?? 0)`.
+   */
+  total_offset?: number;
   total?: number;
   [k: string]: unknown;
 }
