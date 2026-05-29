@@ -369,7 +369,7 @@ All cards share: `--surface` background, 1px `--border` edge, `rounded-lg` (10px
   - DONE → background `--success-bg`, border `--success-border`, text `--success`
   - FAILED → background `--error-bg`, border `--error-border`, text `--error`
   - AWAITING APPROVAL → background `--warning-bg`, border `--warning-border`, text `--warning`
-- **Model badge:** `code-inline` font, `--surface-muted` bg, `--text-muted` text — e.g., `claude-sonnet-4-6`
+- **Model badge:** `code-inline` font, `--surface-muted` bg, `--text-muted` text — e.g., `gpt-5-codex` or `qwen2.5:3b`
 - **Primary action:** appears on row hover (`[View]`, `[Cancel]`, or `[Approve]`). Approve uses `--accent-gold-400` outlined.
 - **Hover:** row bg shifts to `--surface-elevated`
 

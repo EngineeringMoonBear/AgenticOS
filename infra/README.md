@@ -1,8 +1,9 @@
 # AgenticOS Infrastructure (Terraform + cloud-init)
 
 This directory provisions the AgenticOS Foundation v2 MVP infrastructure end-to-end.
-After a successful `terraform apply`, exactly **one** manual step remains:
-SSH to the Droplet and run `claude /login` to complete the Claude Max OAuth device-code flow.
+After a successful `terraform apply`, one manual step remains:
+SSH to the Droplet and set your OpenAI API key in `/opt/agenticos/.env`
+so Hermes can reach the OpenAI Codex API for agent reasoning.
 
 ## What gets provisioned
 
@@ -23,7 +24,7 @@ SSH to the Droplet and run `claude /login` to complete the Claude Max OAuth devi
   - Docker Engine + Compose
   - Tailscale (joined with auth key, no browser interaction)
   - Syncthing (user-service for `deploy`, GUI exposed only on `tailscale0`)
-  - Node 22, pnpm 9.15.4, Claude Code CLI
+  - Node 22, pnpm 9.15.4, OpenAI Codex CLI (for headless `gpt-5-codex` invocations from Hermes skills)
   - Filesystem layout: `/opt/agenticos/repo`, `/opt/vault`, `/opt/backups`, `/etc/agenticos`
   - Repo cloned to `/opt/agenticos/repo`
   - AgenticOS docker-compose stack started (Hermes Agent + hermes-gateway + Ollama + Postgres) if `docker-compose.yml` exists in the repo
@@ -221,13 +222,30 @@ ssh -i ~/.ssh/agenticos-droplet root@$(terraform output -raw droplet_public_ip) 
 
 When you see `AgenticOS Droplet bootstrap complete.`, you're done with the automation.
 
-## The one remaining manual step
+## The remaining manual step — wire OpenAI Codex
+
+The Droplet boots with the docker-compose stack running, but Hermes needs your OpenAI API key
+to call Codex. Terraform deliberately doesn't put the key into state — set it manually:
 
 ```bash
 ssh -i ~/.ssh/agenticos-droplet deploy@$(terraform output -raw droplet_public_ip)
-claude /login        # opens a device-code URL — paste into your browser
-claude --print "hello"   # smoke test
+
+# Append the key to the env file the compose stack reads
+echo 'OPENAI_API_KEY=sk-proj-...' | sudo tee -a /opt/agenticos/.env
+
+# Restart Hermes so it picks up the new env
+cd /opt/agenticos && docker compose restart hermes-agent hermes-gateway
+
+# Smoke test — should print a Codex completion
+docker exec hermes-agent /opt/hermes/.venv/bin/hermes \
+  --print "Reply with exactly the word 'ready'."
 ```
+
+The key lives in 1Password under `AgenticOS Infra` → `openai_api_key` (project-scoped `sk-proj-...`).
+
+If you'd rather use Anthropic/Claude later, the runtime is provider-agnostic: change Hermes'
+`model.provider` in `/opt/agenticos/hermes-config/config.yaml` from `codex` to `anthropic`,
+add the appropriate env var, and restart — no other code changes needed.
 
 ## Verify
 
@@ -245,7 +263,7 @@ open https://agenticos.gatheringatthegrove.com
 
 1. **Cloudflare Google IdP setup** — prereq §4 above. OAuth credentials require interactive consent.
 2. **Tailscale tagOwners ACL** — prereq §5 above. The Tailscale provider doesn't manage ACLs.
-3. **`claude /login`** — Anthropic's device-code OAuth flow requires a human.
+3. **`OPENAI_API_KEY` in `/opt/agenticos/.env`** — kept out of Terraform state on purpose (secrets in Terraform state are a long-running risk). Set it manually post-bootstrap; see "The remaining manual step" above.
 4. **Syncthing pairing on Mac** — needs interactive device-ID exchange.
 
 (App Platform VPC attachment was previously manual but is now automated via
