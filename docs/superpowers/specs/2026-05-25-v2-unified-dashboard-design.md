@@ -32,7 +32,7 @@ This spec is a single coherent feature: extend the dashboard from "live-ops only
 
 | # | Question | Decision |
 |---|----------|----------|
-| 1 | Memory layer | **OpenViking** (volcengine/OpenViking), configured as Hermes' memory provider via its plugin system, so memory tools (`viking_remember`, `viking_recall`, `find`, `abstract`) are available to every agent session. Honcho is not used. mem0 is not used. |
+| 1 | Memory layer | **OpenViking** (volcengine/OpenViking), one of the [memory providers Hermes ships with](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory-providers). Set `memory.provider: openviking` in `config.yaml` and the agent's memory tools (`viking_remember`, `viking_recall`, `find`, `abstract`) are wired natively — no bespoke MCP plumbing. Honcho (also Hermes-shipped) is not used. mem0 (also Hermes-shipped) is not used. |
 | 2 | Human authoring layer | **Obsidian on Mac**, against a markdown vault. Obsidian is the long-term structure, taxonomy, and storage for *resources and finished skills*. Obsidian never runs on the Droplet. |
 | 3 | Vault ↔ Viking sync direction | **One-way ingestion**: vault → Viking. Auto-extracted memory stays in Viking and is surfaced via the dashboard's Memory tab. |
 | 4 | Ingestion cadence | **Hourly cron job**, run by Hermes (not a Node scheduler, not inotify). Hash-based dedup so unchanged files cost nothing. |
