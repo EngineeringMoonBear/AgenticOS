@@ -14,7 +14,7 @@ The architecture is intentionally a composition of best-in-class components rath
 
 - **Knowledge layer** — an Obsidian-format vault on disk. Markdown files, wiki links, taxonomies. The vault is canonical knowledge; Obsidian on the Mac is a read/write view of it via Syncthing — the Droplet never runs Obsidian itself.
 - **Memory layer** — [OpenViking](https://github.com/volcengine/OpenViking) (open-source context database by Volcengine / ByteDance) with filesystem-paradigm URIs (`viking://resources/…`, `viking://user/memories`, `viking://agent/skills`), L0/L1/L2 tiered loading, hybrid directory + semantic retrieval, and automatic memory extraction into 6 categories on session commit. OpenViking is one of the [memory providers Hermes ships with](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory-providers) — set `memory.provider: openviking` in `config.yaml` and the agent's memory tools (`viking_remember`, `viking_recall`, `find`, `abstract`, …) are wired natively. Viking runs on the Droplet alongside Hermes and uses local Ollama for its own embedding + summarization pipelines.
-- **Agent runtime** — [Hermes Agent](https://github.com/NousResearch/hermes-agent) (headless orchestrator), configured with **OpenAI Codex** as the primary reasoning provider (`gpt-5-codex` for heavy reasoning, `gpt-4o-mini` for Hermes-internal routing) + local Ollama SLMs for embeddings and lightweight inference. The reasoning provider is swappable via Hermes' `model.provider` config — Anthropic/Claude can drop in later if cost trade-offs warrant; we currently use Codex because its API is straightforward to wire and the per-token billing predicts cleanly.
+- **Agent runtime** — [Hermes Agent](https://github.com/NousResearch/hermes-agent) (headless orchestrator) driving an OpenAI reasoning model (`gpt-5-codex` for heavy reasoning, `gpt-4o-mini` for Hermes-internal routing) + local Ollama SLMs for embeddings and lightweight inference. Hermes' [model providers](https://hermes-agent.nousresearch.com/docs/) offers two OpenAI auth modes that we treat as interchangeable at the config layer: `provider: openai` (API key in `OPENAI_API_KEY`, per-token billing) — what we run today — and `provider: codex` (OAuth via ChatGPT Pro subscription, flat ~$20/mo, no per-token charges). Anthropic/Claude is a third drop-in option for if/when those cost models stop being competitive.
 - **Vault tools** — an MCP-to-vault server (in this repo, `apps/dashboard/lib/mcp-vault/`) exposing the vault to any MCP-capable agent.
 - **Dashboard** — Next.js 16 + shadcn/ui, deployed on DigitalOcean App Platform with auto-deploy on `push to main`.
 - **Auth** — Cloudflare Access (Google SSO) in front of the public dashboard URL.
@@ -116,9 +116,16 @@ Once v1 is implemented, you'll need:
 - A Mac with Obsidian for vault editing
 - A custom domain for the dashboard
 
-**Cost envelope: OpenAI Codex + DigitalOcean ≈ ~$80/mo.** Local Ollama (running on the Droplet) handles all embeddings + OpenViking's background pipelines (TreeBuilder, Compressor, IntentAnalyzer) — verified during Phase 1 against `nomic-embed-text` + `qwen2.5:3b` (4 GB RAM Droplet). The only paid AI surface is OpenAI Codex for heavy reasoning. The dashboard's Cost tab shows live burndown and month-end projection; a monthly cap is enforceable via the budget table.
+**Cost envelope today (`provider: openai` + API key): OpenAI tokens + DigitalOcean ≈ ~$80/mo.** Local Ollama (running on the Droplet) handles all embeddings + OpenViking's background pipelines (TreeBuilder, Compressor, IntentAnalyzer) — verified during Phase 1 against `nomic-embed-text` + `qwen2.5:3b` (4 GB RAM Droplet). The only paid AI surface is the OpenAI provider — `gpt-5-codex` for heavy reasoning, `gpt-4o-mini` for Hermes-internal routing. The dashboard's Cost tab shows live burndown and month-end projection; a monthly cap is enforceable via the budget table.
 
-**Future cost optimization** — Hermes' `model.provider` config supports drop-in replacement of OpenAI Codex with Anthropic/Claude (via Claude Code's Max OAuth — Anthropic's intended channel for programmatic Max use). When/if Claude Max becomes cheaper at our scale, the swap is a config change, not a code change.
+**Cost-optimization paths via Hermes config (no code change required):**
+
+| Switch to | Auth | Cost model | Trade-off |
+|---|---|---|---|
+| `provider: codex` | OAuth via ChatGPT Pro subscription | ~$20/mo flat | One-time browser OAuth per Droplet; no per-token bill; subscription fixed regardless of usage |
+| `provider: anthropic` | Claude Code's Max OAuth (Anthropic's intended channel for programmatic Max use) | ~$100/mo flat (Claude Max tier) | Higher fixed cost but a different model strain at scale |
+
+Each is a `model.provider` change in `/opt/agenticos/hermes-config/config.yaml` plus restarting Hermes — no code in this repo needs to move.
 
 ## Development
 
