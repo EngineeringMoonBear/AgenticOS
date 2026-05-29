@@ -5,6 +5,7 @@ import { KpiTile } from "./KpiTile";
 import { ActivityStripBackdrop } from "./backdrops/ActivityStripBackdrop";
 import { useRecentRunEvents } from "@/lib/hooks/use-recent-run-events";
 import { useRunsStats } from "@/lib/hooks/use-runs-stats";
+import { useNextCron } from "@/lib/hooks/use-next-cron";
 
 /**
  * Runs tab hero vista. Composes the {@link VistaShell} chrome with the
@@ -37,6 +38,24 @@ function formatDuration(seconds: number | null | undefined): string {
   return `${min}m ${sec.toString().padStart(2, "0")}s`;
 }
 
+/**
+ * "in 4m" / "in 1h 7m" / "in 5d 3h" — coarse, human-readable ETA used
+ * inside the "Next scheduled" tile's mono <span class="unit"> badge.
+ * For ETAs under a minute we say "now" — at that resolution Hermes is
+ * about to fire anyway.
+ */
+function formatEta(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 60) return "now";
+  const min = Math.floor(seconds / 60);
+  if (min < 60) return `in ${min}m`;
+  const hr = Math.floor(min / 60);
+  const rmin = min - hr * 60;
+  if (hr < 24) return rmin ? `in ${hr}h ${rmin}m` : `in ${hr}h`;
+  const day = Math.floor(hr / 24);
+  const rhr = hr - day * 24;
+  return rhr ? `in ${day}d ${rhr}h` : `in ${day}d`;
+}
+
 export function RunsVista() {
   // Pin `now` to mount time so the chart axis stays stable for the
   // lifetime of the page render. Refetched data drops into the same
@@ -45,10 +64,12 @@ export function RunsVista() {
 
   const eventsQuery = useRecentRunEvents(60);
   const statsQuery = useRunsStats();
+  const nextCronQuery = useNextCron();
 
   const events = eventsQuery.data ?? [];
   const stats = statsQuery.data;
   const statsLoaded = !!stats;
+  const nextCron = nextCronQuery.data;
 
   return (
     <VistaShell
@@ -80,9 +101,26 @@ export function RunsVista() {
         sublabel="p50 · last 24h"
       />
       <KpiTile
-        value={PLACEHOLDER}
+        value={
+          nextCron ? (
+            <>
+              {nextCron.name}
+              <span className="unit"> {formatEta(nextCron.etaSec)}</span>
+            </>
+          ) : nextCronQuery.isLoading ? (
+            PLACEHOLDER
+          ) : (
+            "—"
+          )
+        }
         label="next scheduled"
-        sublabel="cron source pending"
+        sublabel={
+          nextCron
+            ? `cron · ${nextCron.schedule}`
+            : nextCronQuery.isLoading
+              ? "loading…"
+              : "no registered crons"
+        }
       />
     </VistaShell>
   );
