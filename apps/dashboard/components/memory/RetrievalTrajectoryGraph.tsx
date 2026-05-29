@@ -78,7 +78,6 @@ export function RetrievalTrajectoryGraph({ uri }: RetrievalTrajectoryGraphProps)
               type="button"
               role="tab"
               aria-selected={isActive}
-              aria-pressed={isActive}
               data-selected={isActive ? "true" : undefined}
               onClick={() => setRangeIdx(idx)}
               className="rounded-md px-2 py-1 text-[12px] font-medium transition-colors"
@@ -134,15 +133,18 @@ export function RetrievalTrajectoryGraph({ uri }: RetrievalTrajectoryGraphProps)
           graph.nodes.length > 0 && (
             <ForceGraph2D
               graphData={{ nodes: graph.nodes, links: graph.links }}
-              nodeLabel={(n: GraphNodeLike) => `${n.kind}: ${n.label}`}
+              nodeLabel={(n: object) => {
+                const node = n as GraphNodeLike;
+                return `${node.kind}: ${node.label}`;
+              }}
               nodeRelSize={4}
-              nodeVal={(n: GraphNodeLike) => n.size ?? 1}
-              nodeColor={(n: GraphNodeLike) =>
-                KIND_COLORS[n.kind] ?? "#cbd5e1"
+              nodeVal={(n: object) => (n as GraphNodeLike).size ?? 1}
+              nodeColor={(n: object) =>
+                KIND_COLORS[(n as GraphNodeLike).kind] ?? "#cbd5e1"
               }
               linkColor={() => "rgba(255,255,255,0.25)"}
-              linkWidth={(l: GraphLinkLike) =>
-                Math.max(0.5, Math.min(3, l.weight))
+              linkWidth={(l: object) =>
+                Math.max(0.5, Math.min(3, (l as GraphLinkLike).weight))
               }
               backgroundColor="transparent"
             />
