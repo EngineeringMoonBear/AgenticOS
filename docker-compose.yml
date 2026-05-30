@@ -343,8 +343,10 @@ services:
       # Read-only — vault-server never writes through this path.
       - /opt/vault:/app/vault:ro
       # Syncthing config (read-only) — Phase E reads the API key from here
-      # to poll Syncthing's REST API for recent-changes.
-      - /home/deploy/.config/syncthing:/syncthing-config:ro
+      # to poll Syncthing's REST API for recent-changes. Path verified on the
+      # live Droplet: newer Syncthing stores config under XDG state, not
+      # ~/.config (config.xml lives at ~/.local/state/syncthing/config.xml).
+      - /home/deploy/.local/state/syncthing:/syncthing-config:ro
     environment:
       VAULT_ROOT: /app/vault
       PORT: 7777
