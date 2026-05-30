@@ -1,0 +1,46 @@
+# Build-context root ignore for docker build (repo root is the context).
+#
+# Docker honours the .dockerignore at the BUILD CONTEXT root, NOT the one
+# beside the Dockerfile (infra/vault-server/.dockerignore is only used if
+# that dir is the context). Without this file, `docker build -f
+# infra/vault-server/Dockerfile .` ships the ENTIRE monorepo — every
+# workspace's node_modules, .next, .turbo — as context, which is gigabytes
+# and makes the build crawl on "load build context".
+#
+# The vault-server Dockerfile runs its own `pnpm install` inside the build
+# stage, so host node_modules are never needed in the image. Exclude them.
+
+# Dependency + build output trees (large, regenerated in-container)
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/build
+**/out
+.pnpm-store
+
+# VCS + local tooling
+.git
+.github
+**/.vscode
+**/.idea
+
+# Tests + coverage (not needed at runtime)
+**/coverage
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+
+# Env + secrets (never bake into an image)
+**/.env
+**/.env.*
+!**/.env.example
+
+# OS + editor noise
+**/.DS_Store
+**/*.log
+
+# Docs + non-build assets that don't affect the vault-server image
+docs
+wireframes
+apps/dashboard/.next

@@ -303,6 +303,19 @@ open https://agenticos.gatheringatthegrove.com
 2. **Tailscale tagOwners ACL** — prereq §5 above. The Tailscale provider doesn't manage ACLs.
 3. **Codex OAuth (or API-key fallback)** — kept out of Terraform state on purpose (subscription auth tokens and API secrets are long-running risks if persisted there). Run `hermes model` interactively post-bootstrap, or seed `OPENAI_API_KEY` into `/opt/agenticos/.env` if you've chosen the per-token path. See "The remaining manual step" above.
 4. **Syncthing pairing on Mac** — needs interactive device-ID exchange.
+5. **UFW rules for VPC-bound services** — the docker-compose stack binds
+   Postgres (5432), OpenViking (1933), and vault-server (7779) on the
+   agenticos VPC interface (`10.10.0.5`) so App Platform can reach them.
+   UFW can't be set by Terraform on a running Droplet. Run once on the
+   Droplet after the stack is up:
+   ```bash
+   sudo ufw allow from 10.10.0.0/16 to any port 5432 proto tcp comment 'Postgres from VPC'
+   sudo ufw allow from 10.10.0.0/16 to any port 1933 proto tcp comment 'OpenViking from VPC'
+   sudo ufw allow from 10.10.0.0/16 to any port 7779 proto tcp comment 'vault-server from VPC'
+   sudo ufw status verbose | grep -E '5432|1933|7779'
+   ```
+   The VPC is private (`10.10.0.0/16`); these rules are defense-in-depth, not
+   the only thing keeping the ports off the public internet.
 
 (App Platform VPC attachment was previously manual but is now automated via
 `digitalocean_app.spec.vpc.id` in `app-platform.tf` — DO provider 2.5x+ supports it.)
