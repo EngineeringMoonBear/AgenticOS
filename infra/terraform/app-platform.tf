@@ -53,10 +53,56 @@ resource "digitalocean_app" "dashboard" {
         deploy_on_push = true
       }
 
+      # ---------------------------------------------------------------------
+      # Droplet-private endpoints. App Platform is attached to the same
+      # `digitalocean_vpc.agenticos` VPC (see the `vpc { ... }` block above),
+      # so the Droplet's `ipv4_address_private` (10.10.0.x in the agenticos
+      # VPC) is reachable as a Layer-3 destination from App Platform's
+      # container.
+      #
+      # For these to actually answer, the Droplet's docker-compose must bind
+      # the matching ports on the VPC interface (not 127.0.0.1). See the
+      # PR body and ops runbook for the matching docker-compose edit.
+      #
+      # Honcho was the v1 memory service; it was retired during the v2 pivot
+      # to OpenViking and no longer runs anywhere. The previous HONCHO_URL
+      # block has been removed.
+      # ---------------------------------------------------------------------
+
       env {
-        key   = "HONCHO_URL"
-        value = "http://${digitalocean_droplet.agenticos_droplet.ipv4_address_private}:8000"
-        scope = "RUN_AND_BUILD_TIME"
+        key   = "AGENTICOS_DB_URL"
+        value = "postgresql://agenticos:${var.agenticos_db_password}@${digitalocean_droplet.agenticos_droplet.ipv4_address_private}:5432/agenticos"
+        scope = "RUN_TIME"
+        type  = "SECRET"
+      }
+
+      env {
+        key   = "OPENVIKING_ENDPOINT"
+        value = "http://${digitalocean_droplet.agenticos_droplet.ipv4_address_private}:1933"
+        scope = "RUN_TIME"
+      }
+
+      env {
+        key   = "OPENVIKING_API_KEY"
+        value = var.openviking_root_api_key
+        scope = "RUN_TIME"
+        type  = "SECRET"
+      }
+
+      env {
+        # Tenant header sent on every Viking call (X-OpenViking-Account)
+        # via the dashboard's lib/api/viking.ts shim. Matches the value
+        # used by Hermes' OpenViking plugin in the Droplet's compose file.
+        key   = "OPENVIKING_ACCOUNT"
+        value = "agenticos"
+        scope = "RUN_TIME"
+      }
+
+      env {
+        # Tenant-user header for every Viking call (X-OpenViking-User).
+        key   = "OPENVIKING_USER"
+        value = "deploy"
+        scope = "RUN_TIME"
       }
 
       env {

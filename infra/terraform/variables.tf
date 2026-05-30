@@ -72,3 +72,27 @@ variable "github_branch" {
   type        = string
   default     = "main"
 }
+
+# ---------------------------------------------------------------------------
+# Secrets injected at apply time. Never committed.
+#
+# Both of these end up as `type = "SECRET"` env vars on the App Platform
+# spec, encrypted at rest by DigitalOcean. At apply time, source them from
+# 1Password:
+#
+#   TF_VAR_agenticos_db_password=$(op read "op://Goldberry Grove - Admin/AgenticOS Infra/agenticos_db_password") \
+#   TF_VAR_openviking_root_api_key=$(op read "op://Goldberry Grove - Admin/AgenticOS Infra/openviking_root_api_key") \
+#     terraform -chdir=infra/terraform apply
+# ---------------------------------------------------------------------------
+
+variable "agenticos_db_password" {
+  description = "Postgres password for the agenticos user. Must match what was set in /opt/agenticos/.env (POSTGRES_PASSWORD via AGENTICOS_DB_PASSWORD) at cloud-init time. Used to build the AGENTICOS_DB_URL env var on App Platform."
+  type        = string
+  sensitive   = true
+}
+
+variable "openviking_root_api_key" {
+  description = "OpenViking root API key. Must match OPENVIKING_ROOT_API_KEY in /opt/agenticos/.env on the Droplet. Used as OPENVIKING_API_KEY on App Platform (the name the Hermes plugin + dashboard client both expect)."
+  type        = string
+  sensitive   = true
+}
