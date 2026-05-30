@@ -309,12 +309,12 @@ open https://agenticos.gatheringatthegrove.com
    UFW can't be set by Terraform on a running Droplet. Run once on the
    Droplet after the stack is up:
    ```bash
-   sudo ufw allow from 10.10.0.0/16 to any port 5432 proto tcp comment 'Postgres from VPC'
-   sudo ufw allow from 10.10.0.0/16 to any port 1933 proto tcp comment 'OpenViking from VPC'
-   sudo ufw allow from 10.10.0.0/16 to any port 7779 proto tcp comment 'vault-server from VPC'
+   sudo ufw allow from 10.116.16.0/20 to any port 5432 proto tcp comment 'Postgres from VPC'
+   sudo ufw allow from 10.116.16.0/20 to any port 1933 proto tcp comment 'OpenViking from VPC'
+   sudo ufw allow from 10.116.16.0/20 to any port 7779 proto tcp comment 'vault-server from VPC'
    sudo ufw status verbose | grep -E '5432|1933|7779'
    ```
-   The VPC is private (`10.10.0.0/16`); these rules are defense-in-depth, not
+   The VPC is private (`10.116.16.0/20`); these rules are defense-in-depth, not
    the only thing keeping the ports off the public internet.
 
 (App Platform VPC attachment was previously manual but is now automated via
