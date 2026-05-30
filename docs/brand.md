@@ -1,9 +1,9 @@
 # AgenticOS — Brand & Visual Design System Spec
 
-**Product:** AgenticOS  
-**Brand Owner:** Goldberry Grove  
-**Primary Mode:** Dark (light mode secondary)  
-**Stack:** Next.js 15 App Router · TypeScript · Tailwind CSS · shadcn/ui · Radix primitives  
+**Product:** AgenticOS
+**Brand Owner:** Goldberry Grove
+**Primary Mode:** Dark (light mode secondary)
+**Stack:** Next.js 15 App Router · TypeScript · Tailwind CSS · shadcn/ui · Radix primitives
 **Version:** 1.0 — May 2026
 
 ---

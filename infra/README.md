@@ -43,9 +43,42 @@ ChatGPT for agent reasoning. (Hermes supports 40+ LLM providers; we currently us
 ### 1. Install tooling
 
 ```bash
-brew install terraform doctl   # doctl is optional, useful for CLI checks
-terraform version              # require >= 1.6
+brew install hashicorp/tap/terraform   # post-BSL canonical tap
+brew install doctl                     # optional, useful for CLI checks
+brew install pre-commit                # commit-time guard for the infra/ stack
+terraform version                      # require >= 1.6
 ```
+
+### 1a. Wire the pre-commit hooks
+
+Run once per fresh clone:
+
+```bash
+pre-commit install
+```
+
+This installs a git hook that runs `terraform fmt -check` + `terraform validate`
+against `infra/terraform/` whenever you stage a `.tf` or `.tpl` change. See
+the repo's [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) for the
+full hook list. The hooks catch fmt drift and `templatefile()` syntax errors
+at commit time rather than at the next `terraform apply` six months later.
+
+If `pre-commit install` complains about `core.hooksPath` already being set,
+unset it first (the value almost always shadows the default):
+
+```bash
+git config --unset core.hooksPath
+pre-commit install
+```
+
+To run the hooks against the whole tree on demand:
+
+```bash
+pre-commit run --all-files
+```
+
+Escape hatch for an emergency commit: `git commit --no-verify`. Use rarely
+and fix the offending file in the next commit.
 
 ### 2. Generate the SSH key
 
