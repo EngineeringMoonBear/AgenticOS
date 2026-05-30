@@ -350,6 +350,26 @@ Estimated total: ~31 hours, matching the original "20–30 hours over 2–3 week
 - It is **not** a vault editor. Obsidian is the vault editor.
 - It is **not** a public-facing app. Cloudflare Access remains a hard gate.
 
+## 14. Acceptance results
+
+Verification status for each §10 acceptance criterion. Automated checks
+run in CI on every PR + on every push to `main`; manual checks are
+verified post-deploy by an operator.
+
+| # | Criterion (§10) | Verification | Status |
+|---|-----------------|--------------|--------|
+| 1 | Hourly `vault-ingest` cron, ≥1 file ingested over 7 days | Post-deploy operator check: `psql -c "SELECT COUNT(*) FROM tasks WHERE kind='vault-ingest' AND status='done' AND started_at >= NOW() - INTERVAL '7 days'"` | manual / post-deploy |
+| 2 | Obsidian edit → Memory tab within ~75 min | Post-deploy manual smoke; log the time delta on first verification | manual / post-deploy |
+| 3 | No external API spend over the Spec 1 baseline | Post-deploy: compare `SELECT SUM(cost_cents) FROM calls WHERE provider='openai-codex'` over rolling 7d windows | manual / post-deploy |
+| 4 | Deep link to any tab ≤ 1500 ms P95 | **Production SLO** measured against the deployed `next start` build with CDN cache warm. CI runs a generous-budget smoke (see `apps/dashboard/e2e/dashboard-load.spec.ts`) but does not enforce the production SLA — Turbopack dev-mode latency is not representative. Post-deploy: synthetic monitor or one-shot `curl -w "%{time_total}"`. | hybrid (CI smoke + manual prod SLA) |
+| 5 | Memory tab drills 3 levels deep in all 4 scopes | Manual click-through during release verification | manual / post-deploy |
+| 6 | Trace usage force-graph for ≥1 URI ≥5 events | Manual + screenshot once Curator has accumulated retrieval history | manual / post-deploy |
+| 7 | Any one chip failing does not block the dashboard | `apps/dashboard/e2e/tab-isolation.spec.ts` — exercises three route-fault scenarios (Memory tree 502, Runs events 500, universal /api 500) | **automated (E2E)** |
+
+The first Playwright pass shipped in Phase 6. Adding new chips/tabs in
+future work should extend `e2e/tab-isolation.spec.ts` with a fault
+scenario for the new dependency.
+
 ---
 
 **End of design.**

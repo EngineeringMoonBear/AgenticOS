@@ -7,7 +7,12 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    setupFiles: ["./vitest.setup.ts"]
+    setupFiles: ["./vitest.setup.ts"],
+    // Playwright specs live under e2e/ and use @playwright/test, which
+    // calls test.describe() in a way Vitest's runner rejects. Keep them
+    // out of the unit run — the E2E workflow picks them up via the
+    // dedicated `playwright test` invocation instead.
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.next/**", "e2e/**"]
   },
   resolve: {
     alias: {
