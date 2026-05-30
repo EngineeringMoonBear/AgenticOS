@@ -1,0 +1,66 @@
+# Pre-commit hooks for AgenticOS.
+#
+# One-time install (per clone):
+#   brew install pre-commit
+#   pre-commit install
+#
+# Run manually against the whole tree:
+#   pre-commit run --all-files
+#
+# Skip on a specific commit (escape hatch — use rarely):
+#   git commit --no-verify
+#
+# The hooks here intentionally cover only what's NOT already gated by the
+# repo's CI workflows. CI runs Lint / Typecheck / Pytest / E2E / CodeQL /
+# Security on every PR — there's no value in duplicating those locally
+# (devs already feel them via `pnpm dev` / `pnpm test`). What CI DOESN'T
+# catch quickly is Terraform fmt drift and template-syntax errors in
+# infra/cloud-init/, both of which slip into PRs (see git blame on
+# infra/cloud-init/droplet-bootstrap.yaml.tpl:209 — a $OV_KEY shell var
+# that was unescaped for templatefile() lived in main for months because
+# no CI step ran `terraform validate`).
+
+repos:
+  # ────────────────────────────────────────────────────────────────────
+  # General hygiene — trim trailing whitespace, fix EOL, block junk.
+  # Fast (<1s), zero config, applies repo-wide.
+  # ────────────────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: check-yaml
+        # cloud-init templates use ${...} interpolation that PyYAML can't
+        # parse standalone. They get a separate gate via terraform_validate.
+        exclude: "^infra/cloud-init/.*\\.tpl$"
+
+  # ────────────────────────────────────────────────────────────────────
+  # Terraform: fmt + validate against the infra/terraform/ stack.
+  #
+  # `terraform_validate` rendering the cloud-init template via
+  # templatefile() is what catches the $OV_KEY-class of bug — the
+  # parser scans the entire raw bytes of the template, regardless of
+  # whether the offending $expression is inside a YAML comment.
+  # ────────────────────────────────────────────────────────────────────
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.99.0
+    hooks:
+      - id: terraform_fmt
+        # The hook auto-discovers .tf files in the staged set; the regex
+        # below scopes it to our infra/terraform/ directory only.
+        files: ^infra/terraform/.*\.tf$
+
+      - id: terraform_validate
+        files: ^infra/(terraform/.*\.tf|cloud-init/.*\.tpl)$
+        # Force validate to re-run when ANY .tpl changes too — otherwise
+        # a templatefile() consumer wouldn't re-evaluate when only the
+        # template moved. The args below tell the hook to invoke
+        # `terraform validate` at infra/terraform/ regardless of which
+        # specific file triggered the run.
+        args:
+          - --tf-init-args=-backend=false
+          - --tf-init-args=-input=false
