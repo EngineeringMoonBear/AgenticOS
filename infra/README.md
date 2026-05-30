@@ -305,7 +305,7 @@ open https://agenticos.gatheringatthegrove.com
 4. **Syncthing pairing on Mac** — needs interactive device-ID exchange.
 5. **UFW rules for VPC-bound services** — the docker-compose stack binds
    Postgres (5432), OpenViking (1933), and vault-server (7779) on the
-   agenticos VPC interface (`10.10.0.5`) so App Platform can reach them.
+   agenticos VPC interface (`10.116.16.2`) so App Platform can reach them.
    UFW can't be set by Terraform on a running Droplet. Run once on the
    Droplet after the stack is up:
    ```bash
