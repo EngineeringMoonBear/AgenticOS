@@ -305,16 +305,16 @@ open https://agenticos.gatheringatthegrove.com
 4. **Syncthing pairing on Mac** — needs interactive device-ID exchange.
 5. **UFW rules for VPC-bound services** — the docker-compose stack binds
    Postgres (5432), OpenViking (1933), and vault-server (7779) on the
-   agenticos VPC interface (`10.10.0.5`) so App Platform can reach them.
+   agenticos VPC interface (`10.116.16.2`) so App Platform can reach them.
    UFW can't be set by Terraform on a running Droplet. Run once on the
    Droplet after the stack is up:
    ```bash
-   sudo ufw allow from 10.10.0.0/16 to any port 5432 proto tcp comment 'Postgres from VPC'
-   sudo ufw allow from 10.10.0.0/16 to any port 1933 proto tcp comment 'OpenViking from VPC'
-   sudo ufw allow from 10.10.0.0/16 to any port 7779 proto tcp comment 'vault-server from VPC'
+   sudo ufw allow from 10.116.16.0/20 to any port 5432 proto tcp comment 'Postgres from VPC'
+   sudo ufw allow from 10.116.16.0/20 to any port 1933 proto tcp comment 'OpenViking from VPC'
+   sudo ufw allow from 10.116.16.0/20 to any port 7779 proto tcp comment 'vault-server from VPC'
    sudo ufw status verbose | grep -E '5432|1933|7779'
    ```
-   The VPC is private (`10.10.0.0/16`); these rules are defense-in-depth, not
+   The VPC is private (`10.116.16.0/20`); these rules are defense-in-depth, not
    the only thing keeping the ports off the public internet.
 
 (App Platform VPC attachment was previously manual but is now automated via
