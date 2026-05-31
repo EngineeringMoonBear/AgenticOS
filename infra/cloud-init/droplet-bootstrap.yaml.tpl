@@ -206,7 +206,14 @@ runcmd:
       # actual secret never lives in git.
       if [ -f /opt/agenticos/openviking-config/ov.conf ]; then
         OV_KEY=$(grep '^OPENVIKING_ROOT_API_KEY=' /opt/agenticos/.env | cut -d= -f2-)
-        sed -i "s|__OPENVIKING_ROOT_API_KEY__|${OV_KEY}|g" /opt/agenticos/openviking-config/ov.conf
+        # Double-dollar on the sed line escapes Terraform templatefile()
+        # interpolation so the bash variable reference survives into the
+        # rendered cloud-init for the shell to expand at boot. NOTE: do not
+        # write the dollar-brace OV_KEY token in these comments either —
+        # templatefile() scans the raw file bytes, comments included, and a
+        # bare reference makes terraform plan fail with "vars map does not
+        # contain key OV_KEY".
+        sed -i "s|__OPENVIKING_ROOT_API_KEY__|$${OV_KEY}|g" /opt/agenticos/openviking-config/ov.conf
       fi
       # --build so the locally-tagged overlay image (agenticos/hermes-agent:local)
       # is built from infra/docker/hermes-agent/Dockerfile on every fresh
