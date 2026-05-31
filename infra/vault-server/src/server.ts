@@ -2,6 +2,11 @@ import Fastify from "fastify";
 import { loadConfig } from "./config.js";
 import { registerHealthRoute } from "./routes/health.js";
 import { registerTreeRoute } from "./routes/tree.js";
+import { registerPageRoute } from "./routes/page.js";
+import { registerStatsRoute } from "./routes/stats.js";
+import { registerBacklinksRoute } from "./routes/backlinks.js";
+import { registerSearchRoute } from "./routes/search.js";
+import { registerInboxRoute } from "./routes/inbox.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -11,6 +16,11 @@ async function main(): Promise<void> {
 
   registerHealthRoute(app);
   registerTreeRoute(app, config);
+  registerPageRoute(app, config);
+  registerStatsRoute(app, config);
+  registerBacklinksRoute(app, config);
+  registerSearchRoute(app, config);
+  registerInboxRoute(app, config);
 
   await app.listen({ host: "0.0.0.0", port: config.port });
   app.log.info(`vault-server listening on :${config.port}`);
