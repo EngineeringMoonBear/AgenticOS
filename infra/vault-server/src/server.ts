@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { loadConfig } from "./config.js";
 import { registerHealthRoute } from "./routes/health.js";
+import { registerTreeRoute } from "./routes/tree.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -9,6 +10,7 @@ async function main(): Promise<void> {
   });
 
   registerHealthRoute(app);
+  registerTreeRoute(app, config);
 
   await app.listen({ host: "0.0.0.0", port: config.port });
   app.log.info(`vault-server listening on :${config.port}`);
