@@ -27,16 +27,16 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - agenticos-db-data:/var/lib/postgresql/data
-    # Bind on the agenticos VPC interface (10.10.0.5) so the dashboard on
+    # Bind on the agenticos VPC interface (10.116.16.2) so the dashboard on
     # DigitalOcean App Platform can reach Postgres over the private VPC.
     # Droplet-local consumers (Hermes, inbox-watcher) reach it via the
     # docker-compose network hostname `agenticos-db:5432`, not this host
-    # mapping. The VPC is private (10.10.0.0/16) and UFW gates :5432 to that
+    # mapping. The VPC is private (10.116.16.0/20) and UFW gates :5432 to that
     # range, so this is not a public exposure. (Was 127.0.0.1 under the v1
     # assumption that the dashboard ran on the Droplet; corrected when the
     # dashboard moved to App Platform — see the memory-vault-server spec.)
     ports:
-      - "10.10.0.5:5432:5432"
+      - "10.116.16.2:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agenticos -d agenticos"]
       interval: 5s
@@ -89,12 +89,12 @@ services:
     image: ghcr.io/volcengine/openviking:v0.3.19
     container_name: openviking
     restart: unless-stopped
-    # Bind on the agenticos VPC interface (10.10.0.5) so App Platform's
+    # Bind on the agenticos VPC interface (10.116.16.2) so App Platform's
     # dashboard can reach Viking over the private VPC. Hermes reaches it via
     # the compose-network hostname `openviking:1933`. UFW gates :1933 to
-    # 10.10.0.0/16. (Was 127.0.0.1 pre-App-Platform pivot.)
+    # 10.116.16.0/20. (Was 127.0.0.1 pre-App-Platform pivot.)
     ports:
-      - "10.10.0.5:1933:1933"
+      - "10.116.16.2:1933:1933"
     volumes:
       - /opt/vault:/app/vault
       - /opt/agenticos/openviking-config/ov.conf:/app/.openviking/ov.conf:ro
@@ -326,9 +326,9 @@ services:
   # tab reads THIS, not OpenViking (OpenViking is the agent's separate context
   # brain). Built from infra/vault-server/ (esbuild-bundled, single server.cjs).
   #
-  # Bound on the VPC interface 10.10.0.5:7779 (host) -> 7777 (container). Port
+  # Bound on the VPC interface 10.116.16.2:7779 (host) -> 7777 (container). Port
   # 7779 chosen because hermes-agent already owns 7777 on loopback. The
-  # dashboard reaches this via VAULT_SERVER_URL=http://10.10.0.5:7779.
+  # dashboard reaches this via VAULT_SERVER_URL=http://10.116.16.2:7779.
   # ---------------------------------------------------------------------------
   vault-server:
     build:
@@ -338,7 +338,7 @@ services:
     container_name: vault-server
     restart: unless-stopped
     ports:
-      - "10.10.0.5:7779:7777"
+      - "10.116.16.2:7779:7777"
     volumes:
       # Read-only — vault-server never writes through this path.
       - /opt/vault:/app/vault:ro
