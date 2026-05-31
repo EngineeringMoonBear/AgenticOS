@@ -45,5 +45,5 @@ export interface VaultStore {
   // --- Cache control ---
 
   revalidate(): Promise<void>;
-  stats(): VaultStats;
+  stats(): Promise<VaultStats>;
 }

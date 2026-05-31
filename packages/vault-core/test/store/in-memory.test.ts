@@ -237,11 +237,11 @@ describe("InMemoryVaultStore - discardInbox", () => {
 describe("InMemoryVaultStore - revalidate + stats", () => {
   it("bumps builtAt on revalidate", async () => {
     await store.revalidate();
-    const first = store.stats().builtAt;
+    const first = (await store.stats()).builtAt;
     // Small sleep to ensure timestamp difference
     await new Promise((r) => setTimeout(r, 10));
     await store.revalidate();
-    const second = store.stats().builtAt;
+    const second = (await store.stats()).builtAt;
     expect(second).toBeGreaterThan(first);
   });
 
@@ -249,6 +249,6 @@ describe("InMemoryVaultStore - revalidate + stats", () => {
     await writeWikiPage("PageOne.md", "# One");
     await writeWikiPage("PageTwo.md", "# Two");
     await store.revalidate();
-    expect(store.stats().pageCount).toBe(2);
+    expect((await store.stats()).pageCount).toBe(2);
   });
 });
