@@ -9,7 +9,7 @@ import { test, expect } from "@playwright/test";
  * labels) must still render and the *other* tabs must still be reachable.
  *
  * We exercise two representative failure modes:
- *   - Memory tab: `/api/memory/tree` 502 (Viking down) — the broadest
+ *   - Memory tab: `/api/vault/tree` 502 (vault-server down) — the broadest
  *     dependency the Memory page has.
  *   - Runs tab: `/api/tasks/recent-events` 500 — the chart's data source.
  *
@@ -19,14 +19,14 @@ import { test, expect } from "@playwright/test";
  */
 
 test.describe("tab isolation under API failure", () => {
-  test("Memory tab renders chrome when /api/memory/tree returns 502", async ({
+  test("Memory tab renders chrome when /api/vault/tree returns 502", async ({
     page,
   }) => {
-    await page.route("**/api/memory/tree*", (route) =>
+    await page.route("**/api/vault/tree*", (route) =>
       route.fulfill({
         status: 502,
         contentType: "application/json",
-        body: JSON.stringify({ error: "viking down" }),
+        body: JSON.stringify({ error: "vault-server down" }),
       }),
     );
 
