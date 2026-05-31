@@ -54,6 +54,7 @@ jobs:
             !dist
             !build
             !**/CHANGELOG.md
+            !**/test/fixtures
 
   gitleaks:
     name: gitleaks

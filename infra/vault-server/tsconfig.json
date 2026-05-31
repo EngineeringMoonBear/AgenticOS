@@ -1,8 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    // Bundler resolution (not NodeNext): vault-server is bundled by esbuild, and
+    // it consumes @agenticos/vault-core as raw TypeScript via workspace symlink.
+    // vault-core's source uses extension-less relative imports (it compiles under
+    // moduleResolution: "Bundler"); NodeNext would wrongly reject that valid
+    // source with TS2835. Matching Bundler here keeps the cross-package typecheck
+    // consistent with how the code is actually built.
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "lib": ["ES2022"],
     "strict": true,
     "esModuleInterop": true,
