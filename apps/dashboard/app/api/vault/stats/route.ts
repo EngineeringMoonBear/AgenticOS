@@ -4,7 +4,7 @@ import { getVaultStore } from "@/lib/vault/store-singleton";
 export async function GET(): Promise<NextResponse> {
   try {
     const store = await getVaultStore();
-    const vaultStats = store.stats();
+    const vaultStats = await store.stats();
     return NextResponse.json(vaultStats);
   } catch (err) {
     console.error("[GET /api/vault/stats]", err);

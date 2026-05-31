@@ -38,14 +38,14 @@ resource "digitalocean_app" "dashboard" {
       # which: (a) doesn't find pnpm-lock.yaml and falls back to npm, and
       # (b) npm doesn't understand pnpm's "workspace:*" dependency syntax.
       # The build_command then filters down to just the dashboard.
-      source_dir         = "/"
+      source_dir = "/"
       # --prod=false forces pnpm to install devDependencies even when
       # NODE_ENV=production is set somewhere upstream. Next.js builds need
       # @tailwindcss/postcss, TypeScript, @agenticos/tsconfig, etc. — all
       # devDeps. Without this flag pnpm skips them and the build fails with
       # "Cannot find module '@tailwindcss/postcss'" + tsconfig resolution errors.
-      build_command      = "pnpm install --frozen-lockfile --prod=false && pnpm --filter @agenticos/dashboard build"
-      run_command        = "pnpm --filter @agenticos/dashboard start"
+      build_command = "pnpm install --frozen-lockfile --prod=false && pnpm --filter @agenticos/dashboard build"
+      run_command   = "pnpm --filter @agenticos/dashboard start"
 
       github {
         repo           = var.github_repo
@@ -106,7 +106,15 @@ resource "digitalocean_app" "dashboard" {
       }
 
       env {
-        key   = "NODE_ENV"
+        # vault-server (Phase B) over the VPC. store-singleton.ts instantiates a
+        # RemoteVaultClient when this is set; absent locally -> local InMemoryVaultStore.
+        key   = "VAULT_SERVER_URL"
+        value = "http://${digitalocean_droplet.agenticos_droplet.ipv4_address_private}:7779"
+        scope = "RUN_TIME"
+      }
+
+      env {
+        key = "NODE_ENV"
         # RUN_TIME scope only — NOT RUN_AND_BUILD_TIME. At BUILD time we
         # need devDependencies (TS, postcss plugins, workspace tsconfig)
         # which pnpm skips when NODE_ENV=production is set during install.

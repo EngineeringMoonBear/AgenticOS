@@ -5,10 +5,10 @@ import { getStore } from "../lib/vault-store.js";
 export function registerStatsRoute(app: FastifyInstance, config: Config): void {
   app.get("/stats", async () => {
     const store = getStore(config);
-    // stats() is synchronous and reads the in-memory index directly; it reports
-    // pageCount 0 until the index has been built at least once. Trigger a build
-    // (cheap + TTL-cached) so the endpoint always returns real counts.
+    // stats() reads the in-memory index directly; it reports pageCount 0 until
+    // the index has been built at least once. Trigger a build (cheap +
+    // TTL-cached) so the endpoint always returns real counts.
     await store.list();
-    return store.stats();
+    return await store.stats();
   });
 }

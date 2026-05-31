@@ -401,7 +401,7 @@ export class InMemoryVaultStore implements VaultStore {
     await fs.unlink(abs);
   }
 
-  stats(): VaultStats {
+  async stats(): Promise<VaultStats> {
     return {
       pageCount: this.index?.pages.size ?? 0,
       builtAt: this.index?.builtAt ?? 0,
