@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/server.cjs",
   "scripts": {
-    "build": "esbuild src/server.ts --bundle --platform=node --format=cjs --target=node22 --outfile=dist/server.cjs",
+    "build": "esbuild src/server.ts --bundle --platform=node --format=cjs --target=node22 --alias:server-only=./shims/server-only.js --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "dev": "tsx watch src/server.ts",
     "test": "vitest run",
