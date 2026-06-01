@@ -1,0 +1,95 @@
+name: Deploy Droplet
+
+# Auto-deploys the Droplet-side vault-server on push to main when its source
+# or the root docker-compose.yml changes. App Platform already auto-deploys the
+# dashboard; this closes the gap for the stateful Droplet services, which until
+# now were deployed by hand.
+#
+# Deploy mechanism mirrors the proven manual reconcile: ship the committed tree
+# with `git archive | ssh tar` (extract is additive, so Droplet-only files like
+# .env and hermes-config/ are preserved), then rebuild + restart only the
+# changed service. /opt/agenticos is an rsync/tarball snapshot, NOT a git
+# checkout — so we do not `git pull` on the Droplet.
+#
+# Future: extend the path filter to hermes-* services when Hermes lands.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/vault-server/**'
+      - 'packages/vault-core/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/deploy-droplet.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never run two Droplet deploys at once; let an in-flight deploy finish rather
+# than cancelling it mid-rebuild.
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy vault-server
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.DROPLET_SSH_KEY }}
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Ship committed tree to Droplet
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+        run: |
+          # Additive tar extract: overwrites tracked files, never deletes
+          # Droplet-only files (.env, hermes-config/). Untracked WIP can't leak
+          # because git archive emits only the committed tree.
+          git archive --format=tar HEAD | gzip | \
+            ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" \
+              'tar xzf - -C /opt/agenticos && echo "synced $(git --version >/dev/null 2>&1; echo ok)"'
+
+      - name: Rebuild + restart vault-server
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+        run: |
+          # `deploy` is in the docker group — no sudo (sudo would block on a
+          # password prompt and hang the job).
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" \
+            'set -euo pipefail
+             cd /opt/agenticos
+             docker compose build vault-server
+             docker compose up -d vault-server
+             docker compose ps vault-server'
+
+      - name: Health check
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+        run: |
+          # vault-server is published on the VPC IP 10.116.16.2:7779 (NOT the
+          # unreachable eth0 10.10.0.5). Checked from inside the Droplet, where
+          # the VPC interface is reachable. Retry briefly while it boots.
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" '
+            for i in 1 2 3 4 5; do
+              if curl -fsS --max-time 5 http://10.116.16.2:7779/health | grep -q "\"ok\":true"; then
+                echo "vault-server healthy"; exit 0
+              fi
+              echo "waiting for vault-server ($i)..."; sleep 3
+            done
+            echo "vault-server did not report healthy"; exit 1'
