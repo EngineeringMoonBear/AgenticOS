@@ -13,6 +13,7 @@ export function getStore(config: Config): InMemoryVaultStore {
   cached = new InMemoryVaultStore({
     vaultRoot: config.vaultRoot,
     ttlMs: 30_000,
+    wikiSubdir: config.wikiSubdir,
   });
   return cached;
 }
