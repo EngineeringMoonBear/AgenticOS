@@ -350,11 +350,12 @@ services:
     environment:
       VAULT_ROOT: /app/vault
       PORT: 7777
-      # The paired Obsidian vault keeps pages at the root (farming/, root notes)
-      # rather than under a wiki/ folder, so the page root IS the vault root.
-      # Empty string (honored via `??`) selects root mode; inbox/ + dotfolders
-      # are still excluded. Unset would default to "wiki".
-      WIKI_SUBDIR: ""
+      # The Syncthing-paired Obsidian vault (synced to /opt/vault) organizes
+      # curated pages under wiki/<category> per the vault's CLAUDE.md charter,
+      # with inbox/ (quarantine capture) and sources/ (raw inputs) as siblings.
+      # So the wiki page root is wiki/ — the store's default. inbox/ is read
+      # separately; sources/ and dotfolders stay out of the curated page tree.
+      WIKI_SUBDIR: "wiki"
       # Syncthing URL/key wired in Phase E. Empty is fine — config tolerates undefined.
       SYNCTHING_URL: ""
       SYNCTHING_API_KEY: ""
