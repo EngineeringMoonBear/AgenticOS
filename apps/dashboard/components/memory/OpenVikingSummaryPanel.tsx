@@ -1,20 +1,9 @@
 "use client";
-import { useQuery } from "@tanstack/react-query";
 
 import { BarRow } from "@/components/ui/BarRow";
 import { Card, CardAction, CardHead, CardTitle } from "@/components/ui/Card";
-
-interface ScopeEntry {
-  name: string;
-  scope: string;
-  count: number;
-  fill_percent: number;
-}
-
-interface MemoryScopesData {
-  total: number;
-  scopes: ScopeEntry[];
-}
+import { useVikingHealth } from "@/lib/hooks/use-viking-health";
+import { useVikingScopes } from "@/lib/hooks/use-viking-scopes";
 
 const DbIcon = (
   <svg
@@ -32,42 +21,43 @@ const DbIcon = (
   </svg>
 );
 
-function useMemoryScopes() {
-  return useQuery<MemoryScopesData>({
-    queryKey: ["memory", "scopes"],
-    queryFn: async () => {
-      const res = await fetch("/api/memory/scopes");
-      if (!res.ok) throw new Error("failed");
-      return res.json();
-    },
-    refetchInterval: 60_000,
-  });
-}
-
 export function OpenVikingSummaryPanel() {
-  const { data, isLoading } = useMemoryScopes();
+  const health = useVikingHealth();
+  const scopes = useVikingScopes();
+
+  const isLoading = health.isLoading || scopes.isLoading;
+  const reachable = Boolean(health.data?.reachable || scopes.data?.reachable);
+  const total = scopes.data?.total ?? 0;
+  const scopeEntries = scopes.data ? Object.entries(scopes.data.scopes) : [];
 
   return (
     <Card lane="pine">
       <CardHead>
         <CardTitle icon={DbIcon}>OpenViking</CardTitle>
         <CardAction>
-          {data ? `${data.total.toLocaleString()} total` : "—"}
+          {!reachable ? "offline" : `${total.toLocaleString()} total`}
         </CardAction>
       </CardHead>
-      {isLoading || !data ? (
+      {isLoading ? (
         <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
           Loading…
         </div>
+      ) : !reachable ? (
+        <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
+          OpenViking unreachable.
+        </div>
+      ) : scopeEntries.length === 0 ? (
+        <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
+          No memories indexed yet.
+        </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {data.scopes.map((s) => (
+          {scopeEntries.map(([scope, count]) => (
             <BarRow
-              key={s.scope}
-              name={s.name}
-              scope={s.scope}
-              fillPercent={s.fill_percent}
-              count={s.count.toLocaleString()}
+              key={scope}
+              name={scope}
+              fillPercent={total > 0 ? (count / total) * 100 : 0}
+              count={count.toLocaleString()}
             />
           ))}
         </div>

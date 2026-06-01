@@ -5,17 +5,17 @@ import { Card, CardAction, CardHead, CardTitle } from "@/components/ui/Card";
 import { Pill } from "@/components/ui/Pill";
 import { Row, RowList } from "@/components/ui/Row";
 
-type VaultChangeKind = "updated" | "created";
+type VaultChangeKind = "updated" | "created" | "deleted";
 
 interface VaultChange {
   path: string;
   kind: VaultChangeKind;
-  time_label: string;
+  occurredAt: string;
 }
 
 interface VaultRecentChangesData {
   source: string;
-  checked_at: string;
+  available: boolean;
   changes: VaultChange[];
 }
 
@@ -44,7 +44,9 @@ function formatAge(iso: string | undefined): string {
   const m = Math.floor(sec / 60);
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
-  return `${h}h ago`;
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  return `${days}d ago`;
 }
 
 function useVaultRecentChanges() {
@@ -62,7 +64,9 @@ function useVaultRecentChanges() {
 export function RecentVaultChangesPanel() {
   const { data, isLoading } = useVaultRecentChanges();
   const action = data
-    ? `${data.source} · ${formatAge(data.checked_at)}`
+    ? data.available
+      ? `${data.source} · live`
+      : `${data.source} · offline`
     : "syncthing";
 
   return (
@@ -75,11 +79,19 @@ export function RecentVaultChangesPanel() {
         <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
           Loading…
         </div>
+      ) : !data.available ? (
+        <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
+          Syncthing offline — no recent changes available.
+        </div>
+      ) : data.changes.length === 0 ? (
+        <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
+          No recent vault changes.
+        </div>
       ) : (
         <RowList>
           {data.changes.map((c) => (
             <Row
-              key={c.path}
+              key={`${c.path}:${c.occurredAt}`}
               style={{ gridTemplateColumns: "auto 1fr auto", gap: 8 }}
             >
               <Pill
@@ -104,7 +116,7 @@ export function RecentVaultChangesPanel() {
                   color: "var(--parchment-faint)",
                 }}
               >
-                {c.time_label}
+                {formatAge(c.occurredAt)}
               </span>
             </Row>
           ))}

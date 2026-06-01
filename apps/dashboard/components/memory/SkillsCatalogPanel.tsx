@@ -1,19 +1,8 @@
 "use client";
-import { useQuery } from "@tanstack/react-query";
 
 import { Card, CardAction, CardHead, CardTitle } from "@/components/ui/Card";
 import { Row, RowList } from "@/components/ui/Row";
-
-interface SkillEntry {
-  name: string;
-  used_by: string;
-  invocations: number;
-}
-
-interface SkillsCatalogData {
-  total_registered: number;
-  skills: SkillEntry[];
-}
+import { useVaultSkills } from "@/lib/vault/hooks/use-vault-skills";
 
 const BookIcon = (
   <svg
@@ -32,54 +21,57 @@ const BookIcon = (
   </svg>
 );
 
-function useSkillsCatalog() {
-  return useQuery<SkillsCatalogData>({
-    queryKey: ["memory", "skills"],
-    queryFn: async () => {
-      const res = await fetch("/api/memory/skills");
-      if (!res.ok) throw new Error("failed");
-      return res.json();
-    },
-    refetchInterval: 5 * 60_000,
-  });
-}
-
 export function SkillsCatalogPanel() {
-  const { data, isLoading } = useSkillsCatalog();
+  const { data, isLoading, isError } = useVaultSkills();
 
   return (
     <Card lane="gold">
       <CardHead>
         <CardTitle icon={BookIcon}>Skills catalog</CardTitle>
         <CardAction>
-          {data ? `${data.total_registered} registered` : "—"}
+          {data ? `${data.totalRegistered} registered` : "—"}
         </CardAction>
       </CardHead>
-      {isLoading || !data ? (
+      {isLoading ? (
         <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
           Loading…
+        </div>
+      ) : isError || !data ? (
+        <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
+          Skills catalog unavailable.
+        </div>
+      ) : data.skills.length === 0 ? (
+        <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
+          No skills registered.
         </div>
       ) : (
         <RowList>
           {data.skills.map((s) => (
             <Row
-              key={s.name}
-              style={{ gridTemplateColumns: "1fr auto", gap: 8 }}
+              key={s.path}
+              style={{ gridTemplateColumns: "1fr", gap: 4 }}
             >
               <div>
                 <div className="label-strong" style={{ fontSize: 12.5 }}>
                   {s.name}
                 </div>
-                <div
-                  className="meta"
-                  style={{ fontFamily: "var(--mono)", fontSize: 10.5 }}
-                >
-                  {s.used_by}
-                </div>
+                {s.description && (
+                  <div
+                    className="meta"
+                    style={{ fontSize: 11, color: "var(--parchment-muted)" }}
+                  >
+                    {s.description}
+                  </div>
+                )}
+                {s.usedBy.length > 0 && (
+                  <div
+                    className="meta"
+                    style={{ fontFamily: "var(--mono)", fontSize: 10.5 }}
+                  >
+                    used by {s.usedBy.join(" · ")}
+                  </div>
+                )}
               </div>
-              <span className="num" style={{ fontSize: 13 }}>
-                {s.invocations}
-              </span>
             </Row>
           ))}
         </RowList>
