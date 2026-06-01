@@ -8,6 +8,7 @@ import { registerBacklinksRoute } from "./routes/backlinks.js";
 import { registerSearchRoute } from "./routes/search.js";
 import { registerInboxRoute } from "./routes/inbox.js";
 import { registerRecentChangesRoute } from "./routes/recent-changes.js";
+import { registerSkillsRoute } from "./routes/skills.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -23,6 +24,7 @@ async function main(): Promise<void> {
   registerSearchRoute(app, config);
   registerInboxRoute(app, config);
   registerRecentChangesRoute(app, config);
+  registerSkillsRoute(app, config);
 
   await app.listen({ host: "0.0.0.0", port: config.port });
   app.log.info(`vault-server listening on :${config.port}`);
