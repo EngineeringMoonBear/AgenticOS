@@ -145,62 +145,10 @@ export function MemoryTree({ selectedPath, onSelect }: MemoryTreeProps) {
         borderColor: "var(--border-subtle)",
       }}
     >
-      {/* Wiki tree section */}
-      <div className="px-2 pt-3 pb-1">
-        <p
-          className="px-2 py-1 text-[11px] font-medium tracking-widest uppercase"
-          style={{ color: "var(--text-muted)" }}
-        >
-          Wiki
-        </p>
-      </div>
-
-      <nav className="flex-1 px-2 pb-2" aria-label="Wiki pages">
-        <ul role="tree" aria-label="Wiki page tree">
-        {isLoading && (
-          <div className="flex items-center gap-2 px-2 py-3">
-            <Loader2 size={14} className="animate-spin" style={{ color: "var(--text-muted)" }} />
-            <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>
-              Loading…
-            </span>
-          </div>
-        )}
-
-        {isError && (
-          <div className="flex items-center gap-2 px-2 py-3">
-            <AlertCircle size={14} style={{ color: "var(--error)" }} />
-            <span className="text-[12px]" style={{ color: "var(--error)" }}>
-              Failed to load vault
-            </span>
-          </div>
-        )}
-
-        {!isLoading &&
-          !isError &&
-          rootChildren.map((child) => (
-            <TreeFolderNode
-              key={child.path}
-              node={child}
-              selectedPath={selectedPath}
-              onSelect={onSelect}
-              activeTags={activeTags}
-              depth={0}
-            />
-          ))}
-
-        {!isLoading && !isError && rootChildren.length === 0 && (
-          <li role="treeitem" className="px-2 py-2 text-[13px]" style={{ color: "var(--text-muted)" }}>
-            No pages found.
-          </li>
-        )}
-        </ul>
-      </nav>
-
-      {/* Divider */}
-      <div className="mx-3 border-t" style={{ borderColor: "var(--border-subtle)" }} />
-
-      {/* Inbox section */}
-      <div className="px-2 py-2">
+      {/* Inbox section — the human validation gate. Sits ABOVE the wiki so
+          captures are the first thing you review before they're promoted into
+          the curated archive below. Promote/discard wiring lands in Phase 2 T5. */}
+      <div className="px-2 pt-3 pb-2">
         <button
           type="button"
           onClick={() => setInboxOpen((v) => !v)}
@@ -252,6 +200,60 @@ export function MemoryTree({ selectedPath, onSelect }: MemoryTreeProps) {
           </div>
         )}
       </div>
+
+      {/* Divider */}
+      <div className="mx-3 border-t" style={{ borderColor: "var(--border-subtle)" }} />
+
+      {/* Wiki tree section */}
+      <div className="px-2 pt-3 pb-1">
+        <p
+          className="px-2 py-1 text-[11px] font-medium tracking-widest uppercase"
+          style={{ color: "var(--text-muted)" }}
+        >
+          Wiki
+        </p>
+      </div>
+
+      <nav className="flex-1 px-2 pb-2" aria-label="Wiki pages">
+        <ul role="tree" aria-label="Wiki page tree">
+        {isLoading && (
+          <div className="flex items-center gap-2 px-2 py-3">
+            <Loader2 size={14} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+            <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+              Loading…
+            </span>
+          </div>
+        )}
+
+        {isError && (
+          <div className="flex items-center gap-2 px-2 py-3">
+            <AlertCircle size={14} style={{ color: "var(--error)" }} />
+            <span className="text-[12px]" style={{ color: "var(--error)" }}>
+              Failed to load vault
+            </span>
+          </div>
+        )}
+
+        {!isLoading &&
+          !isError &&
+          rootChildren.map((child) => (
+            <TreeFolderNode
+              key={child.path}
+              node={child}
+              selectedPath={selectedPath}
+              onSelect={onSelect}
+              activeTags={activeTags}
+              depth={0}
+            />
+          ))}
+
+        {!isLoading && !isError && rootChildren.length === 0 && (
+          <li role="treeitem" className="px-2 py-2 text-[13px]" style={{ color: "var(--text-muted)" }}>
+            No pages found.
+          </li>
+        )}
+        </ul>
+      </nav>
     </aside>
   );
 }
