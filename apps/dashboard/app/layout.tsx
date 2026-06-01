@@ -22,7 +22,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AgenticOS",
+  title: { default: "AgenticOS", template: "%s — AgenticOS" },
   description: "AI agent orchestration dashboard",
 };
 
@@ -37,11 +37,14 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col" style={{ backgroundColor: "var(--bg)", color: "var(--text)" }}>
+        <a href="#main-content" className="skip-to-content">
+          Skip to main content
+        </a>
         <Suspense>
           <NuqsAdapter>
             <QueryProvider>
               <SharedHeader />
-              <main className="flex-1 flex flex-col">
+              <main id="main-content" className="flex-1 flex flex-col">
                 {children}
               </main>
               <Toaster position="bottom-right" />

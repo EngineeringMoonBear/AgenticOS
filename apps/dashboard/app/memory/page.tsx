@@ -10,7 +10,6 @@ import { MemoryRail } from "@/components/memory/MemoryRail";
 import { MemorySyncIndicator } from "@/components/memory/MemorySyncIndicator";
 import { InboxQueue } from "@/components/memory/InboxQueue";
 import { GraphCanvas } from "@/components/memory/GraphCanvas";
-import type { Metadata } from "next";
 
 export default function MemoryPage() {
   const [selectedPath, setSelectedPath] = useQueryState(

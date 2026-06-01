@@ -42,7 +42,7 @@ function TreeFolderNode({
   if (node.kind === "page") {
     const isSelected = selectedPath === node.path;
     return (
-      <li key={node.path}>
+      <li role="treeitem" aria-selected={isSelected}>
         <button
           type="button"
           onClick={() => onSelect(node.path)}
@@ -76,10 +76,11 @@ function TreeFolderNode({
   const children = node.children ?? [];
 
   return (
-    <div>
+    <li role="treeitem" aria-expanded={isOpen}>
       <button
         type="button"
         onClick={() => setIsOpen((v) => !v)}
+        aria-expanded={isOpen}
         className="flex items-center gap-1.5 w-full rounded-md px-2 py-1.5 text-left transition-colors"
         style={{
           color: "var(--text-secondary)",
@@ -106,7 +107,7 @@ function TreeFolderNode({
       </button>
 
       {isOpen && (
-        <ul className="ml-3 border-l pl-2" style={{ borderColor: "var(--border-subtle)" }}>
+        <ul role="group" className="ml-3 border-l pl-2" style={{ borderColor: "var(--border-subtle)" }}>
           {children.map((child) => (
             <TreeFolderNode
               key={child.path}
@@ -118,13 +119,13 @@ function TreeFolderNode({
             />
           ))}
           {children.length === 0 && (
-            <li className="px-2 py-1 text-[12px]" style={{ color: "var(--text-muted)" }}>
+            <li role="treeitem" className="px-2 py-1 text-[12px]" style={{ color: "var(--text-muted)" }}>
               Empty folder
             </li>
           )}
         </ul>
       )}
-    </div>
+    </li>
   );
 }
 
@@ -155,6 +156,7 @@ export function MemoryTree({ selectedPath, onSelect }: MemoryTreeProps) {
       </div>
 
       <nav className="flex-1 px-2 pb-2" aria-label="Wiki pages">
+        <ul role="tree" aria-label="Wiki page tree">
         {isLoading && (
           <div className="flex items-center gap-2 px-2 py-3">
             <Loader2 size={14} className="animate-spin" style={{ color: "var(--text-muted)" }} />
@@ -187,10 +189,11 @@ export function MemoryTree({ selectedPath, onSelect }: MemoryTreeProps) {
           ))}
 
         {!isLoading && !isError && rootChildren.length === 0 && (
-          <p className="px-2 py-2 text-[13px]" style={{ color: "var(--text-muted)" }}>
+          <li role="treeitem" className="px-2 py-2 text-[13px]" style={{ color: "var(--text-muted)" }}>
             No pages found.
-          </p>
+          </li>
         )}
+        </ul>
       </nav>
 
       {/* Divider */}
@@ -201,6 +204,7 @@ export function MemoryTree({ selectedPath, onSelect }: MemoryTreeProps) {
         <button
           type="button"
           onClick={() => setInboxOpen((v) => !v)}
+          aria-expanded={inboxOpen}
           className="flex items-center gap-1.5 w-full rounded-md px-2 py-1.5 text-left transition-colors"
           style={{
             color: "var(--text-secondary)",
