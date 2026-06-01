@@ -339,6 +339,10 @@ services:
     restart: unless-stopped
     ports:
       - "10.116.16.2:7779:7777"
+    extra_hosts:
+      # Lets the container resolve the Droplet host, where Syncthing's REST API
+      # listens on 0.0.0.0:8384, for the /recent-changes endpoint.
+      - "host.docker.internal:host-gateway"
     volumes:
       # Read-only — vault-server never writes through this path.
       - /opt/vault:/app/vault:ro
@@ -356,9 +360,25 @@ services:
       # So the wiki page root is wiki/ — the store's default. inbox/ is read
       # separately; sources/ and dotfolders stay out of the curated page tree.
       WIKI_SUBDIR: "wiki"
-      # Syncthing URL/key wired in Phase E. Empty is fine — config tolerates undefined.
-      SYNCTHING_URL: ""
+      # Syncthing REST for /recent-changes. The container reaches the host's
+      # Syncthing (bound 0.0.0.0:8384) via host.docker.internal (see extra_hosts).
+      # The API key is injected by the entrypoint below from the bind-mounted
+      # config.xml. An unreachable Syncthing degrades /recent-changes to
+      # {available:false} rather than erroring.
+      SYNCTHING_URL: "http://host.docker.internal:8384"
       SYNCTHING_API_KEY: ""
+    # Extract the Syncthing API key from the read-only config mount at startup,
+    # then launch the bundled server (server.cjs lives at WORKDIR /app). The $$
+    # escapes the $ so the container shell — not compose at parse time —
+    # evaluates the subshell. grep -oP is available in the node:22-slim runtime.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -f /syncthing-config/config.xml ]; then
+          export SYNCTHING_API_KEY="$$(grep -oP '(?<=<apikey>)[^<]+' /syncthing-config/config.xml | head -1)"
+        fi
+        exec node server.cjs
     healthcheck:
       # Node 22 has global fetch; the bundled image ships no curl. Hits the
       # container-internal port 7777 (not the 7779 host mapping).
