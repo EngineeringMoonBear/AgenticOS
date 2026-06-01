@@ -13,28 +13,28 @@ function renderWithClient(ui: React.ReactNode) {
 }
 
 describe("RecentVaultChangesPanel", () => {
-  beforeEach(() => {
-    vi.spyOn(global, "fetch").mockImplementation(async () => {
-      return new Response(
-        JSON.stringify({
-          source: "syncthing",
-          checked_at: new Date().toISOString(),
-          changes: [
-            { path: "farming/pasture-management/rotation.md", kind: "updated", time_label: "13:45" },
-            { path: "farming/soil-health/ph-zones.md", kind: "created", time_label: "11:20" },
-            { path: "farming/forage/winter-stockpile.md", kind: "updated", time_label: "09:15" },
-            { path: "dev/code-review-style.md", kind: "updated", time_label: "yesterday" },
-          ],
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    });
-  });
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it("renders vault changes with file paths and kind pills", async () => {
+    const now = new Date().toISOString();
+    vi.spyOn(global, "fetch").mockImplementation(async () => {
+      return new Response(
+        JSON.stringify({
+          source: "syncthing",
+          available: true,
+          changes: [
+            { path: "farming/pasture-management/rotation.md", kind: "updated", occurredAt: now },
+            { path: "farming/soil-health/ph-zones.md", kind: "created", occurredAt: now },
+            { path: "farming/forage/winter-stockpile.md", kind: "updated", occurredAt: now },
+            { path: "dev/code-review-style.md", kind: "updated", occurredAt: now },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+
     renderWithClient(<RecentVaultChangesPanel />);
     await waitFor(() => {
       expect(screen.getByText("Recent vault changes")).toBeInTheDocument();
@@ -42,8 +42,22 @@ describe("RecentVaultChangesPanel", () => {
       expect(screen.getByText("farming/soil-health/ph-zones.md")).toBeInTheDocument();
       expect(screen.getByText("created")).toBeInTheDocument();
       expect(screen.getAllByText("updated").length).toBeGreaterThanOrEqual(3);
-      expect(screen.getByText("13:45")).toBeInTheDocument();
-      expect(screen.getByText("yesterday")).toBeInTheDocument();
+      expect(screen.getByText("syncthing · live")).toBeInTheDocument();
+    });
+  });
+
+  it("renders an offline state when syncthing is unavailable", async () => {
+    vi.spyOn(global, "fetch").mockImplementation(async () => {
+      return new Response(
+        JSON.stringify({ source: "syncthing", available: false, changes: [] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+
+    renderWithClient(<RecentVaultChangesPanel />);
+    await waitFor(() => {
+      expect(screen.getByText(/Syncthing offline/)).toBeInTheDocument();
+      expect(screen.getByText("syncthing · offline")).toBeInTheDocument();
     });
   });
 });
