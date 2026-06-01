@@ -10,9 +10,11 @@ export interface Config {
   /**
    * Subdirectory under the vault root holding wiki pages (default `"wiki"`).
    * Set `WIKI_SUBDIR=""` when the paired Obsidian vault keeps pages at the
-   * root (e.g. `farming/…`) rather than under a `wiki/` folder.
+   * root (e.g. `farming/…`) rather than under a `wiki/` folder. Optional in
+   * the type (test fixtures build partial Configs); `loadConfig` always
+   * populates it and `getStore` falls back to the store's own `"wiki"` default.
    */
-  wikiSubdir: string;
+  wikiSubdir?: string;
   /** Optional Syncthing REST base URL; absent → recent-changes returns available:false. */
   syncthingUrl: string | undefined;
   /** Optional Syncthing REST API key. */
