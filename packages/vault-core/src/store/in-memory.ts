@@ -34,6 +34,14 @@ interface InMemoryConfig {
   vaultRoot: string;
   /** TTL in milliseconds (default: 30 000) */
   ttlMs?: number;
+  /**
+   * Subdirectory under `vaultRoot` that holds wiki pages (default: `"wiki"`).
+   * Set to `""` to treat the vault root itself as the page root — used on the
+   * live Droplet, whose Obsidian vault keeps pages at the root (e.g.
+   * `farming/…`) rather than under a `wiki/` folder. In root mode the inbox
+   * queue and dotfolders are still excluded (see `walkMarkdown`).
+   */
+  wikiSubdir?: string;
 }
 
 /** Group lookup for tag taxonomy */
@@ -61,7 +69,18 @@ function extractTitle(body: string, fallback: string): string {
   return fallback.slice(0, 120);
 }
 
-async function walkMarkdown(dir: string): Promise<string[]> {
+/**
+ * Recursively collect `.md` file paths under `dir`.
+ *
+ * Directories whose name begins with `.` (e.g. Syncthing's `.stfolder`,
+ * agent-generated `.summaries`, `.obsidian`, `.git`) are always skipped, and
+ * any absolute path in `exclude` is pruned. The `exclude` set lets root-mode
+ * stores keep the sibling `inbox/` queue out of the wiki page index.
+ */
+async function walkMarkdown(
+  dir: string,
+  exclude: ReadonlySet<string> = new Set()
+): Promise<string[]> {
   const results: string[] = [];
   let entries: import("node:fs").Dirent[];
   try {
@@ -70,10 +89,12 @@ async function walkMarkdown(dir: string): Promise<string[]> {
     return results;
   }
   for (const entry of entries) {
-    const full = path.join(dir, entry.name as string);
+    const name = entry.name as string;
+    const full = path.join(dir, name);
     if (entry.isDirectory()) {
-      results.push(...(await walkMarkdown(full)));
-    } else if (entry.isFile() && /\.md$/i.test(entry.name as string)) {
+      if (name.startsWith(".") || exclude.has(full)) continue;
+      results.push(...(await walkMarkdown(full, exclude)));
+    } else if (entry.isFile() && /\.md$/i.test(name)) {
       results.push(full);
     }
   }
@@ -83,16 +104,21 @@ async function walkMarkdown(dir: string): Promise<string[]> {
 export class InMemoryVaultStore implements VaultStore {
   private readonly vaultRoot: string;
   private readonly ttlMs: number;
+  private readonly wikiSubdir: string;
   private index: VaultIndex | null = null;
   private ttlExpiresAt = 0;
 
   constructor(config: InMemoryConfig) {
     this.vaultRoot = config.vaultRoot;
     this.ttlMs = config.ttlMs ?? TTL_MS;
+    this.wikiSubdir = config.wikiSubdir ?? "wiki";
   }
 
   private get wikiDir(): string {
-    return path.join(this.vaultRoot, "wiki");
+    // Empty subdir → the vault root itself is the page root.
+    return this.wikiSubdir
+      ? path.join(this.vaultRoot, this.wikiSubdir)
+      : this.vaultRoot;
   }
 
   private get inboxDir(): string {
@@ -108,7 +134,10 @@ export class InMemoryVaultStore implements VaultStore {
   }
 
   async revalidate(): Promise<void> {
-    const files = await walkMarkdown(this.wikiDir);
+    // In root mode (wikiDir === vaultRoot) the inbox queue is a sibling under
+    // the same root, so exclude it explicitly. In the default wiki/ mode the
+    // exclusion is a harmless no-op (inboxDir isn't under wikiDir).
+    const files = await walkMarkdown(this.wikiDir, new Set([this.inboxDir]));
     const pages = new Map<WikiPath, WikiPage>();
     const allTags = new Set<string>();
 

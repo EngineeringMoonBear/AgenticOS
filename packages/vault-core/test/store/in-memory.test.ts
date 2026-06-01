@@ -252,3 +252,67 @@ describe("InMemoryVaultStore - revalidate + stats", () => {
     expect((await store.stats()).pageCount).toBe(2);
   });
 });
+
+describe("InMemoryVaultStore - configurable wiki root (wikiSubdir)", () => {
+  // The live Droplet vault keeps pages at the vault root (e.g. `farming/…`)
+  // rather than under a `wiki/` subdir. `wikiSubdir: ""` makes the store treat
+  // the vault root itself as the page root, while still excluding the inbox
+  // queue and dotfolders (Syncthing's `.stfolder`, agent `.summaries`, etc.).
+  let rootStore: InMemoryVaultStore;
+
+  beforeEach(() => {
+    rootStore = new InMemoryVaultStore({
+      vaultRoot: tmpDir,
+      ttlMs: 60_000,
+      wikiSubdir: "",
+    });
+  });
+
+  it("reads pages from the vault root when wikiSubdir is empty", async () => {
+    // Write directly under the vault root (not under wiki/).
+    await fs.writeFile(path.join(tmpDir, "HELLO.md"), "# Hello", "utf8");
+    await fs.mkdir(path.join(tmpDir, "farming"), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpDir, "farming", "notes.md"),
+      "# Notes",
+      "utf8"
+    );
+    await rootStore.revalidate();
+    const { flat } = await rootStore.list();
+    expect(flat).toContain("HELLO");
+    expect(flat).toContain("farming/notes");
+  });
+
+  it("excludes the inbox/ queue from wiki pages in root mode", async () => {
+    await writeInboxNote("capture.md", "# Captured");
+    await fs.writeFile(path.join(tmpDir, "Real.md"), "# Real", "utf8");
+    await rootStore.revalidate();
+    const { flat } = await rootStore.list();
+    expect(flat).toContain("Real");
+    expect(flat).not.toContain("inbox/capture");
+  });
+
+  it("excludes dotfolders (.summaries, .stfolder) from wiki pages in root mode", async () => {
+    await fs.mkdir(path.join(tmpDir, ".summaries"), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpDir, ".summaries", "auto.md"),
+      "# Auto summary",
+      "utf8"
+    );
+    await fs.writeFile(path.join(tmpDir, "Kept.md"), "# Kept", "utf8");
+    await rootStore.revalidate();
+    const { flat } = await rootStore.list();
+    expect(flat).toContain("Kept");
+    expect(flat).not.toContain(".summaries/auto");
+  });
+
+  it("still defaults to the wiki/ subdir when wikiSubdir is unset", async () => {
+    await writeWikiPage("Under/Wiki.md", "# Under wiki");
+    // A root-level file must NOT appear under the default (wiki/) store.
+    await fs.writeFile(path.join(tmpDir, "RootLevel.md"), "# Root", "utf8");
+    await store.revalidate();
+    const { flat } = await store.list();
+    expect(flat).toContain("Under/Wiki");
+    expect(flat).not.toContain("RootLevel");
+  });
+});
