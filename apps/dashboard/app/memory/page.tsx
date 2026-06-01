@@ -68,7 +68,7 @@ export default function MemoryPage() {
           {/* Left rail. MemoryTree is a self-contained sidebar: the Wiki
               header + page tree, then its own inline Inbox section. The inbox
               lives inside the tree (not a separate card) — one owner, no
-              duplicate. Promote/discard wiring lands in Phase 2 T5. */}
+              duplicate. Promote/discard wiring lands in Phase E. */}
           <div
             className={`memory-sidebar ${sidebarOpen ? "memory-sidebar--open" : ""}`}
             style={{ borderColor: "var(--border-subtle)" }}

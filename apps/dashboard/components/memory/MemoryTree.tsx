@@ -147,7 +147,7 @@ export function MemoryTree({ selectedPath, onSelect }: MemoryTreeProps) {
     >
       {/* Inbox section — the human validation gate. Sits ABOVE the wiki so
           captures are the first thing you review before they're promoted into
-          the curated archive below. Promote/discard wiring lands in Phase 2 T5. */}
+          the curated archive below. Promote/discard wiring lands in Phase E. */}
       <div className="px-2 pt-3 pb-2">
         <button
           type="button"
@@ -177,14 +177,14 @@ export function MemoryTree({ selectedPath, onSelect }: MemoryTreeProps) {
         {inboxOpen && (
           <div className="mt-1 px-2 py-2">
             <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-              Inbox processing wires up in Phase 2 T5.
+              Inbox processing wires up in Phase E.
             </p>
             <button
               type="button"
               className="mt-1 text-[11px] font-medium transition-colors"
               style={{ color: "var(--accent-plum-400)" }}
               onClick={() =>
-                toast.info("Inbox queue coming in Phase 2 T5.", {
+                toast.info("Inbox queue coming in Phase E.", {
                   description: "Promote and discard will be wired up.",
                 })
               }
