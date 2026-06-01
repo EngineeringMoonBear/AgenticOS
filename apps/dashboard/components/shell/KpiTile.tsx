@@ -21,11 +21,11 @@ export interface KpiTileProps {
 
 export function KpiTile({ value, label, sublabel }: KpiTileProps) {
   return (
-    <div className="kpi">
-      <div className="value">{value}</div>
-      <div className="label">{label}</div>
-      {sublabel !== undefined && <div className="sublabel">{sublabel}</div>}
-    </div>
+    <dl className="kpi">
+      <dd className="value">{value}</dd>
+      <dt className="label">{label}</dt>
+      {sublabel !== undefined && <dd className="sublabel">{sublabel}</dd>}
+    </dl>
   );
 }
 
