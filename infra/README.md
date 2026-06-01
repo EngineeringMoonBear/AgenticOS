@@ -18,7 +18,6 @@ ChatGPT for agent reasoning. (Hermes supports 40+ LLM providers; we currently us
   - Droplet joins the tailnet automatically via cloud-init
 - **Cloudflare**
   - Proxied A record `agenticos.gatheringatthegrove.com`
-  - Zero Trust Tunnel `agenticos-app-platform` routing the hostname to the App Platform URL
   - Zero Trust Access application + "Allow Josh" policy gating the hostname behind Google SSO
 - **Droplet (via cloud-init)**
   - Hardened SSH, UFW baseline, unattended-upgrades, fail2ban
@@ -30,6 +29,24 @@ ChatGPT for agent reasoning. (Hermes supports 40+ LLM providers; we currently us
   - Repo cloned to `/opt/agenticos/repo`
   - AgenticOS docker-compose stack started (Hermes Agent + hermes-gateway + Ollama + Postgres) if `docker-compose.yml` exists in the repo
   - Cron jobs registered via `hermes cron create` (daily-brief, cost-report)
+
+## Deploys
+
+Two independent surfaces, two deploy paths:
+
+- **Dashboard (App Platform)** — auto-deploys on every push to `main`. No action needed.
+- **Droplet services (vault-server)** — auto-deployed by `.github/workflows/deploy-droplet.yml`.
+  It triggers on push to `main` when `infra/vault-server/**`, `packages/vault-core/**`,
+  or the root `docker-compose.yml` change. The workflow SSHes to the Droplet with a
+  dedicated deploy key (`DROPLET_SSH_KEY` secret), ships the committed tree via
+  `git archive | ssh tar` (additive — preserves Droplet-only `.env` and `hermes-config/`),
+  rebuilds + restarts the changed service, and runs a `/health` check against the VPC
+  endpoint `10.116.16.2:7779`. Manual run: `gh workflow run deploy-droplet.yml`.
+
+  Required GitHub secrets: `DROPLET_SSH_KEY` (private deploy key), `DROPLET_HOST`,
+  `DROPLET_USER`. The deploy key is a dedicated, passwordless ed25519 key whose public
+  half is in the Droplet's `deploy@` `authorized_keys` — separate from the operator's
+  interactive key.
 
 ## Cost
 
@@ -76,7 +93,6 @@ ssh-keygen -t ed25519 -f ~/.ssh/agenticos-droplet -C "agenticos-droplet"
 - Permissions:
   - Zone → DNS → Edit (on `gatheringatthegrove.com`)
   - Account → Access: Apps and Policies → Edit
-  - Account → Cloudflare Tunnel → Edit
 - Save as `cloudflare_api_token`
 - From the zone Overview page sidebar, copy the **Zone ID** and **Account ID**
 
