@@ -8,7 +8,6 @@ import { MemoryTree } from "@/components/memory/MemoryTree";
 import { MemoryReader } from "@/components/memory/MemoryReader";
 import { MemoryRail } from "@/components/memory/MemoryRail";
 import { MemorySyncIndicator } from "@/components/memory/MemorySyncIndicator";
-import { InboxQueue } from "@/components/memory/InboxQueue";
 import { GraphCanvas } from "@/components/memory/GraphCanvas";
 
 export default function MemoryPage() {
@@ -66,27 +65,18 @@ export default function MemoryPage() {
         </div>
 
         <div className="memory-panes">
-          {/* Left rail: inbox (human validation queue) on top, wiki below.
-              Inbox is the staging gate — captures land here and are reviewed
-              before promotion into the curated wiki — so it sits above the
-              stable archive. Capped height + scroll keeps a full inbox from
-              crowding out the wiki tree. */}
+          {/* Left rail. MemoryTree is a self-contained sidebar: the Wiki
+              header + page tree, then its own inline Inbox section. The inbox
+              lives inside the tree (not a separate card) — one owner, no
+              duplicate. Promote/discard wiring lands in Phase 2 T5. */}
           <div
             className={`memory-sidebar ${sidebarOpen ? "memory-sidebar--open" : ""}`}
             style={{ borderColor: "var(--border-subtle)" }}
           >
-            <div
-              className="shrink-0 max-h-[45%] overflow-auto border-b"
-              style={{ borderColor: "var(--border-subtle)" }}
-            >
-              <InboxQueue />
-            </div>
-            <div className="flex-1 overflow-auto">
-              <MemoryTree
-                selectedPath={activePath}
-                onSelect={handleSelect}
-              />
-            </div>
+            <MemoryTree
+              selectedPath={activePath}
+              onSelect={handleSelect}
+            />
           </div>
 
           {/* Backdrop overlay for mobile sidebar */}
