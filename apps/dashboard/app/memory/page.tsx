@@ -9,7 +9,6 @@ import { MemoryReader } from "@/components/memory/MemoryReader";
 import { MemoryRail } from "@/components/memory/MemoryRail";
 import { MemorySyncIndicator } from "@/components/memory/MemorySyncIndicator";
 import { GraphCanvas } from "@/components/memory/GraphCanvas";
-import { OpenVikingSummaryPanel } from "@/components/memory/OpenVikingSummaryPanel";
 import { SkillsCatalogPanel } from "@/components/memory/SkillsCatalogPanel";
 import { RecentVaultChangesPanel } from "@/components/memory/RecentVaultChangesPanel";
 
@@ -40,14 +39,14 @@ export default function MemoryPage() {
   return (
     <>
       <MemoryVista />
+      {/* Vault-native summary panels. OpenViking agent-obs intentionally
+          excluded here (two-brain: Viking belongs to the observability tab,
+          not the vault Memory tab). */}
       <div className="grid grid-cols-12 gap-4 p-4 shrink-0">
-        <div className="col-span-12 md:col-span-6 lg:col-span-4">
-          <OpenVikingSummaryPanel />
-        </div>
-        <div className="col-span-12 md:col-span-6 lg:col-span-4">
+        <div className="col-span-12 lg:col-span-6">
           <SkillsCatalogPanel />
         </div>
-        <div className="col-span-12 md:col-span-6 lg:col-span-4">
+        <div className="col-span-12 lg:col-span-6">
           <RecentVaultChangesPanel />
         </div>
       </div>
