@@ -1,6 +1,10 @@
 # AgenticOS Information Architecture
 
-> **⚠️ PARTIALLY STALE (predates 2026-05-20 foundation v2 pivot):** Substantial portions of this IA were written against the Hermes + Sandcastle two-lane model that no longer applies. The foundation v2 spec ([`superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md`](superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md)) replaces both lanes with a single agent fleet (currently one Curator agent under Claude Code + Honcho). Concepts that **survive**: navigation, header layout, tab structure, vault wiki browser, command palette, project-root tagging, scheduler UI patterns, run feed layout (with "lane" stripe re-purposed as agent type indicator), settings page IA. Concepts that **need rewriting**: anywhere referring to "Hermes lane / Sandcastle lane" — these become agent identifiers; "Hermes Curator" becomes "Curator agent"; Sandcastle-specific tabs in the run drawer get deferred to v2. **Full IA rewrite happens during v1 dashboard wiring (foundation v2 Phase 6).** Until then, read this doc with that pivot in mind.
+> **⚠️ PARTIALLY STALE — read against current reality.** Substantial portions of this IA were written against the Hermes + Sandcastle two-lane model that no longer applies (Sandcastle is abandoned; there is a single agent fleet, currently one Curator agent). The current architecture, NOT yet reflected throughout this doc, is:
+> - **Two-brain memory:** the **human** brain is the Obsidian vault (`wiki/`, `+inbox/`, `+sources/`) served by vault-server to the dashboard's **vault-driven Memory tab** (`MemoryTree` / `MemoryReader` / `MemoryRail` / `InboxQueue` over `/api/vault/*`); the **agent** brain is **OpenViking** (NOT Honcho — Honcho was never adopted), surfaced under observability, not the Memory tab.
+> - **Inbox writes:** the dashboard may **Discard** (archive `inbox/ → inbox/archived/`, the only sanctioned cloud write); **Promote** is human-applied in Obsidian via an `obsidian://` deep link — the cloud cannot write `wiki/`. See the [2026-05-29 corrective spec](superpowers/specs/2026-05-29-memory-vault-server-corrective-design.md) and the [2026-06-01 inbox write-surface spec](superpowers/specs/2026-06-01-inbox-write-surface-design.md), and the [docs index](README.md).
+>
+> Concepts that **survive**: navigation, header layout, tab structure, vault wiki browser, command palette, project-root tagging, scheduler UI patterns, run feed layout (with "lane" stripe re-purposed as agent type indicator), settings page IA. Concepts that **need rewriting**: anywhere referring to "Hermes lane / Sandcastle lane" — these become agent identifiers; "Hermes Curator" becomes "Curator agent"; Sandcastle-specific tabs in the run drawer are dropped (Sandcastle abandoned). **Full IA rewrite happens during a later dashboard-wiring (Phase 6) pass.** Until then, read this doc with the above in mind.
 
 ---
 
@@ -239,7 +243,7 @@ Below the wiki tree in the sidebar. Each fleeting note from `inbox/` is a card:
 └─────────────────────────────┘
 ```
 
-- **Promote**: opens a modal. Agent suggests a target `wiki/` page (new or existing) to merge into. User confirms. AgenticOS writes via API route (never direct vault bind-mount from agents).
+- **Promote**: the dashboard drafts a suggested target `wiki/` page (new or existing) to merge into, then opens it in Obsidian via an `obsidian://` deep link; the human applies the promote in Obsidian. The cloud does **not** write `wiki/` (read-only mount). Only **Discard** writes (inbox-only: archives `inbox/ → inbox/archived/`). See the [2026-06-01 inbox write-surface spec](superpowers/specs/2026-06-01-inbox-write-surface-design.md).
 - **Edit**: opens a simple textarea to revise the fleeting note before promoting.
 - **Discard**: marks as archived (moves to `inbox/archived/`, not deleted).
 - Inbox items auto-tagged by capture method (voice, text, import).

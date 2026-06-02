@@ -1609,6 +1609,17 @@ After Phase 3.5 lands, Phase 4 (Memory tab routes + components) builds against t
 
 ## Phase 4 — Memory tab (~7 hrs)
 
+> **⚠️ SUPERSEDED — do NOT build this Phase 4.** This phase builds an
+> OpenViking-premise Memory tab (`CategoryBrowser`, `AbstractList`, `DetailView`,
+> `RetrievalTrajectoryGraph`, `/api/memory/*`). The
+> [2026-05-29 memory/vault-server corrective spec](../superpowers/specs/2026-05-29-memory-vault-server-corrective-design.md)
+> **DELETED** those components: the Memory tab is now **vault-driven**
+> (`MemoryTree` / `MemoryReader` / `MemoryRail` / `InboxQueue` over
+> `/api/vault/*` → vault-server). OpenViking remains the agent's memory store
+> but is surfaced under observability, not the Memory tab. Phases 0–3.5 (Viking
+> ingester, dashboard shell, Live-Ops, design-system migration) still apply; only
+> this Phase 4 is replaced. See the [docs index](../README.md).
+
 Goal: Three-column browser, /api/memory/* routes, L0/L1/L2 progressive disclosure.
 
 ### Task 4.1: Add a Viking-client read shim

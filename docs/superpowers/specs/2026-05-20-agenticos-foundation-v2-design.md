@@ -1,6 +1,16 @@
 # AgenticOS Foundation v2 — Design
 
-**Status**: Proposed (2026-05-20)
+> **⚠️ SUPERSEDED — architectural ancestor.** This design selected **Honcho**
+> for memory and framed reasoning as **Claude Code (Max OAuth)**. Both have
+> since changed: memory is now **OpenViking** (per the
+> [2026-05-29 corrective spec](./2026-05-29-memory-vault-server-corrective-design.md)),
+> and the primary reasoning provider is **openai-codex** (Codex subscription;
+> Claude is a fallback). The decision trail is recorded in
+> [ADR 0005](../../adr/0005-letta-to-composed-stack.md). The high-level vision
+> (composed stack, two-brain memory, single dashboard) still holds. See the
+> [docs index](../../README.md). Preserved for history.
+
+**Status**: Superseded (2026-05-20; memory → OpenViking and reasoning → Codex per ADR 0005)
 **Owner**: Josh (single-developer)
 **Supersedes**:
 - ADR 0004 (Letta pivot) — partially superseded by the new runtime + memory composition
