@@ -10,6 +10,8 @@
 > [2026-05-29 corrective spec](../superpowers/specs/2026-05-29-memory-vault-server-corrective-design.md).
 > See the [docs index](../README.md).
 
+---
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn `/memory` from a fixture-rendering shell into a working knowledge-base browser backed by the on-disk Obsidian-format vault. Ship a reusable `@agenticos/vault-core` workspace package, 13 `/api/vault/*` API routes, a rewritten `/api/taxonomy`, Karpathy-aligned Markdown rendering, an inbox-promote flow with LLM-proposed review drawer, a `/lint-wiki` panel, and an overview graph view.

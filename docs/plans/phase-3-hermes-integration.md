@@ -9,6 +9,8 @@
 > [`spec1-orchestrator.md`](./spec1-orchestrator.md) and the
 > [docs index](../README.md). Preserved for history.
 
+---
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Connect AgenticOS to a live Hermes daemon, ship a nightly Curator skill, and add rate-limit observability — replacing Phase 2's fixture RunCards with real Hermes data backed by SSE streaming, atomic cron persistence, and an MCP-to-vault bridge.
