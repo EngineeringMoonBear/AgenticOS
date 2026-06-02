@@ -366,17 +366,22 @@ services:
       # config.xml. An unreachable Syncthing degrades /recent-changes to
       # {available:false} rather than erroring.
       SYNCTHING_URL: "http://host.docker.internal:8384"
-      SYNCTHING_API_KEY: ""
-    # Extract the Syncthing API key from the read-only config mount at startup,
-    # then launch the bundled server (server.cjs lives at WORKDIR /app). The $$
-    # escapes the $ so the container shell — not compose at parse time —
-    # evaluates the subshell. grep -oP is available in the node:22-slim runtime.
+      # Primary source: /opt/agenticos/.env on the Droplet. The bind-mounted
+      # config.xml is 0600 deploy-owned and unreadable by the container's
+      # non-root user, so the entrypoint below only overrides this when it can
+      # actually read a key — otherwise this .env value wins.
+      SYNCTHING_API_KEY: ${SYNCTHING_API_KEY:-}
+    # If the read-only config mount is readable, extract the key from it;
+    # otherwise keep the env-provided key (don't clobber it with an empty read).
+    # Then launch the bundled server (server.cjs at WORKDIR /app). $$ escapes $
+    # so the container shell — not compose — evaluates the subshell.
     entrypoint:
       - /bin/sh
       - -c
       - |
         if [ -f /syncthing-config/config.xml ]; then
-          export SYNCTHING_API_KEY="$$(grep -oP '(?<=<apikey>)[^<]+' /syncthing-config/config.xml | head -1)"
+          KEY="$$(grep -oP '(?<=<apikey>)[^<]+' /syncthing-config/config.xml 2>/dev/null | head -1)"
+          if [ -n "$$KEY" ]; then export SYNCTHING_API_KEY="$$KEY"; fi
         fi
         exec node server.cjs
     healthcheck:
