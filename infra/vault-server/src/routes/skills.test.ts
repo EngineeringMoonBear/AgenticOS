@@ -40,6 +40,27 @@ describe("GET /skills", () => {
     await app.close();
   });
 
+  it("finds skills nested in domain subfolders (recursive walk)", async () => {
+    const app = Fastify();
+    registerSkillsRoute(app, {
+      port: 7777,
+      vaultRoot: fixtureRoot,
+      wikiSubdir: "wiki",
+      syncthingUrl: undefined,
+      syncthingApiKey: undefined,
+    });
+
+    const res = await app.inject({ method: "GET", url: "/skills" });
+    const body = res.json();
+    const nested = body.skills.find(
+      (s: { name: string }) => s.name === "nested-skill",
+    );
+    expect(nested).toBeTruthy();
+    expect(nested.path).toBe("wiki/Skills/Software/nested-skill.md");
+
+    await app.close();
+  });
+
   it("defaults triggers/usedBy to [] when frontmatter omits them", async () => {
     const app = Fastify();
     registerSkillsRoute(app, {
