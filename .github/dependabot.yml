@@ -52,3 +52,9 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "react-dom"
         update-types: ["version-update:semver-major"]
+      # ESLint 10 removed deprecated context APIs (getFilename/getSourceCode)
+      # that eslint-plugin-react@7.37.5 (latest) still calls — it peer-pins
+      # eslint ^9.7, so the lint job crashes on rule load under v10. Hold the
+      # eslint major until the plugin ecosystem ships ESLint 10 support.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
