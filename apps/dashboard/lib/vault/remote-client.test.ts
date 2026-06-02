@@ -117,3 +117,32 @@ describe("RemoteVaultClient", () => {
     );
   });
 });
+
+describe("RemoteVaultClient.readInbox", () => {
+  it("GETs /inbox/<path> and returns the note", async () => {
+    const note = { path: "n.md", title: "N", capturedAt: "2026-06-01T00:00:00Z", body: "b" };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(note), { status: 200 })));
+    const c = new RemoteVaultClient({ baseUrl: "http://vs" });
+    expect(await c.readInbox("n.md")).toEqual(note);
+  });
+  it("returns null on 404", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 404 })));
+    const c = new RemoteVaultClient({ baseUrl: "http://vs" });
+    expect(await c.readInbox("missing.md")).toBeNull();
+  });
+});
+
+describe("RemoteVaultClient.discardInbox", () => {
+  it("POSTs /discard with the inboxPath", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ archivedPath: "inbox/archived/n.md" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const c = new RemoteVaultClient({ baseUrl: "http://vs" });
+    await c.discardInbox("n.md");
+    expect(fetchMock).toHaveBeenCalledWith("http://vs/discard", expect.objectContaining({ method: "POST" }));
+  });
+  it("throws on non-OK", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 500 })));
+    const c = new RemoteVaultClient({ baseUrl: "http://vs" });
+    await expect(c.discardInbox("n.md")).rejects.toThrow();
+  });
+});
