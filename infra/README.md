@@ -27,7 +27,7 @@ ChatGPT for agent reasoning. (Hermes supports 40+ LLM providers; we currently us
   - Node 22, pnpm 9.15.4, OpenAI Codex CLI (Hermes' `openai-codex` provider can import the CLI's OAuth credentials from `~/.codex/auth.json` if present)
   - Filesystem layout: `/opt/agenticos/repo`, `/opt/vault`, `/opt/backups`, `/etc/agenticos`
   - Repo cloned to `/opt/agenticos/repo`
-  - AgenticOS docker-compose stack started (Hermes Agent + hermes-gateway + Ollama + Postgres) if `docker-compose.yml` exists in the repo
+  - AgenticOS docker-compose stack started if `docker-compose.yml` exists in the repo. Services: Postgres (`agenticos-db`, cost telemetry), Ollama (embeddings), OpenViking (`:1933`, agent memory), vault-server (`:7779 → 7777`, human Obsidian vault API), Hermes Agent + hermes-gateway (orchestration + cron tick), and inbox-watcher. The VPC-bound services (Postgres `:5432`, OpenViking `:1933`, vault-server `:7779`) are gated by UFW to `10.116.16.0/20` — see "UFW rules for VPC-bound services" below.
   - Cron jobs registered via `hermes cron create` (daily-brief, cost-report)
 
 ## Deploys
