@@ -344,8 +344,11 @@ services:
       # listens on 0.0.0.0:8384, for the /recent-changes endpoint.
       - "host.docker.internal:host-gateway"
     volumes:
-      # Read-only — vault-server never writes through this path.
+      # Whole vault is read-only to the cloud…
       - /opt/vault:/app/vault:ro
+      # …except the inbox quarantine, which vault-server may write (discard →
+      # inbox/archived/). wiki/ and sources/ stay physically unwritable.
+      - /opt/vault/inbox:/app/vault/inbox:rw
       # Syncthing config (read-only) — Phase E reads the API key from here
       # to poll Syncthing's REST API for recent-changes. Path verified on the
       # live Droplet: newer Syncthing stores config under XDG state, not

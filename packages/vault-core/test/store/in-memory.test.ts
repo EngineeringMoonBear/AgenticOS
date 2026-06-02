@@ -234,6 +234,32 @@ describe("InMemoryVaultStore - discardInbox", () => {
   });
 });
 
+describe("InMemoryVaultStore - discardInbox (archive, not delete)", () => {
+  it("moves the inbox note into inbox/archived/ instead of deleting it", async () => {
+    await writeInboxNote("toss.md", "# Toss\n\nfleeting");
+    await store.discardInbox("toss.md");
+
+    // original gone
+    await expect(fs.access(path.join(inboxDir, "toss.md"))).rejects.toThrow();
+    // archived copy exists with same content
+    const archived = await fs.readFile(
+      path.join(inboxDir, "archived", "toss.md"),
+      "utf8",
+    );
+    expect(archived).toContain("fleeting");
+  });
+
+  it("disambiguates when an archived file of the same name already exists", async () => {
+    await writeInboxNote("dup.md", "first");
+    await store.discardInbox("dup.md");
+    await writeInboxNote("dup.md", "second");
+    await store.discardInbox("dup.md");
+
+    const names = await fs.readdir(path.join(inboxDir, "archived"));
+    expect(names.filter((n) => n.startsWith("dup")).length).toBe(2);
+  });
+});
+
 describe("InMemoryVaultStore - revalidate + stats", () => {
   it("bumps builtAt on revalidate", async () => {
     await store.revalidate();
