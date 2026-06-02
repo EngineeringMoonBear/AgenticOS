@@ -580,9 +580,103 @@
 }
 .shell-tab[aria-selected="true"] .count { color: var(--gold); }
 
-@media (max-width: 720px) {
+/* Mobile tab dropdown — hidden on desktop */
+.shell-tabs-mobile { display: none; }
+
+@media (max-width: 768px) {
   .shell-header-row { padding: 12px 16px; gap: 12px; }
-  .shell-tabs { padding: 0 16px; }
+  /* Hide desktop tabs, show mobile dropdown */
+  .shell-tabs--desktop { display: none; }
+  .shell-tabs-mobile {
+    display: block;
+    position: relative;
+    padding: 0 16px;
+    border-top: 1px solid var(--moss-faint);
+  }
+}
+
+.shell-tabs-mobile__trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 0;
+  background: transparent;
+  border: 0;
+  color: var(--gold);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.shell-tabs-mobile__count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--parchment-faint);
+  background: var(--surface-recessed);
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+.shell-tabs-mobile__chevron {
+  color: var(--parchment-muted);
+  margin-left: auto;
+  transition: transform var(--motion-fast, 140ms) var(--ease, ease);
+}
+.shell-tabs-mobile__chevron--open {
+  transform: rotate(180deg);
+}
+
+.shell-tabs-mobile__menu {
+  position: absolute;
+  top: 100%;
+  left: 16px;
+  right: 16px;
+  z-index: 50;
+  background: var(--surface-elevated);
+  border: 1px solid var(--moss-line);
+  border-radius: var(--radius-card, 10px);
+  padding: 6px;
+  box-shadow:
+    0 12px 28px -8px rgba(0, 0, 0, 0.6),
+    0 4px 8px -2px rgba(0, 0, 0, 0.4);
+  animation: tab-menu-enter var(--motion-fast, 140ms) var(--ease, ease);
+}
+@keyframes tab-menu-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.shell-tabs-mobile__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--parchment-muted);
+  text-decoration: none;
+  transition: all var(--motion-fast, 140ms) var(--ease, ease);
+}
+.shell-tabs-mobile__item:hover {
+  color: var(--parchment);
+  background: var(--surface);
+}
+.shell-tabs-mobile__item--active {
+  color: var(--gold);
+  background: var(--gold-ghost);
+}
+.shell-tabs-mobile__item--active:hover {
+  background: var(--gold-soft);
+}
+.shell-tabs-mobile__item-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--parchment-faint);
+  font-variant-numeric: tabular-nums;
+}
+.shell-tabs-mobile__item--active .shell-tabs-mobile__item-count {
+  color: var(--gold);
 }
 
 /* ═══════════════════════════════════════════════════════════════
