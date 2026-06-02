@@ -1,78 +1,77 @@
 "use client";
 
-import { useState } from "react";
-import { X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
-import { toast } from "sonner";
-import { useCommitInbox } from "@/lib/vault/hooks/use-commit-inbox";
-import { useDiscardInbox } from "@/lib/vault/hooks/use-discard-inbox";
-import type { PromoteResult } from "@/lib/vault/hooks/use-promote-inbox";
+import { useMemo, useState } from "react";
+import { X, Copy, ExternalLink, Check } from "lucide-react";
+import type { InboxNote } from "@agenticos/vault-core";
 
 interface PromoteReviewDrawerProps {
   inboxPath: string;
-  proposal: PromoteResult;
+  note: InboxNote;
+  categories: string[];
   onClose: () => void;
+}
+
+/**
+ * Mirror of `buildFrontmatter` in vault-core (packages/vault-core/src/store/in-memory.ts).
+ * Implemented inline so the drawer never imports the server-only store — promotion is a
+ * client-side draft, not a cloud write.
+ */
+function renderFrontmatter(opts: {
+  title: string;
+  tags: string[];
+  created: string;
+  updated: string;
+}): string {
+  const lines = ["---"];
+  lines.push(`title: ${JSON.stringify(opts.title)}`);
+  if (opts.tags.length > 0) {
+    lines.push(`tags: [${opts.tags.map((t) => JSON.stringify(t)).join(", ")}]`);
+  }
+  lines.push(`created: ${JSON.stringify(opts.created)}`);
+  lines.push(`updated: ${JSON.stringify(opts.updated)}`);
+  lines.push("---");
+  return lines.join("\n");
 }
 
 export function PromoteReviewDrawer({
   inboxPath,
-  proposal,
+  note,
+  categories,
   onClose,
 }: PromoteReviewDrawerProps) {
-  const commit = useCommitInbox();
-  const discard = useDiscardInbox();
+  const [category, setCategory] = useState(categories[0] ?? "");
+  const [title, setTitle] = useState(note.title);
+  const [tagsRaw, setTagsRaw] = useState("");
+  const [copied, setCopied] = useState(false);
 
-  const [destination, setDestination] = useState(proposal.proposed.destination);
-  const [title, setTitle] = useState(proposal.proposed.title);
-  const [tagsRaw, setTagsRaw] = useState(proposal.proposed.tags.join(", "));
-  const [body, setBody] = useState(proposal.proposed.body);
-  const [reasoningOpen, setReasoningOpen] = useState(false);
-
-  function handleCommit() {
+  const draft = useMemo(() => {
     const tags = tagsRaw
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
-
-    const now = new Date().toISOString();
-
-    commit.mutate(
-      {
-        inboxPath,
-        page: {
-          path: destination,
-          title,
-          tags,
-          body,
-          created: now,
-          updated: now,
-          sources: [],
-        },
-      },
-      {
-        onSuccess: () => {
-          toast.success(`Promoted to wiki/${destination}.md`);
-          onClose();
-        },
-        onError: (err) => {
-          toast.error(`Failed to commit: ${err.message}`);
-        },
-      }
-    );
-  }
-
-  function handleDiscard() {
-    discard.mutate(inboxPath, {
-      onSuccess: () => {
-        toast.success("Inbox note discarded");
-        onClose();
-      },
-      onError: (err) => {
-        toast.error(`Failed to discard: ${err.message}`);
-      },
+    const today = new Date().toISOString().slice(0, 10);
+    const frontmatter = renderFrontmatter({
+      title,
+      tags,
+      created: today,
+      updated: today,
     });
-  }
+    return `${frontmatter}\n\n${note.body}`;
+  }, [title, tagsRaw, note.body]);
 
-  const isBusy = commit.isPending || discard.isPending;
+  const deepLink = `obsidian://open?vault=vault&file=inbox/${encodeURIComponent(
+    inboxPath
+  )}`;
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(draft);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // best-effort; the rendered <pre> is the fallback
+    }
+  }
 
   return (
     <>
@@ -88,7 +87,7 @@ export function PromoteReviewDrawer({
       <aside
         role="dialog"
         aria-modal="true"
-        aria-label="Review promotion proposal"
+        aria-label="Promote inbox note"
         className="fixed right-0 top-0 bottom-0 z-50 flex flex-col overflow-y-auto shadow-xl"
         style={{
           width: "480px",
@@ -105,7 +104,7 @@ export function PromoteReviewDrawer({
             className="text-sm font-semibold"
             style={{ color: "var(--text-primary)" }}
           >
-            Review Promotion
+            Promote to Obsidian
           </h2>
           <button
             onClick={onClose}
@@ -117,64 +116,32 @@ export function PromoteReviewDrawer({
           </button>
         </div>
 
-        {/* Confidence + Reasoning */}
-        <div
-          className="mx-4 mt-4 rounded-lg border p-3"
-          style={{
-            backgroundColor: "var(--surface-raised)",
-            borderColor: "var(--border-subtle)",
-          }}
-        >
-          <div className="flex items-center justify-between">
-            <span
-              className="text-xs font-medium"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Confidence:{" "}
-              <span style={{ color: "var(--text-primary)" }}>
-                {Math.round(proposal.confidence * 100)}%
-              </span>
-            </span>
-            <button
-              onClick={() => setReasoningOpen((o) => !o)}
-              className="flex items-center gap-1 text-xs transition-opacity hover:opacity-70"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Reasoning
-              {reasoningOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            </button>
-          </div>
-          {reasoningOpen && (
-            <p
-              className="mt-2 text-xs"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              {proposal.reasoning}
-            </p>
-          )}
-        </div>
-
         {/* Editable fields */}
-        <div className="flex flex-col gap-4 p-4 flex-1">
+        <div className="flex flex-col gap-4 p-4">
           <label className="flex flex-col gap-1">
             <span
               className="text-xs font-medium"
               style={{ color: "var(--text-muted)" }}
             >
-              Destination path
+              Category (top-level wiki folder)
             </span>
-            <input
-              type="text"
-              value={destination}
-              onChange={(e) => setDestination(e.target.value)}
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
               className="rounded border px-3 py-1.5 text-sm"
               style={{
                 backgroundColor: "var(--surface-raised)",
                 borderColor: "var(--border-subtle)",
                 color: "var(--text-primary)",
               }}
-              placeholder="Farm/TopicName"
-            />
+            >
+              {categories.length === 0 && <option value="">(none)</option>}
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
           </label>
 
           <label className="flex flex-col gap-1">
@@ -219,69 +186,62 @@ export function PromoteReviewDrawer({
             />
           </label>
 
-          <label className="flex flex-col gap-1 flex-1">
+          {/* Drafted markdown preview */}
+          <div className="flex flex-col gap-1">
             <span
               className="text-xs font-medium"
               style={{ color: "var(--text-muted)" }}
             >
-              Body
+              Drafted page
             </span>
-            <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={12}
-              className="rounded border px-3 py-1.5 text-sm font-mono resize-y flex-1"
+            <pre
+              className="rounded border px-3 py-2 text-xs font-mono whitespace-pre-wrap break-words"
               style={{
                 backgroundColor: "var(--surface-raised)",
                 borderColor: "var(--border-subtle)",
                 color: "var(--text-primary)",
-                minHeight: "180px",
               }}
-            />
-          </label>
+            >
+              {draft}
+            </pre>
+          </div>
+
+          {/* Instruction */}
+          <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+            Create <code>wiki/{category || "<Category>"}/{title || "<name>"}.md</code> in
+            Obsidian with this content, then Discard the inbox item.
+          </p>
         </div>
 
         {/* Actions */}
         <div
-          className="flex items-center justify-between p-4 border-t"
+          className="flex items-center gap-2 p-4 border-t mt-auto"
           style={{ borderColor: "var(--border-subtle)" }}
         >
           <button
-            onClick={handleDiscard}
-            disabled={isBusy}
-            className="flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium transition-opacity disabled:opacity-50"
+            onClick={handleCopy}
+            className="flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium transition-opacity hover:opacity-80"
             style={{
-              color: "var(--text-muted)",
+              backgroundColor: "var(--surface-raised)",
+              color: "var(--text-primary)",
               border: "1px solid var(--border-subtle)",
             }}
           >
-            {discard.isPending ? <Loader2 size={12} className="animate-spin" /> : null}
-            Discard
+            {copied ? <Check size={12} /> : <Copy size={12} />}
+            {copied ? "Copied" : "Copy"}
           </button>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onClose}
-              disabled={isBusy}
-              className="rounded px-3 py-1.5 text-sm font-medium transition-opacity disabled:opacity-50"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Cancel
-            </button>
-
-            <button
-              onClick={handleCommit}
-              disabled={isBusy || !destination || !title || !body}
-              className="flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium transition-opacity disabled:opacity-50"
-              style={{
-                backgroundColor: "var(--accent-plum-400)",
-                color: "#fff",
-              }}
-            >
-              {commit.isPending ? <Loader2 size={12} className="animate-spin" /> : null}
-              Commit
-            </button>
-          </div>
+          <a
+            href={deepLink}
+            className="flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium transition-opacity hover:opacity-90"
+            style={{
+              backgroundColor: "var(--accent-plum-400)",
+              color: "#fff",
+            }}
+          >
+            <ExternalLink size={12} />
+            Open in Obsidian
+          </a>
         </div>
       </aside>
     </>
