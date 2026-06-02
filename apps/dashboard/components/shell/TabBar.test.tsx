@@ -8,7 +8,7 @@ vi.mock("next/navigation", () => ({
 import { TabBar } from "./TabBar";
 
 describe("TabBar", () => {
-  it("renders all five tabs with the expected hrefs", () => {
+  it("renders all five desktop tabs with the expected hrefs", () => {
     render(<TabBar />);
     expect(screen.getByRole("tab", { name: /Runs/ }).getAttribute("href")).toBe(
       "/runs",
@@ -39,12 +39,23 @@ describe("TabBar", () => {
     }
   });
 
-  it("renders hard-coded count badges per the 3.5.3 spec", () => {
+  it("renders count badges in the desktop tab bar", () => {
     render(<TabBar />);
-    expect(screen.getByText("3")).toBeTruthy();
-    expect(screen.getByText("11")).toBeTruthy();
-    expect(screen.getByText("$2.41")).toBeTruthy();
-    expect(screen.getByText("2 warn")).toBeTruthy();
-    expect(screen.getByText("1,652")).toBeTruthy();
+    // Desktop tab bar (role="tablist") contains the count badges
+    const tablist = screen.getByRole("tablist");
+    expect(tablist.textContent).toContain("3");
+    expect(tablist.textContent).toContain("11");
+    expect(tablist.textContent).toContain("$2.41");
+    expect(tablist.textContent).toContain("2 warn");
+    expect(tablist.textContent).toContain("1,652");
+  });
+
+  it("renders a mobile dropdown trigger with the active tab label", () => {
+    render(<TabBar />);
+    const trigger = screen.getByRole("button", {
+      name: /Dashboard navigation/,
+    });
+    expect(trigger).toBeTruthy();
+    expect(trigger.textContent).toContain("Runs");
   });
 });
