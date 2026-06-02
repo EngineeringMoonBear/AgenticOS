@@ -337,6 +337,14 @@ services:
     image: agenticos/vault-server:local
     container_name: vault-server
     restart: unless-stopped
+    # Run as the host `deploy` user (uid:gid 1000:1000) that owns /opt/vault.
+    # The image's built-in `app` user is 1001, so it could read the
+    # world-readable vault but not WRITE the deploy-owned inbox (EACCES on the
+    # discard archive). Matching the host uid grants inbox writes while wiki/
+    # stays unwritable — that block is the :ro mount (kernel-enforced), which
+    # is independent of uid. Also lets the entrypoint read the deploy-owned
+    # Syncthing config.xml for /recent-changes.
+    user: "1000:1000"
     ports:
       - "10.116.16.2:7779:7777"
     extra_hosts:
