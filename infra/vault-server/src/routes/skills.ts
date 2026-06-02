@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { promises as fs } from "node:fs";
+import type { Dirent } from "node:fs";
 import path from "node:path";
 import type { Config } from "../config.js";
 
@@ -15,43 +16,59 @@ const SKILL_REGEX = /^---\s*\n([\s\S]*?)\n---/;
 
 /**
  * GET /skills — lists skill pages from the Obsidian vault's `wiki/Skills/`
- * directory (mirrored from ~/.claude/skills). Real skill pages frequently omit
+ * directory (mirrored from ~/.claude/skills). The real vault nests skills by
+ * domain (wiki/Skills/Software/…, wiki/Skills/Video/…), so the walk is
+ * RECURSIVE — a flat readdir only sees the top-level _index/_plugin-skills and
+ * misses the actual skill pages. Real skill pages frequently omit
  * `triggers`/`used_by`, so those default to []. Returns an empty list (not an
  * error) when the directory is missing, so the dashboard panel degrades cleanly.
  */
 export function registerSkillsRoute(app: FastifyInstance, config: Config): void {
   app.get("/skills", async () => {
     const wikiSubdir = config.wikiSubdir ?? "wiki";
-    const relDir = path.posix.join(wikiSubdir, "Skills");
     const skillsRoot = path.join(config.vaultRoot, wikiSubdir, "Skills");
-    let entries: string[];
-    try {
-      entries = await fs.readdir(skillsRoot);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return { totalRegistered: 0, skills: [] };
-      }
-      throw err;
-    }
+
+    const files = await walkMarkdown(skillsRoot);
 
     const skills: SkillEntry[] = [];
-    for (const name of entries) {
-      if (!name.endsWith(".md")) continue;
-      const full = path.join(skillsRoot, name);
+    for (const full of files) {
       const raw = await fs.readFile(full, "utf-8");
       const fm = parseFrontmatter(raw);
       if (!fm) continue;
+      const base = path.basename(full).replace(/\.md$/, "");
       skills.push({
-        name: (fm.name as string) ?? name.replace(/\.md$/, ""),
+        name: (fm.name as string) ?? base,
         description: (fm.description as string) ?? "",
         triggers: toStringArray(fm.triggers),
         usedBy: toStringArray(fm.used_by ?? fm.usedBy),
-        path: path.posix.join(relDir, name),
+        // Path relative to the vault root, posix-normalized for the dashboard.
+        path: path.relative(config.vaultRoot, full).split(path.sep).join("/"),
       });
     }
 
     return { totalRegistered: skills.length, skills };
   });
+}
+
+/** Recursively collect `.md` files under `dir`; [] if the dir is missing. */
+async function walkMarkdown(dir: string): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = (await fs.readdir(dir, { withFileTypes: true })) as Dirent[];
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  const out: string[] = [];
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...(await walkMarkdown(full)));
+    } else if (entry.name.endsWith(".md")) {
+      out.push(full);
+    }
+  }
+  return out;
 }
 
 function parseFrontmatter(raw: string): Record<string, unknown> | null {

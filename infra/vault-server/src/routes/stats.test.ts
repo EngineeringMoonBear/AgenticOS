@@ -34,9 +34,9 @@ describe("GET /stats", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     // Fixture wiki/ has HELLO.md + farming/notes.md + the skills pages under
-    // wiki/Skills/ (triage.md, bare.md). Skills live under the wiki subtree, so
-    // the store's page index counts them as pages too.
-    expect(body.pageCount).toBe(4);
+    // wiki/Skills/ (triage.md, bare.md, Software/nested-skill.md). Skills live
+    // under the wiki subtree, so the store's page index counts them too.
+    expect(body.pageCount).toBe(5);
     expect(typeof body.builtAt).toBe("number");
     expect(body.builtAt).toBeGreaterThan(0);
 
