@@ -110,7 +110,7 @@ Start with the **[docs index](docs/README.md)** for a status table of every spec
   - [`docs/superpowers/specs/2026-06-01-inbox-write-surface-design.md`](docs/superpowers/specs/2026-06-01-inbox-write-surface-design.md) — inbox promote/discard write model
 - **Runtime**: [`docs/plans/spec1-orchestrator.md`](docs/plans/spec1-orchestrator.md) — Hermes (Docker) + OpenViking + Codex cost
 - **ADR 0003**: [Scheduler ownership](docs/adr/0003-scheduler-ownership.md) — affirmed (executor changed)
-- **ADR 0004**: [Hermes → Letta pivot](docs/adr/0004-pivot-hermes-to-letta.md) — superseded; preserved as decision trail
+- **ADR 0004**: [Hermes → Letta pivot](docs/archive/0004-pivot-hermes-to-letta.md) — superseded; archived as decision trail
 - **ADR 0005**: [Letta → composed stack](docs/adr/0005-letta-to-composed-stack.md) — current; supersedes 0004
 - **Archive**: [`docs/archive/`](docs/archive/) — Hermes-shaped and Letta-shaped Phase 3 designs
 
