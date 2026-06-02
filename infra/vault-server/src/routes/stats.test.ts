@@ -33,8 +33,10 @@ describe("GET /stats", () => {
     const res = await app.inject({ method: "GET", url: "/stats" });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    // Fixture wiki/ has HELLO.md + farming/notes.md
-    expect(body.pageCount).toBe(2);
+    // Fixture wiki/ has HELLO.md + farming/notes.md + the skills pages under
+    // wiki/Skills/ (triage.md, bare.md, Software/nested-skill.md). Skills live
+    // under the wiki subtree, so the store's page index counts them too.
+    expect(body.pageCount).toBe(5);
     expect(typeof body.builtAt).toBe("number");
     expect(body.builtAt).toBeGreaterThan(0);
 

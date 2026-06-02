@@ -13,35 +13,55 @@ function renderWithClient(ui: React.ReactNode) {
 }
 
 describe("SkillsCatalogPanel", () => {
-  beforeEach(() => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders skill rows from /api/vault/skills", async () => {
     vi.spyOn(global, "fetch").mockImplementation(async () => {
       return new Response(
         JSON.stringify({
-          total_registered: 11,
+          totalRegistered: 2,
           skills: [
-            { name: "farm-task-triage", used_by: "used by curator · daily-brief", invocations: 12 },
-            { name: "code-review", used_by: "used by curator", invocations: 8 },
-            { name: "daily-summary", used_by: "used by daily-brief", invocations: 3 },
-            { name: "expense-categorize", used_by: "used by cost-report", invocations: 2 },
+            {
+              name: "triage",
+              description: "Triage incoming inbox items",
+              triggers: ["inbox-add"],
+              usedBy: ["curator", "daily-brief"],
+              path: "wiki/Skills/triage.md",
+            },
+            {
+              name: "code-review",
+              description: "Review pull requests",
+              triggers: [],
+              usedBy: [],
+              path: "wiki/Skills/code-review.md",
+            },
           ],
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     });
-  });
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
 
-  it("renders skill rows with invocation counts", async () => {
     renderWithClient(<SkillsCatalogPanel />);
     await waitFor(() => {
       expect(screen.getByText("Skills catalog")).toBeInTheDocument();
-      expect(screen.getByText("11 registered")).toBeInTheDocument();
-      expect(screen.getByText("farm-task-triage")).toBeInTheDocument();
+      expect(screen.getByText("2 registered")).toBeInTheDocument();
+      expect(screen.getByText("triage")).toBeInTheDocument();
+      expect(screen.getByText("Triage incoming inbox items")).toBeInTheDocument();
       expect(screen.getByText("used by curator · daily-brief")).toBeInTheDocument();
-      expect(screen.getByText("12")).toBeInTheDocument();
-      expect(screen.getByText("expense-categorize")).toBeInTheDocument();
+      expect(screen.getByText("code-review")).toBeInTheDocument();
+    });
+  });
+
+  it("renders an unavailable state when the fetch fails", async () => {
+    vi.spyOn(global, "fetch").mockImplementation(async () => {
+      return new Response("", { status: 502 });
+    });
+
+    renderWithClient(<SkillsCatalogPanel />);
+    await waitFor(() => {
+      expect(screen.getByText("Skills catalog unavailable.")).toBeInTheDocument();
     });
   });
 });

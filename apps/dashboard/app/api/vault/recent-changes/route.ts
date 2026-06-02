@@ -1,33 +1,52 @@
+import "server-only";
 import { NextResponse } from "next/server";
-
-// TODO: wire to syncthing event log or filesystem watcher.
 
 export const runtime = "nodejs";
 
-export type VaultChangeKind = "updated" | "created";
+export type VaultChangeKind = "created" | "updated" | "deleted";
 
 export interface VaultChange {
   path: string;
   kind: VaultChangeKind;
-  time_label: string;
+  occurredAt: string;
 }
 
 export interface VaultRecentChangesData {
   source: string;
-  checked_at: string;
+  available: boolean;
+  error?: string;
   changes: VaultChange[];
 }
 
-export async function GET(): Promise<Response> {
-  const data: VaultRecentChangesData = {
-    source: "syncthing",
-    checked_at: new Date().toISOString(),
-    changes: [
-      { path: "farming/pasture-management/rotation.md", kind: "updated", time_label: "13:45" },
-      { path: "farming/soil-health/ph-zones.md", kind: "created", time_label: "11:20" },
-      { path: "farming/forage/winter-stockpile.md", kind: "updated", time_label: "09:15" },
-      { path: "dev/code-review-style.md", kind: "updated", time_label: "yesterday" },
-    ],
-  };
-  return NextResponse.json(data);
+export async function GET(): Promise<NextResponse> {
+  const baseUrl = process.env.VAULT_SERVER_URL;
+  if (!baseUrl) {
+    return NextResponse.json({ source: "syncthing", available: false, changes: [] });
+  }
+
+  try {
+    const res = await fetch(`${baseUrl}/recent-changes`, { cache: "no-store" });
+    if (!res.ok) {
+      return NextResponse.json(
+        { source: "syncthing", available: false, error: `HTTP ${res.status}`, changes: [] },
+        { status: 502 },
+      );
+    }
+    const body = (await res.json()) as { available: boolean; changes: VaultChange[] };
+    return NextResponse.json({
+      source: "syncthing",
+      available: body.available,
+      changes: body.changes,
+    });
+  } catch (err) {
+    return NextResponse.json(
+      {
+        source: "syncthing",
+        available: false,
+        error: (err as Error).message,
+        changes: [],
+      },
+      { status: 502 },
+    );
+  }
 }

@@ -29,6 +29,15 @@ import type { VaultPathError as _VaultPathError } from "./errors";
 
 const TTL_MS = 30_000;
 
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface InMemoryConfig {
   /** Absolute path to the vault root directory. */
   vaultRoot: string;
@@ -427,7 +436,18 @@ export class InMemoryVaultStore implements VaultStore {
 
   async discardInbox(inboxPath: InboxPath): Promise<void> {
     const abs = safeResolve(this.inboxDir, inboxPath);
-    await fs.unlink(abs);
+    const archiveDir = path.join(this.inboxDir, "archived");
+    await fs.mkdir(archiveDir, { recursive: true });
+
+    const base = path.basename(abs);
+    let dest = path.join(archiveDir, base);
+    // Don't clobber an existing archived note of the same name.
+    if (await pathExists(dest)) {
+      const ext = path.extname(base);
+      const stem = base.slice(0, base.length - ext.length);
+      dest = path.join(archiveDir, `${stem}-${Date.now()}${ext}`);
+    }
+    await fs.rename(abs, dest);
   }
 
   async stats(): Promise<VaultStats> {

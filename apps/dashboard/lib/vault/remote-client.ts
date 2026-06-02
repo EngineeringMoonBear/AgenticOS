@@ -8,11 +8,11 @@
  * `InMemoryVaultStore` (which reads the local filesystem and cannot see the
  * Droplet's vault).
  *
- * Only the read methods used by the Memory tab are wired to vault-server
- * endpoints. The inbox-curation and write methods (getOutgoing, getAllTags,
- * readInbox, lint, promoteInbox, discardInbox, revalidate) have no remote
- * endpoint yet — they are deferred to Phase E. Rather than fail silently, they
- * throw a clear error so a missing endpoint surfaces loudly.
+ * The read and inbox-curation methods wired to vault-server endpoints are:
+ * list, read, search, getBacklinks, listInbox, stats, readInbox, discardInbox.
+ * The following methods remain deferred (no vault-server endpoint yet):
+ * getOutgoing, getAllTags, lint, promoteInbox, revalidate. Rather than fail
+ * silently, they throw a clear error so a missing endpoint surfaces loudly.
  */
 import type {
   WikiPath,
@@ -134,8 +134,12 @@ export class RemoteVaultClient implements VaultStore {
     return this.notSupported("getAllTags");
   }
 
-  async readInbox(): Promise<InboxNote | null> {
-    return this.notSupported("readInbox");
+  async readInbox(inboxPath: InboxPath): Promise<InboxNote | null> {
+    const segs = inboxPath.split("/").map(encodeURIComponent).join("/");
+    const res = await fetch(`${this.baseUrl}/inbox/${segs}`, { cache: "no-store" });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`vault-server /inbox/${inboxPath} -> HTTP ${res.status}`);
+    return (await res.json()) as InboxNote;
   }
 
   async lint(): Promise<LintIssue[]> {
@@ -146,8 +150,14 @@ export class RemoteVaultClient implements VaultStore {
     return this.notSupported("promoteInbox");
   }
 
-  async discardInbox(): Promise<void> {
-    return this.notSupported("discardInbox");
+  async discardInbox(inboxPath: InboxPath): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/discard`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ inboxPath }),
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`vault-server /discard -> HTTP ${res.status}`);
   }
 
   async revalidate(): Promise<void> {

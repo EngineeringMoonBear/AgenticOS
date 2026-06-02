@@ -1,38 +1,36 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Inbox, Loader2, AlertCircle, Sparkles, Trash2 } from "lucide-react";
 import { useInboxList } from "@/lib/vault/hooks/use-inbox-list";
-import { usePromoteInbox } from "@/lib/vault/hooks/use-promote-inbox";
+import { useInboxNote } from "@/lib/vault/hooks/use-inbox-note";
 import { useDiscardInbox } from "@/lib/vault/hooks/use-discard-inbox";
+import { useVaultTree } from "@/lib/vault/hooks/use-vault-tree";
 import type { InboxNote } from "@agenticos/vault-core";
-import type { PromoteResult } from "@/lib/vault/hooks/use-promote-inbox";
 import { PromoteReviewDrawer } from "./PromoteReviewDrawer";
 
 export function InboxQueue() {
   const { data: items, isLoading, isError } = useInboxList();
-  const promote = usePromoteInbox();
+  const { data: tree } = useVaultTree();
   const discard = useDiscardInbox();
 
-  const [drawerState, setDrawerState] = useState<{
-    inboxPath: string;
-    result: PromoteResult;
-  } | null>(null);
+  // Path of the note the operator is promoting; drives the body fetch + drawer.
+  const [promotePath, setPromotePath] = useState<string | null>(null);
+  const { data: promoteNote, isLoading: isPromoteLoading } =
+    useInboxNote(promotePath);
 
-  const [promotingPath, setPromotingPath] = useState<string | null>(null);
   const [discardingPath, setDiscardingPath] = useState<string | null>(null);
 
+  // Top-level wiki folders become the promote categories.
+  const categories = useMemo(() => {
+    const children = tree?.tree.children ?? [];
+    return children
+      .filter((node) => node.kind === "folder")
+      .map((node) => node.name);
+  }, [tree]);
+
   function handlePromote(note: InboxNote) {
-    setPromotingPath(note.path);
-    promote.mutate(note.path, {
-      onSuccess: (result) => {
-        setDrawerState({ inboxPath: note.path, result });
-        setPromotingPath(null);
-      },
-      onError: () => {
-        setPromotingPath(null);
-      },
-    });
+    setPromotePath(note.path);
   }
 
   function handleDiscard(note: InboxNote) {
@@ -90,7 +88,8 @@ export function InboxQueue() {
         </div>
 
         {items.map((note) => {
-          const isPromoting = promotingPath === note.path;
+          const isPromoting =
+            promotePath === note.path && (isPromoteLoading || !promoteNote);
           const isDiscarding = discardingPath === note.path;
 
           return (
@@ -135,7 +134,7 @@ export function InboxQueue() {
                   ) : (
                     <Sparkles size={11} />
                   )}
-                  {isPromoting ? "Promoting…" : "Promote"}
+                  {isPromoting ? "Loading…" : "Promote"}
                 </button>
 
                 <button
@@ -161,11 +160,12 @@ export function InboxQueue() {
         })}
       </div>
 
-      {drawerState && (
+      {promotePath && promoteNote && (
         <PromoteReviewDrawer
-          inboxPath={drawerState.inboxPath}
-          proposal={drawerState.result}
-          onClose={() => setDrawerState(null)}
+          inboxPath={promotePath}
+          note={promoteNote}
+          categories={categories}
+          onClose={() => setPromotePath(null)}
         />
       )}
     </>

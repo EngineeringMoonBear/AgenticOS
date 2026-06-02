@@ -337,11 +337,26 @@ services:
     image: agenticos/vault-server:local
     container_name: vault-server
     restart: unless-stopped
+    # Run as the host `deploy` user (uid:gid 1000:1000) that owns /opt/vault.
+    # The image's built-in `app` user is 1001, so it could read the
+    # world-readable vault but not WRITE the deploy-owned inbox (EACCES on the
+    # discard archive). Matching the host uid grants inbox writes while wiki/
+    # stays unwritable — that block is the :ro mount (kernel-enforced), which
+    # is independent of uid. Also lets the entrypoint read the deploy-owned
+    # Syncthing config.xml for /recent-changes.
+    user: "1000:1000"
     ports:
       - "10.116.16.2:7779:7777"
+    extra_hosts:
+      # Lets the container resolve the Droplet host, where Syncthing's REST API
+      # listens on 0.0.0.0:8384, for the /recent-changes endpoint.
+      - "host.docker.internal:host-gateway"
     volumes:
-      # Read-only — vault-server never writes through this path.
+      # Whole vault is read-only to the cloud…
       - /opt/vault:/app/vault:ro
+      # …except the inbox quarantine, which vault-server may write (discard →
+      # inbox/archived/). wiki/ and sources/ stay physically unwritable.
+      - /opt/vault/inbox:/app/vault/inbox:rw
       # Syncthing config (read-only) — Phase E reads the API key from here
       # to poll Syncthing's REST API for recent-changes. Path verified on the
       # live Droplet: newer Syncthing stores config under XDG state, not
@@ -356,9 +371,30 @@ services:
       # So the wiki page root is wiki/ — the store's default. inbox/ is read
       # separately; sources/ and dotfolders stay out of the curated page tree.
       WIKI_SUBDIR: "wiki"
-      # Syncthing URL/key wired in Phase E. Empty is fine — config tolerates undefined.
-      SYNCTHING_URL: ""
-      SYNCTHING_API_KEY: ""
+      # Syncthing REST for /recent-changes. The container reaches the host's
+      # Syncthing (bound 0.0.0.0:8384) via host.docker.internal (see extra_hosts).
+      # The API key is injected by the entrypoint below from the bind-mounted
+      # config.xml. An unreachable Syncthing degrades /recent-changes to
+      # {available:false} rather than erroring.
+      SYNCTHING_URL: "http://host.docker.internal:8384"
+      # Primary source: /opt/agenticos/.env on the Droplet. The bind-mounted
+      # config.xml is 0600 deploy-owned and unreadable by the container's
+      # non-root user, so the entrypoint below only overrides this when it can
+      # actually read a key — otherwise this .env value wins.
+      SYNCTHING_API_KEY: ${SYNCTHING_API_KEY:-}
+    # If the read-only config mount is readable, extract the key from it;
+    # otherwise keep the env-provided key (don't clobber it with an empty read).
+    # Then launch the bundled server (server.cjs at WORKDIR /app). $$ escapes $
+    # so the container shell — not compose — evaluates the subshell.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -f /syncthing-config/config.xml ]; then
+          KEY="$$(grep -oP '(?<=<apikey>)[^<]+' /syncthing-config/config.xml 2>/dev/null | head -1)"
+          if [ -n "$$KEY" ]; then export SYNCTHING_API_KEY="$$KEY"; fi
+        fi
+        exec node server.cjs
     healthcheck:
       # Node 22 has global fetch; the bundled image ships no curl. Hits the
       # container-internal port 7777 (not the 7779 host mapping).
