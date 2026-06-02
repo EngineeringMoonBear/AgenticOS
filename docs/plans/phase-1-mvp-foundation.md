@@ -1,5 +1,14 @@
 # Phase 1 MVP Foundation Implementation Plan
 
+> **⚠️ SUPERSEDED — historical.** This is the early all-mock scaffold (three
+> stubbed views wired to `/api/mock/*`, no real integrations). It predates the
+> composed stack and the vault-driven Memory tab. For current architecture see
+> the [docs index](../README.md) and the authoritative specs:
+> [memory/vault-server corrective](../superpowers/specs/2026-05-29-memory-vault-server-corrective-design.md),
+> [inbox write surface](../superpowers/specs/2026-06-01-inbox-write-surface-design.md),
+> with runtime in [`spec1-orchestrator.md`](./spec1-orchestrator.md). Preserved
+> for history.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Stand up a fully navigable AgenticOS dashboard with three stubbed views (`/architecture`, `/memory`, `/observability`), a working global filter chip persisted in URL state, a command palette (⌘K), and a settings page — all wired to mock data, no real integrations.

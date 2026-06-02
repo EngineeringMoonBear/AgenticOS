@@ -197,6 +197,16 @@ The Live-Ops tab is mostly an organization pass over what Spec 1 already shipped
 4. **Queue depth (new)** — count of `pending` and `running` rows in the tasks ledger per kind; small bar chart.
 5. **Recent errors (new)** — last 20 task rows with `status='error'`, error message preview, link to drawer.
 
+> **⚠️ §5.6–5.8 SUPERSEDED.** The Memory-tab design below (`CategoryBrowser`,
+> `AbstractList`, `DetailView`, `RetrievalTrajectoryGraph`, `/api/memory/*` —
+> all OpenViking-premise) was **reverted**. The
+> [2026-05-29 memory/vault-server corrective spec](./2026-05-29-memory-vault-server-corrective-design.md)
+> deleted those components and rebuilt the Memory tab as **vault-driven**
+> (`MemoryTree` / `MemoryReader` / `MemoryRail` / `InboxQueue` over
+> `/api/vault/*` → vault-server). OpenViking stays as the agent memory store but
+> is surfaced under observability, not here. The rest of this spec (shell,
+> header, Live-Ops, ingester) still stands. See the [docs index](../../README.md).
+
 ### 5.6 Memory tab
 
 **Files:**
