@@ -224,7 +224,7 @@ which returns **hardcoded** sample ingest runs (`TODO: wire to vault-ingest run
 history`). (The sibling `/api/ingest/status` *is* Postgres-backed, but this
 panel does not use it.)
 
-### Run detail · ✅ Shipped (route) 
+### Run detail · ✅ Shipped (route)
 
 Runs link to a detail route (`/observability/run/{id}` today; the command
 palette and panels navigate there). The single-task API `/api/tasks/{id}` is
