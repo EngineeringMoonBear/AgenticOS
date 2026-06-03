@@ -25,12 +25,12 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
         </p>
       </div>
       <Link
-        href="/observability"
+        href="/runs"
         className="flex items-center gap-1.5 text-sm transition-colors"
         style={{ color: "var(--accent-plum-400)" }}
       >
         <ArrowLeft size={14} strokeWidth={1.5} />
-        Back to Observability
+        Back to Runs
       </Link>
     </div>
   );
