@@ -334,6 +334,39 @@ headers)`.
 
 ## 5. Health
 
+A tab the old IA didn't have — system and service health at a glance.
+`app/health/page.tsx` renders a `HealthVista` hero over four panels: agent
+health, system resources, external services, and backups. **All four panels
+read stub routes today** — the Health tab is the least-wired tab.
+
+### HealthVista hero · 🚧 WIP
+
+`components/shell/HealthVista.tsx` — KPI tiles are hardcoded literals
+("4 / 4 services up", "5ms avg latency", "99.94% uptime", "none last
+incident"). No data hook. 🚧.
+
+### Agent health panel · 🚧 WIP
+
+`components/observability/AgentHealthPanel.tsx` → `/api/health/services`, which
+returns a **hardcoded** service list (`Hermes Gateway`, `OpenViking`, `Ollama`,
+`Postgres`, all `ok`) with a `TODO: wire to real backend`. Note real
+reachability probes already exist elsewhere — `/api/agent/health` (Hermes) and
+`/api/viking/health` (OpenViking, reads `OPENVIKING_URL`) — but this panel does
+not consume them yet.
+
+### System resources panel · 🚧 WIP
+
+`SystemResourcesPanel.tsx` → `/api/health/resources` — **hardcoded** CPU/RAM/disk
+percentages with a `TODO: wire to real backend (Droplet health endpoints)`.
+
+### External services panel · 🚧 WIP
+
+`ExternalServicesPanel.tsx` → `/api/health/external` — stub.
+
+### Backups panel · 🚧 WIP
+
+`BackupsPanel.tsx` → `/api/health/backups` — stub.
+
 ## 6. Memory
 
 ## 7. Cross-View Patterns
