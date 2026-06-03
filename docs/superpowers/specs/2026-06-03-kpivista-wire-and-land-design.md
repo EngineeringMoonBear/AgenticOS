@@ -87,18 +87,18 @@ degrades **independently**: if its source fetch fails, that tile renders `—`
 
 ### Client changes
 
-5. **`lib/hooks/use-kpi-data.ts`** — replace the stub `queryFn` with four
+1. **`lib/hooks/use-kpi-data.ts`** — replace the stub `queryFn` with four
    parallel fetches (`Promise.allSettled` so one failure doesn't sink the
    others), mapping each response into the existing `KpiData` shape extended
    with optional sublabel fields. Keep `staleTime: 30_000`. Each settled
    rejection → that field becomes `null`/`—`.
 
-6. **`components/shell/KpiVista.tsx`** — replace hardcoded sublabels with the
+2. **`components/shell/KpiVista.tsx`** — replace hardcoded sublabels with the
    real derived values; render delta badges only when their backing value is
    present (omit, don't fake, when a source is degraded). `EkgSweep`,
    formatting helpers, and the gold-horizon chrome are unchanged.
 
-7. **`app/layout.tsx`** — mount `<KpiVista />` between `<SharedHeader />` and
+3. **`app/layout.tsx`** — mount `<KpiVista />` between `<SharedHeader />` and
    `{children}` (matching the docstring). It is a client component with its own
    query; the server layout just renders it. Must render with no dependency on
    any removed/orphaned nav.
