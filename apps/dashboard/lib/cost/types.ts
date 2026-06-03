@@ -18,6 +18,7 @@ export interface KindCostRow {
 
 export interface CostSummary {
   today_cents: number;
+  yesterday_cents: number;
   mtd_cents: number;
   cap_cents: number;
   soft_alert_cents: number;

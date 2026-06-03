@@ -50,8 +50,8 @@ rendering the active route. The `CommandPalette`, `PaletteHotkey`, and toast
 `SharedHeader` renders a left-anchored brand mark (`LanternMushroom`, links to
 `/`) and a right-anchored utility cluster: the **FilterChip**, the **⌘K palette
 trigger**, and a **settings cog** linking to `/settings`. Status chips that used
-to live here have moved out to the (still-unlanded) KpiVista banner; the header
-itself is shipped and stable.
+to live here have moved out to the KpiVista banner; the header itself is shipped
+and stable.
 
 ### TabBar — five tabs · ✅ Shipped (nav) / 🚧 WIP (count badges)
 
@@ -80,23 +80,27 @@ mobile nav — note it lives in `shell/TabBar.tsx`, **not** the orphaned
 `components/layout/header-tabs.tsx` (an old, untracked 3-tab nav — see the
 Legacy appendix).
 
-### KpiVista persistent banner · 🚧 WIP (untracked, not yet mounted)
+### KpiVista persistent banner · ✅ Shipped
 
-`components/shell/KpiVista.tsx` is the intended "dusk navigator's console" — a
-persistent banner above every tab with four readings (today's spend, active
-runs, vault files, memories indexed), gold horizon rules, an `EkgSweep`
-background, and a live-data indicator. It is **🚧 WIP** for three independent
-reasons:
+`components/shell/KpiVista.tsx` is the "dusk navigator's console" — a persistent
+banner mounted in `app/layout.tsx` (between `SharedHeader` and `{children}`)
+above every tab, with four readings, gold horizon rules, an `EkgSweep`
+background, and a live-data indicator. All four tiles read **real data** via
+`lib/hooks/use-kpi-data.ts`, which fans out four fetches with `Promise.allSettled`
+so each tile degrades **independently** (a failed source renders `—` with no
+delta or sublabel; the banner never blanks):
 
-- It is **untracked** (`git ls-files components/shell/KpiVista.tsx` → empty);
-  `EkgSweep.tsx`, `CostBurnChip.tsx`, and `MaxQuotaChip.tsx` are likewise
-  untracked.
-- It is **not mounted** — `app/layout.tsx` renders `SharedHeader` but not
-  `KpiVista`. The header comment "those moved to KpiVista" describes the intent,
-  not the wiring.
-- Its data hook `lib/hooks/use-kpi-data.ts` is a **stub** — `queryFn` returns
-  hardcoded mockup values (`todaySpend: { cents: 241 }`, etc.) with an explicit
-  `TODO(v2): wire these to real endpoints`.
+| Tile | Source | Delta / sublabel |
+|---|---|---|
+| today's spend | `/api/cost/today` → `summary.today_cents` | `−X%` vs `yesterday_cents` (omitted when yesterday = 0); sublabel `MTD / cap` |
+| active runs | `/api/tasks/queue-depth` → Σ queued+running | `+N` vs in-flight 1h ago (`ended_at` window); sublabel = running kinds |
+| vault files | `/api/vault/stats` → vault-server page index `pageCount` | "wiki pages indexed" |
+| memories indexed | `/api/viking/scopes` → OpenViking `/api/v1/stats/memories` | scope categories; reachable-but-empty renders a real 0 |
+
+The two deltas derive from existing columns (`calls.cost_cents`,
+`tasks.started_at`/`ended_at`) — **no sample-history table or sampler** — so
+"full backing" added zero new infrastructure. See
+`docs/superpowers/specs/2026-06-03-kpivista-wire-and-land-design.md`.
 
 ### Per-tab Vista hero — `VistaShell` · ✅ Shipped (chrome) / mixed data
 

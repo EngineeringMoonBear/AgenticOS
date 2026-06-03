@@ -24,6 +24,7 @@ export async function getCostSummary(): Promise<CostSummary> {
     rows: [r],
   } = await pool.query<{
     today_cents: number;
+    yesterday_cents: number;
     mtd_cents: number;
     cap_cents: number;
     soft_alert_pct: number;
@@ -34,6 +35,8 @@ export async function getCostSummary(): Promise<CostSummary> {
     SELECT
       (SELECT COALESCE(SUM(cost_cents), 0)::int FROM calls
          WHERE occurred_at::date = current_date)              AS today_cents,
+      (SELECT COALESCE(SUM(cost_cents), 0)::int FROM calls
+         WHERE occurred_at::date = current_date - 1)           AS yesterday_cents,
       (SELECT COALESCE(SUM(cost_cents), 0)::int FROM calls
          WHERE occurred_at >= date_trunc('month', now()))      AS mtd_cents,
       b.monthly_cap_cents                                       AS cap_cents,
@@ -52,6 +55,7 @@ export async function getCostSummary(): Promise<CostSummary> {
 
   return {
     today_cents: r.today_cents,
+    yesterday_cents: r.yesterday_cents,
     mtd_cents: r.mtd_cents,
     cap_cents: r.cap_cents,
     soft_alert_cents: Math.round(r.cap_cents * (r.soft_alert_pct / 100)),
