@@ -369,6 +369,112 @@ percentages with a `TODO: wire to real backend (Droplet health endpoints)`.
 
 ## 6. Memory
 
+> **Two brains — and the Memory tab is only one of them.**
+>
+> - **The human brain** is the Obsidian vault, served by **vault-server on
+>   :7779** and surfaced to the dashboard through `/api/vault/*`. **This is the
+>   Memory tab.** Everything in this section reads that vault.
+> - **The agent brain** is **OpenViking on :1933** (agent memory /
+>   observability). It feeds the Runs/Cost/Health KPIs — it is **not** the Memory
+>   tab. The Memory page comment makes this explicit: "OpenViking agent-obs
+>   intentionally excluded here."
+>
+> For the vault-server contract and the inbox write surface, see the
+> [corrective design](superpowers/specs/2026-05-29-memory-vault-server-corrective-design.md)
+> and the
+> [inbox write-surface spec](superpowers/specs/2026-06-01-inbox-write-surface-design.md).
+
+`app/memory/page.tsx` renders a `MemoryVista` hero, two vault summary panels,
+and a three-pane browser. The three-pane and summary panels are wired to
+vault-server and are ✅ Shipped; the **inbox processing UI** is the one 🚧 piece.
+
+```text
+┌─────────────────────── MemoryVista (hero) ──────────────────────────────┐
+├──────────────────────────────────────────────────────────────────────────┤
+│ ┌ Skills catalog (vault) ┐   ┌ Recent vault changes ┐                     │
+├──────────────────────────────────────────────────────────────────────────┤
+│  Memory                                              [ sync indicator ]   │
+│ ┌ Tree + Inbox ┐ │  Reader  /  Graph              │ ┌ Rail ┐             │
+│ │ wiki/ folders │ │  rendered markdown            │ │ backlinks          │
+│ │ Inbox (n) 🚧  │ │  [Open in Obsidian ↗]         │ │ outgoing · tags    │
+└──────────────────┴────────────────────────────────┴──────────────────────┘
+```
+
+### MemoryVista hero · 🚧 WIP
+
+`components/shell/MemoryVista.tsx` — KPI tiles are hardcoded literals (no data
+hook). 🚧.
+
+### Summary panels · ✅ Shipped
+
+- **Skills catalog** (`SkillsCatalogPanel.tsx`) → `useVaultSkills()` →
+  `/api/vault/skills`, which proxies vault-server's `wiki/Skills`. This is the
+  real skills source (contrast with the Architecture grid in §3, which still
+  uses fixtures).
+- **Recent vault changes** (`RecentVaultChangesPanel.tsx`) →
+  `/api/vault/recent-changes`, which proxies vault-server (`source: syncthing`).
+
+### Three-pane browser · ✅ Shipped
+
+- **Tree** (`MemoryTree.tsx`) → `useVaultTree()` → `/api/vault/tree`. Mirrors the
+  `wiki/` folder structure; collapsible folders, leaf pages, dims pages whose
+  tags miss the active filter.
+- **Reader** (`MemoryReader.tsx`) → `useVaultPage()` → `/api/vault/page`. Renders
+  the page markdown with an **"Open in Obsidian"** deep link
+  (`obsidian://open?path=…`). Editing is intentionally **not** in the dashboard —
+  all wiki edits go through Obsidian (concurrent-write safety; the cloud mount
+  is read-only for `wiki/`).
+- **Rail** (`MemoryRail.tsx`) → `useVaultPage()` + `useVaultBacklinks()` →
+  `/api/vault/backlinks`. Shows backlinks, outgoing links, and frontmatter tags
+  (tags are clickable → update the global filter).
+- **Graph** (`GraphCanvas.tsx`) — toggled from the reader; builds a node graph
+  from real vault pages (`/api/vault/tree` + `/api/vault/page`). A navigation
+  aid, not a full Obsidian-grade explorer.
+- **Sync indicator** (`MemorySyncIndicator.tsx`) → `useVaultStats()` +
+  `useVaultRevalidate()` (`/api/vault/stats`, `/api/vault/revalidate`).
+
+### Full-text search · ✅ Shipped (route)
+
+`/api/vault/search` is vault-server-backed (`store.search(q, { tags, limit })`)
+and supports a tag filter. (The command palette's Wiki group is the most visible
+consumer today; an in-pane search box is the natural next surface.)
+
+### Inbox model — discard vs. promote · 🚧 WIP (UI), ✅ Shipped (API + components)
+
+This is the heart of the write model, and it is **deliberately asymmetric**:
+
+- **Discard is the one sanctioned dashboard write.** It archives
+  `inbox/ → inbox/archived/` via `POST /api/vault/inbox/discard`
+  (`store.discardInbox`, returns `204`). The cloud may write **only** under
+  `inbox/`; `wiki/` is read-only.
+- **Promote is human-applied in Obsidian — the dashboard never writes the
+  wiki.** `POST /api/vault/inbox/promote` reads the inbox note, builds a vault
+  flat-index + tag list, and calls Sonnet to **draft** a proposal
+  (`{ destination, title, tags, body, confidence, reasoning }`). The
+  `PromoteReviewDrawer` shows that draft and hands off via an
+  `obsidian://open?vault=vault&file=inbox/…` deep link; **the human applies the
+  promote inside Obsidian.** No server-side wiki write happens.
+
+**Status nuance:** the inbox **API routes, hooks** (`use-discard-inbox`,
+`use-promote-inbox`, `use-inbox-list`, `use-commit-inbox`) **and components**
+(`InboxQueue.tsx`, `PromoteReviewDrawer.tsx`) are all shipped. But the live
+Memory page does **not** mount them yet — the inbox section lives inside
+`MemoryTree` and currently fires a `toast.info("Inbox queue coming in Phase E —
+Promote and discard will be wired up")`. So the discard/promote *flow* is 🚧
+until that wiring lands; the underlying surfaces are real.
+
+### Vault vs. Obsidian — when to use which · ✅ (reference)
+
+| Task | Use |
+|---|---|
+| Quick read / browse the wiki | Memory tab |
+| Triage the inbox (discard) | Memory tab (once inbox UI lands) |
+| Promote an inbox note into the wiki | Dashboard drafts → **apply in Obsidian** |
+| Edit or create a wiki page | Obsidian |
+| Full graph exploration | Obsidian |
+| Quick backlinks / outgoing-link check | Memory tab |
+| Deep search with complex queries | Obsidian |
+
 ## 7. Cross-View Patterns
 
 ## 8. Settings
