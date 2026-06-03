@@ -477,7 +477,74 @@ until that wiring lands; the underlying surfaces are real.
 
 ## 7. Cross-View Patterns
 
+### Two-brain separation · ✅ Shipped (architectural invariant)
+
+The single most important cross-view rule (restated from §6): **OpenViking
+(:1933) feeds the Runs / Cost / Health agent-observability surfaces; the
+Obsidian vault (vault-server :7779) is the Memory tab.** They are different
+brains with different stores and must not be conflated. The Memory page enforces
+this by intentionally excluding OpenViking agent-obs from its panels.
+
+### Filter persistence · ✅ Shipped
+
+The global filter is URL state, not a store. `lib/filter/use-filter.ts` reads
+and writes `?filter=` via `nuqs` (push history, non-shallow), encoded by
+`lib/filter/codec.ts`. URL is the single source of truth — deep-linkable,
+back/forward-correct, no localStorage. (The filter is consumed by the
+Architecture grid and Memory tree/rail; it does **not** yet shape the Runs feed
+— see §2.)
+
+### Search semantics · ✅ Shipped (palette) / 🚧 WIP (in-pane)
+
+The ⌘K palette searches skills (fixtures), wiki pages (real `/api/vault/tree`),
+and recent runs (real `/api/agent/runs`) with cmdk fuzzy matching. A dedicated
+vault search route (`/api/vault/search`, real) exists for a richer in-pane
+Memory search; that surface is still to be wired (🚧).
+
+### Notifications · ✅ Shipped
+
+Bottom-right `sonner` toasts, fired directly by components. No bell, no
+tab-badge notification count. Several toasts are intentionally "coming in Phase
+N" placeholders (skill dispatch, theme toggle, inbox).
+
+### Real-time updates · mixed
+
+There is no single global event bus. The reality is two mechanisms:
+
+- **Polling (the common case)** — panels and feeds use TanStack Query
+  `refetchInterval` (e.g. live runs every 5s, scheduled/errors/ingest every
+  30s, KPI 30s). ~26 query sites across the app.
+- **SSE (run-detail only)** — `lib/hooks/use-run-events.ts` opens an
+  `EventSource` against `/api/agent/runs/{id}/events` to stream a single run's
+  events. This is the only Server-Sent-Events consumer; the broad
+  `/api/events` stream described in the old IA does not exist.
+
 ## 8. Settings
+
+`/settings` is a **full page** (`app/settings/page.tsx`), not a modal. It
+server-reads the config via `readConfig()` (falling back to `DEFAULT_CONFIG`
+with an inline error banner) and renders `components/settings/SettingsForm.tsx`.
+Saving `POST`s the whole config to `/api/config`, with field-level validation
+errors surfaced as toasts. Persistence is **✅ Shipped** (real config file).
+
+The form exposes exactly four sections plus Save:
+
+| Section | What it does | Status |
+|---|---|---|
+| **Project Roots** | Add/remove project roots, each with a path + tag list | ✅ Shipped |
+| **Vault Path** | Single vault path field | ✅ Shipped |
+| **Model Defaults** | Default model pick (Claude Haiku/Sonnet/Opus, plus GPT-5-mini / Kimi / GLM) | ✅ Shipped |
+| **Connectors** | Per-connector enable toggle (farmOS, Odoo, Ghost, Asana, Slack, GitHub) | ✅ Shipped |
+
+For *how* model selection actually drives routing and cost, see the runtime spec
+(`docs/plans/spec1-orchestrator.md`) — the dashboard only persists the
+preference.
+
+**Removed from the old IA** (no longer in the settings UI): the local-daemon
+settings block, the per-task model-routing table (now runtime-spec territory),
+connector base-URL/auth detail panels, an appearance/theme section, and the
+data/backups/export section. Theme toggling is a "Phase 6" palette placeholder
+(§1).
 
 ## 9. Mobile
 
