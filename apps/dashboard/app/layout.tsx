@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import { Suspense } from "react";
 import "./globals.css";
 import { SharedHeader } from "@/components/shell/SharedHeader";
+import { KpiVista } from "@/components/shell/KpiVista";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { Toaster } from "@/components/ui/sonner";
 import { CommandPalette } from "@/components/palette/command-palette";
@@ -44,6 +45,7 @@ export default function RootLayout({
           <NuqsAdapter>
             <QueryProvider>
               <SharedHeader />
+              <KpiVista />
               <main id="main-content" className="flex-1 flex flex-col">
                 {children}
               </main>
