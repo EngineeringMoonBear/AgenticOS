@@ -288,6 +288,50 @@ three-step template/metadata/prompt flow from the old IA is not built.
 
 ## 4. Cost
 
+Spend visibility. `app/cost/page.tsx` renders a `CostVista` hero over a grid of
+panels: burndown, projection, rate limits, and the two provider panels (OpenAI
+Codex, Ollama). The reasoning provider is **`openai-codex`** — the Codex panel
+reflects that spend. **Only the burndown reads real cost telemetry today; the
+rest are stubbed.** For how cost is actually metered and how runs are routed to
+models, see the runtime spec (`docs/plans/spec1-orchestrator.md`) — that
+pipeline is out of scope here.
+
+### CostVista hero · 🚧 WIP
+
+`components/shell/CostVista.tsx` uses a `BurndownProjectionBackdrop` driven by
+`buildStubBurndown()` — a synthetic in-component series, not real spend. 🚧.
+
+### Cost burndown chart · ✅ Shipped
+
+`components/observability/CostBurndownChart.tsx` → `/api/cost/burndown`, which
+runs a real Postgres aggregation over the `calls` table
+(`SUM(cost_cents)` bucketed by hour/day for a `24h`/`30d` range). This is the
+one Cost panel wired to real telemetry.
+
+### Cost projection panel · 🚧 WIP
+
+`components/observability/CostProjectionPanel.tsx` → `/api/cost/projection`,
+which returns **hardcoded** figures (`spend_usd: 47.74`, `cap_usd: 200`, …) with
+a `TODO: derive from real spend history + cap config`.
+
+### OpenAI Codex panel · 🚧 WIP
+
+`OpenAICodexPanel.tsx` → `/api/cost/models/openai` — **hardcoded** model usage
+rows (`gpt-5-codex`, `gpt-4o-mini`) with a `TODO: wire to real OpenAI usage
+telemetry`.
+
+### Ollama panel · 🚧 WIP
+
+`OllamaPanel.tsx` → `/api/cost/models/ollama` — **hardcoded** local-model rows
+(`nomic-embed-text`, `qwen2.5:3b`) with a `TODO: wire to real Ollama metrics
+endpoint`.
+
+### Rate limits panel · 🚧 WIP
+
+`RateLimitsPanel.tsx` → `/api/cost/rate-limits` — **hardcoded** TPM/RPM lines
+with a `TODO: wire to real upstream rate-limit telemetry (OpenAI usage
+headers)`.
+
 ## 5. Health
 
 ## 6. Memory
