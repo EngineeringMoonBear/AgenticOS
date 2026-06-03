@@ -548,6 +548,109 @@ data/backups/export section. Theme toggling is a "Phase 6" palette placeholder
 
 ## 9. Mobile
 
+The dashboard is desktop-primary but the shell and the heaviest tab are
+responsive today.
+
+### Shipped
+
+- **Tab dropdown** (✅, PR #126) — below 768px the `TabBar` collapses its
+  horizontal tabs into a dropdown selector (active tab + count, expanding to a
+  popover list; closes on outside-click / `Esc`). See §1.
+- **Memory sidebar drawer** (✅) — on the Memory page the wiki tree becomes an
+  off-canvas drawer toggled by a hamburger button, with a tap-to-dismiss
+  backdrop (`memory-sidebar--open`). Selecting a page closes it.
+- **Responsive vista + panel grids** (✅) — the `VistaShell` heroes and the
+  12-column panel grids on Runs / Cost / Health reflow to single-column at
+  narrow widths via their `col-span` breakpoints.
+
+### Deferred / not mobile-tuned
+
+- Settings editing, skill editing/creation, and graph exploration remain
+  desktop/Obsidian workflows.
+- Voice-capture-to-inbox (a mobile-first idea in the old IA) is **📋 Planned** —
+  there is no capture endpoint or UI today.
+
 ## 10. ASCII Wireframes
 
+Redrawn for the shipped 5-tab + per-tab Vista shell. (The persistent KpiVista
+banner is omitted — it is not yet mounted; see §1.)
+
+### Global shell + Runs tab
+
+```text
+┌────────────────────────────────────────────────────────────────────────────┐
+│ ⬡ AgenticOS                              [Filter: All ▾]  [⌘K]  ⚙          │
+│ [Runs 3] Architecture 11  Cost $2.41  Health 2 warn  Memory 1,652           │
+├────────────────────────────────────────────────────────────────────────────┤
+│ ░░ RunsVista — Live · as of 14:42:03 ░░  [stats tiles: real /api/tasks/*]   │
+├────────────────────────────────────────────────────────────────────────────┤
+│ LIVE  [▶ curator 2m12s] [▶ daily-brief 45s]              (live-runs-strip)  │
+│ ┌ Vault ingest 🚧 ┐  ┌ Live runs ✅ ┐  ┌ Scheduled runs 🚧 ┐                 │
+│ ┌ Recent errors ✅ ───────────────┐                                          │
+│ ┌ Run feed ✅ (filter not yet applied) ──────────────────────────────────┐  │
+│ │ ● curator        running   2m12s · …                                    │  │
+│ │ ✅ daily-brief    done      4m12s · …                                    │  │
+│ │ ❌ vault-ingest   failed    0m43s · …                  [Retry]           │  │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Memory tab (three-pane)
+
+```text
+┌────────────────────────────────────────────────────────────────────────────┐
+│ ⬡ AgenticOS │ Runs Architecture Cost Health [Memory] │ [Filter ▾] [⌘K] ⚙   │
+├────────────────────────────────────────────────────────────────────────────┤
+│ ░░ MemoryVista 🚧 ░░     ┌ Skills (vault ✅) ┐  ┌ Recent changes ✅ ┐        │
+├────────────────────────────────────────────────────────────────────────────┤
+│ Memory                                                  [ sync ✅ ↻ ]        │
+├──────────────────┬──────────────────────────────────┬──────────────────────┤
+│ WIKI TREE ✅      │  PAGE READER ✅                  │ BACKLINKS ✅          │
+│ ▼ wiki/          │  # Page Title                    │ ← N pages link here  │
+│   ├ Farm         │  [rendered markdown]             │                      │
+│   └ Software     │                                  │ OUTGOING LINKS ✅     │
+│ ─────────────    │                                  │ → links              │
+│ INBOX (n) 🚧     │                                  │ TAGS (→ filter) ✅    │
+│  (discard/promote│  [Open in Obsidian ↗]            │                      │
+│   wiring: Phase E)│                                 │                      │
+└──────────────────┴──────────────────────────────────┴──────────────────────┘
+```
+
 ## Appendix: Legacy / Removed
+
+Recorded so the divergence between this doc and stray code/history is explicit.
+
+### `/observability` route — superseded, slated for deletion
+
+`app/observability/` still exists (`page.tsx`, `run/[id]`, `schedules/`) but is
+**orphaned**: it is not in the `TabBar`, and its old "live runs + schedules +
+metrics" responsibilities have been split into the **Runs**, **Cost**, and
+**Health** tabs. It survives only because run-detail still resolves under
+`/observability/run/{id}` (the run feed and palette link there). The route is
+**slated for code deletion** as a separate task once run-detail is rehomed under
+`/runs/{id}` — it is intentionally **not** removed by this docs-only change.
+
+The old, untracked 3-tab nav `components/layout/header-tabs.tsx` (and
+`components/layout/header.tsx`) are likewise superseded by `shell/TabBar.tsx` /
+`shell/SharedHeader.tsx` and should be removed with the same cleanup.
+
+### Removed Memory UI (OpenViking-premise)
+
+An earlier Memory UI built around an agent-memory browsing premise
+(category-browser / abstract-list / detail-view / retrieval-trajectory-graph
+style components) was **deleted**. The shipped Memory tab is the vault-driven
+three-pane in §6. The two-brain split (OpenViking = agent obs, *not* the Memory
+tab) is the reason that UI was retired.
+
+### Relocated: model-routing strategy
+
+The old §7 "Model Routing Strategy" (task taxonomy, model tiers, routing table,
+cost guardrails, telemetry feedback loop) was **agent-runtime configuration, not
+dashboard IA**. It has been relocated to the runtime spec
+(`docs/plans/spec1-orchestrator.md`). This doc keeps only the dashboard surfaces
+that *display* the results (the Cost tab, the Settings "Model Defaults" pick).
+
+### Retired front-matter banner
+
+The previous "PARTIALLY STALE" holding banner at the top of this doc is gone —
+this rewrite is the current reference, and status is now tracked per-section via
+the badge legend rather than via a global warning.
