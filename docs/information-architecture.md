@@ -233,6 +233,59 @@ is not fully built out — treat the multi-tab drawer anatomy as **📋 Planned*
 
 ## 3. Architecture
 
+The skill catalog — "buttonize your workflows." `app/architecture/page.tsx`
+renders an `ArchitectureVista` hero, a page header with a "+ New Skill" button,
+a domain filter rail, and a responsive grid of `SkillCard`s.
+
+```text
+┌─────────────────────── ArchitectureVista (hero) ────────────────────────┐
+├──────────────────────────────────────────────────────────────────────────┤
+│ Architecture                                              [ + New Skill ] │
+│ [All] [Farm] [Software] [Marketing] [Video] [Personal]                    │
+│ ┌ SkillCard ┐ ┌ SkillCard ┐ ┌ SkillCard ┐                                 │
+│ ┌ SkillCard ┐ ┌ SkillCard ┐ …                                             │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### ArchitectureVista hero · 🚧 WIP
+
+`components/shell/ArchitectureVista.tsx` over `VistaShell`, with a
+`SkillGalaxyBackdrop`. All four KPI tiles are **hardcoded literals**
+("11 registered skills", "25 dispatched today", "Farm (5) top domain", …) — no
+data hook. 🚧.
+
+### Skill catalog (SkillCard grid) · 🚧 WIP
+
+The grid maps over `SKILL_FIXTURES` (`lib/fixtures/skills.ts`), **not**
+`/api/vault/skills`. So although a real, vault-server-backed skills endpoint
+exists (and the **Memory** tab's Skills panel uses it — see §6), the
+Architecture grid still renders static fixture data. Each `SkillCard` shows
+icon/title, description, tags, "Last run · NN% success", and a Run button — but
+the **Run button only fires a `toast.info("Dispatching wires up in Phase 4")`**.
+So: card rendering 🚧 (fixtures), dispatch 📋 Planned.
+
+> When this grid is repointed at `/api/vault/skills` (the
+> `SkillEntry { name, description, triggers, usedBy, path }` shape from
+> vault-server's `wiki/Skills`), it becomes ✅.
+
+### Domain filter rail · ✅ Shipped (interaction) / 🚧 WIP (counts)
+
+The `[All] [Farm] [Software] …` rail toggles the global `?filter=` tags via
+`useFilter()`, and the grid filters fixtures by tag intersection in-memory —
+that interaction works. The rail does not show real per-domain counts (the
+fixture set is static).
+
+### Empty state · ✅ Shipped
+
+When the active filter matches no skills, the grid shows a centered "No skills
+match this filter" with a "Clear filter" action. The richer "create your first
+skill" onboarding empty state from the old IA is **📋 Planned**.
+
+### New Skill creation · 📋 Planned
+
+"+ New Skill" fires `toast.info("Skill creation available in Phase 2")`. The
+three-step template/metadata/prompt flow from the old IA is not built.
+
 ## 4. Cost
 
 ## 5. Health
