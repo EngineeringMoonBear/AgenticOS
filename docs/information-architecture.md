@@ -156,6 +156,81 @@ tab-badge notification surface today.
 
 ## 2. Runs
 
+The default landing tab and the live-ops surface. It absorbs the "live runs +
+schedules + recent activity" content that the old single `/observability` view
+used to carry. `app/runs/page.tsx` composes a `RunsVista` hero over a 12-column
+grid of panels. Most run/task panels read **Postgres** through `/api/tasks/*`
+and `/api/agent/runs`; a couple of supporting panels are still stubbed.
+
+```text
+┌──────────────────────────── RunsVista (hero) ───────────────────────────┐
+├──────────────────────────────────────────────────────────────────────────┤
+│ [ Live runs strip — running tasks, live elapsed ]                         │
+│ ┌ Vault ingest ┐  ┌ Live runs ┐  ┌ Scheduled runs ┐                       │
+│ ┌ Recent errors ─────────────┐                                            │
+│ ┌ Run feed (full history) ──────────────────────────────────────────────┐│
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### RunsVista hero · ✅ Shipped
+
+`components/shell/RunsVista.tsx` over `VistaShell`. Its activity-strip backdrop
+and four KPI tiles read real data: `useRecentRunEvents(60)` →
+`/api/tasks/recent-events`, `useRunsStats()` → `/api/tasks/stats`, and
+`useNextCron()`. Both task routes query Postgres.
+
+### Live runs strip · ✅ Shipped
+
+`components/observability/live-runs-strip.tsx` — `useRunFeed({ status:
+"running" })` → `/api/agent/runs`, ticking a live elapsed counter every second.
+The run feed source is the `runs.jsonl` log (`AGENTICOS_RUNS_PATH`, default
+`/var/log/agenticos/runs.jsonl`); it returns `[]` cleanly when the log is
+absent.
+
+### Run feed · ✅ Shipped
+
+`LiveRunFeedSection` (`app/runs/live-run-feed-section.tsx`) wraps
+`components/observability/run-feed.tsx`, which calls `useRunFeed({ limit: 50 })`
+→ `/api/agent/runs`. The feed renders run cards (agent, status, timing).
+**Note:** the section currently passes `filterActive={false}` and empty filter
+tags — i.e. the global filter chip does **not** yet shape the run feed (a known
+gap, not a regression).
+
+### Live runs panel · ✅ Shipped
+
+`components/observability/LiveRunsPanel.tsx` — `/api/tasks/active` (Postgres),
+refetched every 5s. Surfaces currently-running tasks with a live elapsed
+counter and a "stuck" heuristic (>5m runtime or >60s without a heartbeat). The
+cancel button issues `DELETE /api/tasks/{id}`.
+
+### Recent errors panel · ✅ Shipped
+
+`components/observability/RecentErrorsPanel.tsx` — `/api/tasks/recent-errors`
+(Postgres: `SELECT … FROM tasks WHERE status = 'failed' … LIMIT 20`). Each row
+has a retry button → `POST /api/tasks/{id}/retry`.
+
+### Scheduled runs panel · 🚧 WIP
+
+`components/observability/ScheduledRunsPanel.tsx` reads `/api/tasks/scheduled`,
+but that route returns a **hardcoded** job list (`vault-ingest`, `cost-report`,
+`daily-brief`) with a `TODO: wire to real scheduler (crontab / queue)`. The
+"trigger now" button posts to a stub endpoint that returns `501`. The intended
+real source is the Hermes cron schedule.
+
+### Vault ingest panel · 🚧 WIP
+
+`components/observability/VaultIngestPanel.tsx` reads `/api/ingest/recent`,
+which returns **hardcoded** sample ingest runs (`TODO: wire to vault-ingest run
+history`). (The sibling `/api/ingest/status` *is* Postgres-backed, but this
+panel does not use it.)
+
+### Run detail · ✅ Shipped (route) 
+
+Runs link to a detail route (`/observability/run/{id}` today; the command
+palette and panels navigate there). The single-task API `/api/tasks/{id}` is
+Postgres-backed. The richer logs/timeline/usage drawer described in the old IA
+is not fully built out — treat the multi-tab drawer anatomy as **📋 Planned**.
+
 ## 3. Architecture
 
 ## 4. Cost
