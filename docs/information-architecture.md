@@ -619,19 +619,28 @@ banner is omitted — it is not yet mounted; see §1.)
 
 Recorded so the divergence between this doc and stray code/history is explicit.
 
-### `/observability` route — superseded, slated for deletion
+### `/observability` route — dead landing page removed; subroutes retained
 
-`app/observability/` still exists (`page.tsx`, `run/[id]`, `schedules/`) but is
-**orphaned**: it is not in the `TabBar`, and its old "live runs + schedules +
-metrics" responsibilities have been split into the **Runs**, **Cost**, and
-**Health** tabs. It survives only because run-detail still resolves under
-`/observability/run/{id}` (the run feed and palette link there). The route is
-**slated for code deletion** as a separate task once run-detail is rehomed under
-`/runs/{id}` — it is intentionally **not** removed by this docs-only change.
+The dead top-level `app/observability/page.tsx` landing page has been
+**removed**. Its old "live runs + schedules + metrics" responsibilities were
+split into the **Runs**, **Cost**, and **Health** tabs, and nothing linked to
+the landing page itself.
 
-The old, untracked 3-tab nav `components/layout/header-tabs.tsx` (and
-`components/layout/header.tsx`) are likewise superseded by `shell/TabBar.tsx` /
-`shell/SharedHeader.tsx` and should be removed with the same cleanup.
+Two subroutes **remain as live destinations** (they are linked from the shipped
+tabs, so they are *not* orphaned):
+
+- `app/observability/run/[id]/` — the run-detail view, linked from the run feed
+  (`run-card.tsx`, `live-runs-strip.tsx`) and the ⌘K command palette. Its
+  back-link now points to `/runs` (was `/observability`).
+- `app/observability/schedules/` — linked from `metrics-sidebar.tsx`.
+
+Eventually rehoming these under `/runs/{id}` and `/runs/schedules` would let the
+`/observability/` segment retire entirely, but that is a larger routing change
+left for later.
+
+The old, untracked 3-tab nav `components/layout/header-tabs.tsx` and
+`components/layout/header.tsx` (superseded by `shell/TabBar.tsx` /
+`shell/SharedHeader.tsx`) have also been **removed**.
 
 ### Removed Memory UI (OpenViking-premise)
 

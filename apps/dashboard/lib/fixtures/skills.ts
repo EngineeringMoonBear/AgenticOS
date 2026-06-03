@@ -3,9 +3,14 @@ export type Skill = {
   name: string;
   description: string;
   tags: string[];
-  lastRunAt: string; // ISO 8601
-  successRate: number; // 0–100
-  lane: "hermes" | "sandcastle";
+  /**
+   * Run metadata is optional: real vault-backed skills (from /api/vault/skills)
+   * have no run history, so the card omits the meta row / lane badge for them.
+   * The local fixtures still populate these for the command palette demo.
+   */
+  lastRunAt?: string; // ISO 8601
+  successRate?: number; // 0–100
+  lane?: "hermes" | "sandcastle";
 };
 
 export const SKILL_FIXTURES: Skill[] = [
