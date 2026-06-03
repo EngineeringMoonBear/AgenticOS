@@ -1,11 +1,13 @@
 "use client";
 
-import { Plus, Sparkles } from "lucide-react";
+import { Plus, Sparkles, Loader2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useFilter } from "@/lib/filter/use-filter";
-import { SKILL_FIXTURES } from "@/lib/fixtures/skills";
+import type { Skill } from "@/lib/fixtures/skills";
 import { SkillCard } from "@/components/skills/skill-card";
 import { ArchitectureVista } from "@/components/shell/ArchitectureVista";
+import { useVaultSkills } from "@/lib/vault/hooks/use-vault-skills";
+import type { SkillEntry } from "@/app/api/vault/skills/route";
 
 const DOMAIN_CHIPS: { id: string; label: string }[] = [
   { id: "farm", label: "Farm" },
@@ -15,15 +17,42 @@ const DOMAIN_CHIPS: { id: string; label: string }[] = [
   { id: "personal", label: "Personal" },
 ];
 
+/**
+ * The real vault stores skills nested by domain (wiki/Skills/Software/…), so
+ * the domain tag is the path segment immediately after `Skills/`. Triggers ride
+ * along as additional tags so they show on the card.
+ */
+function entryToSkill(entry: SkillEntry): Skill {
+  const segments = entry.path.split("/");
+  const skillsIdx = segments.findIndex((s) => s.toLowerCase() === "skills");
+  const domain =
+    skillsIdx >= 0 && segments.length > skillsIdx + 2
+      ? segments[skillsIdx + 1].toLowerCase()
+      : null;
+
+  const tags = [
+    ...(domain ? [domain] : []),
+    ...entry.triggers,
+  ].filter((t, i, arr) => arr.indexOf(t) === i);
+
+  return {
+    id: entry.path,
+    name: entry.name,
+    description: entry.description,
+    tags,
+  };
+}
+
 export default function ArchitecturePage() {
   const { tags, toggleTag, clear } = useFilter();
+  const { data, isLoading, isError } = useVaultSkills();
+
+  const allSkills = (data?.skills ?? []).map(entryToSkill);
 
   const visibleSkills =
     tags.length === 0
-      ? SKILL_FIXTURES
-      : SKILL_FIXTURES.filter((skill) =>
-          skill.tags.some((t) => tags.includes(t))
-        );
+      ? allSkills
+      : allSkills.filter((skill) => skill.tags.some((t) => tags.includes(t)));
 
   function handleNewSkill() {
     toast.info("Skill creation available in Phase 2.");
@@ -130,8 +159,54 @@ export default function ArchitecturePage() {
         })}
       </div>
 
-      {/* Skill grid or empty state */}
-      {visibleSkills.length === 0 ? (
+      {/* Skill grid, with loading / error / empty states */}
+      {isLoading ? (
+        <div
+          className="flex flex-col items-center justify-center gap-3 py-20"
+          role="status"
+        >
+          <Loader2
+            size={32}
+            strokeWidth={1.5}
+            className="animate-spin"
+            style={{ color: "var(--text-muted)" }}
+            aria-hidden="true"
+          />
+          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+            Loading skills…
+          </p>
+        </div>
+      ) : isError ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-20">
+          <AlertCircle
+            size={32}
+            strokeWidth={1.5}
+            style={{ color: "var(--text-muted)" }}
+            aria-hidden="true"
+          />
+          <p
+            className="text-sm font-medium"
+            style={{ color: "var(--text-secondary)" }}
+          >
+            Skills catalog unavailable
+          </p>
+        </div>
+      ) : allSkills.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-20">
+          <Sparkles
+            size={40}
+            strokeWidth={1.5}
+            style={{ color: "var(--text-muted)" }}
+            aria-hidden="true"
+          />
+          <p
+            className="text-sm font-medium"
+            style={{ color: "var(--text-secondary)" }}
+          >
+            No skills registered
+          </p>
+        </div>
+      ) : visibleSkills.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 py-20">
           <Sparkles
             size={40}

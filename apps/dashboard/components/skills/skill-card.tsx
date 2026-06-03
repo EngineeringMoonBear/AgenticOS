@@ -83,13 +83,15 @@ export function SkillCard({ skill }: SkillCardProps) {
           ))}
         </div>
 
-        {/* Meta row */}
-        <p
-          className="text-[11px] mt-auto"
-          style={{ color: "var(--text-muted)" }}
-        >
-          Last run: {formatLastRun(skill.lastRunAt)} &middot; {skill.successRate}% success
-        </p>
+        {/* Meta row — only for skills with run history (local fixtures). */}
+        {skill.lastRunAt && typeof skill.successRate === "number" && (
+          <p
+            className="text-[11px] mt-auto"
+            style={{ color: "var(--text-muted)" }}
+          >
+            Last run: {formatLastRun(skill.lastRunAt)} &middot; {skill.successRate}% success
+          </p>
+        )}
       </div>
 
       {/* Footer */}
@@ -97,17 +99,17 @@ export function SkillCard({ skill }: SkillCardProps) {
         className="flex items-center justify-between px-4 py-3"
         style={{ borderTop: "1px solid var(--border-subtle)" }}
       >
-        {/* Lane badge */}
+        {/* Lane badge — present only when the skill declares a lane. */}
         <span
           className="text-[10px] font-medium uppercase tracking-wider"
           style={{
             color:
-              skill.lane === "hermes"
-                ? "var(--lane-hermes)"
-                : "var(--lane-sandcastle)",
+              skill.lane === "sandcastle"
+                ? "var(--lane-sandcastle)"
+                : "var(--lane-hermes)",
           }}
         >
-          {skill.lane}
+          {skill.lane ?? ""}
         </span>
 
         {/* Dispatch button — disabled, tooltip via title */}
