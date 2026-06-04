@@ -356,6 +356,11 @@ Memory itself lives in the vault as markdown, so as long as Syncthing has replic
 
 ## Backups
 
+> Full disaster-recovery plan for all three stores (vault, Postgres, OpenViking)
+> — posture, procedures, restore drills — lives in
+> [`docs/runbooks/backup-and-recovery.md`](../docs/runbooks/backup-and-recovery.md).
+> This section covers the Postgres piece.
+
 The Postgres cost-telemetry DB (cost rows + task/session ledger) is dumped
 **automatically** by a systemd timer:
 
