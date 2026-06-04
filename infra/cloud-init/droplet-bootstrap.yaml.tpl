@@ -90,6 +90,36 @@ write_files:
       Persistent=true
       Unit=agenticos-pg-backup.service
 
+  - path: /etc/systemd/system/agenticos-viking-backup.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=AgenticOS OpenViking memory backup (native pack/backup → .ovpack)
+      After=network-online.target docker.service
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      User=deploy
+      WorkingDirectory=/opt/agenticos/repo
+      ExecStart=/bin/bash -lc '/opt/agenticos/repo/infra/scripts/viking-backup.sh'
+      StandardOutput=append:/var/log/agenticos/viking-backup.log
+      StandardError=append:/var/log/agenticos/viking-backup.log
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/agenticos-viking-backup.timer
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Run AgenticOS OpenViking memory backup daily at 04:30 local
+
+      [Timer]
+      OnCalendar=*-*-* 04:30:00
+      Persistent=true
+      Unit=agenticos-viking-backup.service
+
   # Drop-in override for the syncthing@deploy.service unit. By default
   # Syncthing's GUI binds to 127.0.0.1:8384 (loopback only), which means
   # even with UFW open on tailscale0 the GUI is unreachable from the
@@ -309,6 +339,9 @@ runcmd:
 
   # --- Postgres backup timer (daily pg_dump → /opt/backups, 14-day retention) ---
   - systemctl enable --now agenticos-pg-backup.timer
+
+  # --- OpenViking memory backup timer (daily pack/backup → /opt/backups) ---
+  - systemctl enable --now agenticos-viking-backup.timer
 
   # --- Unattended security upgrades ---
   - echo 'APT::Periodic::Unattended-Upgrade "1";' > /etc/apt/apt.conf.d/20auto-upgrades
