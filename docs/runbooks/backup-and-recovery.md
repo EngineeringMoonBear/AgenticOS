@@ -13,7 +13,7 @@ brain; the recovery story differs for each.
 |-------|---------------|----------|--------------|--------------------------|
 | **Vault** | Human knowledge — Obsidian markdown (`wiki/`, `+inbox/`, `+sources/`) | `/opt/vault` | Syncthing → Mac (replica) | It *is* the source of truth |
 | **Postgres** (`agenticos-db`) | Cost ledger, task/session ledger, `vault_ingest_state` dedup hashes | `agenticos-db-data` volume | `pg-backup.sh` → `/opt/backups` daily | No — only copy of cost/run history |
-| **OpenViking** (`openviking-data`) | Agent memory: embeddings + LLM-extracted memories, sessions, relation graph | `openviking-data` volume | ⚠️ **not yet automated** | **No — see below** |
+| **OpenViking** (`openviking-data`) | Agent memory: embeddings + LLM-extracted memories, sessions, relation graph | `openviking-data` volume | `viking-backup.sh` → `/opt/backups` daily | **No — see below** |
 
 ### Why OpenViking is NOT just a rebuildable cache
 
@@ -73,44 +73,44 @@ OpenViking ships a native, app-consistent snapshot API:
 - `POST /api/v1/pack/restore` — body `{"temp_file_id": "...", "on_conflict":
   "overwrite", "vector_mode": "auto"}`.
 
-**Blocker before automating:** the vendored OpenAPI
-(`docs/reference/openviking-v0.3.19-openapi.json`) leaves the `/pack/backup`
-**200 response schema empty** — so where the pack artifact lands / how to
-retrieve it is unverified. Do NOT ship a `viking-backup.sh` until this is
-confirmed against the live server, or the job will go green while capturing
-nothing.
+**Verified contract** (probed against the live v0.3.19 server, 2026-06-04):
+`POST /api/v1/pack/backup` returns **HTTP 200 with the pack streamed directly as
+the response body** — a ZIP (`.ovpack`) containing `files/{resources,user,agent,
+session}/…` + `_ovpack/manifest.json` + `index_records.jsonl`. There is no
+`temp_file_id` or server-side path to chase: you save the body with `curl -o`.
+Auth = `Authorization: Bearer <root_api_key from ov.conf>` plus the
+`X-OpenViking-{Account,User,Agent}` tenant headers.
 
-**One-time verification probe** (run on the Droplet, where Viking is reachable
-on the VPC; uses the root key in-situ — never echo it):
+Use **`include_vectors: false`**: the `true` mode 400s
+(`Cannot export incomplete OpenViking vector index snapshot`) whenever any
+record is still pending embedding — too brittle for an unattended job — and
+vectors recompute deterministically on restore (`nomic-embed-text`), so nothing
+is lost. The pack is smaller without them.
 
-```bash
-ssh deploy@$DROPLET '
-  set -a; source /opt/agenticos/.env; set +a
-  curl -fsS -X POST http://10.116.16.2:1933/api/v1/pack/backup \
-    -H "Authorization: Bearer $OPENVIKING_ROOT_API_KEY" \
-    -H "X-OpenViking-Account: agenticos" \
-    -H "Content-Type: application/json" \
-    -d "{\"include_vectors\": true}" | tee /tmp/pack-probe.json
-  echo; echo "--- look for a path / temp_file_id / download handle in the above ---"
-  # If it wrote a file inside the container, find it:
-  docker exec openviking sh -lc "ls -lhrt /app/.openviking/data 2>/dev/null | tail" || true'
-```
+**Backup:** automated by `infra/scripts/viking-backup.sh` (systemd
+`agenticos-viking-backup.timer`, daily 04:30) →
+`/opt/backups/openviking-<UTC>.ovpack`, newest 14 kept. Integrity gates: HTTP
+200 (`curl -f`), min-size, ZIP magic `PK`, and `unzip -t` CRC check when
+available — so a refusal or truncated stream never overwrites or rotates away a
+good pack.
 
-Once the artifact location is known, `viking-backup.sh` mirrors `pg-backup.sh`:
-call the endpoint, retrieve the pack to `/opt/backups/openviking-<UTC>.ovpack`,
-verify non-trivial size, rotate to newest 14, on its own daily systemd timer.
-
-**Interim manual backup** (until automated) — tar the volume during a brief stop
-(seconds of brain downtime; consistent because the process is paused):
+**Restore** (two-step — upload the pack, then restore it):
 
 ```bash
-ssh deploy@$DROPLET '
-  cd /opt/agenticos
-  docker compose stop openviking
-  docker run --rm -v openviking-data:/data -v /opt/backups:/out alpine \
-    tar czf /out/openviking-vol-$(date -u +%Y%m%dT%H%M%SZ).tar.gz -C /data .
-  docker compose start openviking'
+# 1. temp_upload the .ovpack → returns a temp_file_id
+FID=$(curl -fsS -X POST http://10.116.16.2:1933/api/v1/resources/temp_upload \
+  -H "Authorization: Bearer $KEY" -H "X-OpenViking-Account: agenticos" \
+  -F file=@openviking-<UTC>.ovpack | jq -r '.result.temp_file_id')
+# 2. restore (recompute vectors, overwrite on conflict)
+curl -fsS -X POST http://10.116.16.2:1933/api/v1/pack/restore \
+  -H "Authorization: Bearer $KEY" -H "X-OpenViking-Account: agenticos" \
+  -H "Content-Type: application/json" \
+  -d "{\"temp_file_id\": \"$FID\", \"on_conflict\": \"overwrite\", \"vector_mode\": \"recompute\"}"
 ```
+
+> Confirm the exact `temp_upload` field name + response path against the live
+> server on first real restore (drill it — see below); the two-step shape is
+> from the OpenAPI but the upload field was not probed.
 
 ### C. Vault — Syncthing + versioning
 

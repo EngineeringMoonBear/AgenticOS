@@ -359,34 +359,40 @@ Memory itself lives in the vault as markdown, so as long as Syncthing has replic
 > Full disaster-recovery plan for all three stores (vault, Postgres, OpenViking)
 > — posture, procedures, restore drills — lives in
 > [`docs/runbooks/backup-and-recovery.md`](../docs/runbooks/backup-and-recovery.md).
-> This section covers the Postgres piece.
+> This section covers the two automated dump timers.
 
-The Postgres cost-telemetry DB (cost rows + task/session ledger) is dumped
-**automatically** by a systemd timer:
+Two systemd timers dump to `/opt/backups` nightly, each with a 14-item
+retention window:
 
-- `infra/scripts/pg-backup.sh` — `pg_dump` the `agenticos` DB from the
-  `agenticos-db` container, gzip to `/opt/backups/agenticos-<UTC>.sql.gz`, then
-  prune to the newest **14** dumps. A `pipefail` + minimum-size gate + atomic
-  `mv` ensure a failed dump never overwrites or rotates away a good one.
-- `agenticos-pg-backup.timer` fires daily at **04:00 local** (`.service` +
-  `.timer` units installed via `infra/cloud-init/droplet-bootstrap.yaml.tpl`).
+- **Postgres** — `infra/scripts/pg-backup.sh` `pg_dump`s the `agenticos` DB
+  (cost rows + task/session ledger) from `agenticos-db`, gzip →
+  `/opt/backups/agenticos-<UTC>.sql.gz`. `agenticos-pg-backup.timer`, daily
+  **04:00**. `pipefail` + min-size + atomic `mv` so a failed dump never
+  overwrites a good one.
+- **OpenViking** — `infra/scripts/viking-backup.sh` calls the native
+  `POST /api/v1/pack/backup` (`include_vectors:false`) and saves the streamed
+  `.ovpack` ZIP → `/opt/backups/openviking-<UTC>.ovpack`.
+  `agenticos-viking-backup.timer`, daily **04:30**. Integrity gates: HTTP-200,
+  min-size, `PK` ZIP magic, and `unzip -t` CRC check.
 
 Fresh Droplets get the timer from cloud-init. The `.service` / `.timer` bodies
 live inline in the cloud-init template (single source of truth — same pattern as
-the curator units). To install on an **already-running** Droplet, copy those two
-unit bodies into `/etc/systemd/system/` as root (the `deploy` user has `NOPASSWD`
-for `systemctl` but not for writing unit files), then:
+the curator units). To install on an **already-running** Droplet, copy the four
+unit bodies (`agenticos-pg-backup` + `agenticos-viking-backup`, `.service` +
+`.timer` each) into `/etc/systemd/system/` as root (the `deploy` user has
+`NOPASSWD` for `systemctl` but not for writing unit files), then:
 
 ```bash
-# 1. Refresh the repo clone so the script is present
+# 1. Refresh the repo clone so the scripts are present
 ssh deploy@$DROPLET 'cd /opt/agenticos/repo && git pull'
-# 2. As root: write agenticos-pg-backup.service + .timer to /etc/systemd/system/
-#    (paste the two blocks from infra/cloud-init/droplet-bootstrap.yaml.tpl)
-# 3. Enable + smoke-test
+# 2. As root: write the agenticos-{pg,viking}-backup .service + .timer units to
+#    /etc/systemd/system/ (paste the four blocks from the cloud-init template)
+# 3. Enable + smoke-test both
 ssh deploy@$DROPLET 'sudo systemctl daemon-reload && \
-  sudo systemctl enable --now agenticos-pg-backup.timer && \
-  systemctl list-timers agenticos-pg-backup.timer --no-pager && \
-  /opt/agenticos/repo/infra/scripts/pg-backup.sh && ls -lh /opt/backups'
+  sudo systemctl enable --now agenticos-pg-backup.timer agenticos-viking-backup.timer && \
+  systemctl list-timers "agenticos-*-backup.timer" --no-pager && \
+  /opt/agenticos/repo/infra/scripts/pg-backup.sh && \
+  /opt/agenticos/repo/infra/scripts/viking-backup.sh && ls -lh /opt/backups'
 ```
 
 **Scope:** this protects against volume corruption, a bad migration, or an
