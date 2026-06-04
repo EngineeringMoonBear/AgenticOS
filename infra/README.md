@@ -344,7 +344,7 @@ terraform destroy
 
 ⚠️ This will delete the Droplet and **its Docker volumes** (Postgres task ledger + cost rows, Ollama model cache). The vault on `/opt/vault` is also lost unless it has been Syncthing-replicated to the Mac.
 
-Take a Postgres dump first if you want to preserve task history and cost data:
+Before destroying, pull the latest dump off-box (see "Backups" below), or take a fresh one on demand:
 
 ```bash
 ssh deploy@$(terraform output -raw droplet_public_ip) \
@@ -353,6 +353,51 @@ ssh deploy@$(terraform output -raw droplet_public_ip) \
 ```
 
 Memory itself lives in the vault as markdown, so as long as Syncthing has replicated `/opt/vault` to your Mac, the agent's accumulated knowledge survives the rebuild.
+
+## Backups
+
+The Postgres cost-telemetry DB (cost rows + task/session ledger) is dumped
+**automatically** by a systemd timer:
+
+- `infra/scripts/pg-backup.sh` — `pg_dump` the `agenticos` DB from the
+  `agenticos-db` container, gzip to `/opt/backups/agenticos-<UTC>.sql.gz`, then
+  prune to the newest **14** dumps. A `pipefail` + minimum-size gate + atomic
+  `mv` ensure a failed dump never overwrites or rotates away a good one.
+- `agenticos-pg-backup.timer` fires daily at **04:00 local** (`.service` +
+  `.timer` units installed via `infra/cloud-init/droplet-bootstrap.yaml.tpl`).
+
+Fresh Droplets get the timer from cloud-init. The `.service` / `.timer` bodies
+live inline in the cloud-init template (single source of truth — same pattern as
+the curator units). To install on an **already-running** Droplet, copy those two
+unit bodies into `/etc/systemd/system/` as root (the `deploy` user has `NOPASSWD`
+for `systemctl` but not for writing unit files), then:
+
+```bash
+# 1. Refresh the repo clone so the script is present
+ssh deploy@$DROPLET 'cd /opt/agenticos/repo && git pull'
+# 2. As root: write agenticos-pg-backup.service + .timer to /etc/systemd/system/
+#    (paste the two blocks from infra/cloud-init/droplet-bootstrap.yaml.tpl)
+# 3. Enable + smoke-test
+ssh deploy@$DROPLET 'sudo systemctl daemon-reload && \
+  sudo systemctl enable --now agenticos-pg-backup.timer && \
+  systemctl list-timers agenticos-pg-backup.timer --no-pager && \
+  /opt/agenticos/repo/infra/scripts/pg-backup.sh && ls -lh /opt/backups'
+```
+
+**Scope:** this protects against volume corruption, a bad migration, or an
+accidental `docker compose down -v`. It is **on-box only** — surviving total
+Droplet loss requires copying `/opt/backups` off the Droplet. The $0 path
+(matching the no-paid-services rule) is to add `/opt/backups` to the existing
+Syncthing share so dumps replicate to the Mac alongside the vault; that needs an
+interactive Syncthing folder-add (operator step) and is the natural next
+increment.
+
+**Restore:**
+
+```bash
+gunzip < agenticos-<UTC>.sql.gz | \
+  ssh deploy@$DROPLET 'docker compose -f /opt/agenticos/docker-compose.yml exec -T agenticos-db psql -U agenticos agenticos'
+```
 
 ## Credentials hygiene
 

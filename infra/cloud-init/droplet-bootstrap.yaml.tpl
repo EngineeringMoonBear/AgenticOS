@@ -60,6 +60,36 @@ write_files:
       Persistent=true
       Unit=agenticos-curator.service
 
+  - path: /etc/systemd/system/agenticos-pg-backup.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=AgenticOS Postgres backup (cost telemetry + task ledger)
+      After=network-online.target docker.service
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      User=deploy
+      WorkingDirectory=/opt/agenticos/repo
+      ExecStart=/bin/bash -lc '/opt/agenticos/repo/infra/scripts/pg-backup.sh'
+      StandardOutput=append:/var/log/agenticos/pg-backup.log
+      StandardError=append:/var/log/agenticos/pg-backup.log
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/agenticos-pg-backup.timer
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Run AgenticOS Postgres backup daily at 04:00 local
+
+      [Timer]
+      OnCalendar=*-*-* 04:00:00
+      Persistent=true
+      Unit=agenticos-pg-backup.service
+
   # Drop-in override for the syncthing@deploy.service unit. By default
   # Syncthing's GUI binds to 127.0.0.1:8384 (loopback only), which means
   # even with UFW open on tailscale0 the GUI is unreachable from the
@@ -276,6 +306,9 @@ runcmd:
   # --- Curator timer (won't actually fire usefully until `claude /login` is done) ---
   - systemctl daemon-reload
   - systemctl enable --now agenticos-curator.timer
+
+  # --- Postgres backup timer (daily pg_dump → /opt/backups, 14-day retention) ---
+  - systemctl enable --now agenticos-pg-backup.timer
 
   # --- Unattended security upgrades ---
   - echo 'APT::Periodic::Unattended-Upgrade "1";' > /etc/apt/apt.conf.d/20auto-upgrades
