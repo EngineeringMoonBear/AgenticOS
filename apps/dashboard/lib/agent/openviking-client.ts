@@ -71,8 +71,11 @@ export class OpenVikingClient {
 }
 
 export function getOpenVikingClient(): OpenVikingClient {
-  const baseUrl = process.env.OPENVIKING_URL;
-  const apiKey = process.env.OPENVIKING_ROOT_API_KEY;
+  // App Platform injects OPENVIKING_ENDPOINT/OPENVIKING_API_KEY (matching the
+  // Hermes plugin convention; see app-platform.tf). Fall back to the older
+  // OPENVIKING_URL/OPENVIKING_ROOT_API_KEY names for local dev.
+  const baseUrl = process.env.OPENVIKING_ENDPOINT ?? process.env.OPENVIKING_URL;
+  const apiKey = process.env.OPENVIKING_API_KEY ?? process.env.OPENVIKING_ROOT_API_KEY;
   if (!baseUrl) throw new Error("OPENVIKING_URL not set");
   if (!apiKey) throw new Error("OPENVIKING_ROOT_API_KEY not set");
   return new OpenVikingClient(baseUrl, apiKey);
