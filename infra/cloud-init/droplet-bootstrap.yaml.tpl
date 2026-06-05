@@ -258,31 +258,86 @@ runcmd:
       # without having to copy the entire workspace. -sfn keeps this idempotent
       # on re-runs (replaces existing link target without dereferencing).
       ln -sfn /opt/agenticos/repo/packages /opt/agenticos/packages
+      # Ensure /opt/agenticos/.env exists with correct ownership/perms before
+      # we UPSERT secrets into it. Touch-only (no content) so the UPSERT
+      # blocks below own every line we care about.
       if [ ! -f /opt/agenticos/.env ]; then
-        {
-          echo "AGENTICOS_DB_PASSWORD=$(openssl rand -hex 32)"
-          echo "OPENVIKING_ROOT_API_KEY=ovk_$(openssl rand -hex 24)"
-        } > /opt/agenticos/.env
+        touch /opt/agenticos/.env
         chmod 600 /opt/agenticos/.env
         chown deploy:deploy /opt/agenticos/.env
       fi
-      # If the .env predates OpenViking, add the key now (idempotent).
-      if ! grep -q '^OPENVIKING_ROOT_API_KEY=' /opt/agenticos/.env; then
-        echo "OPENVIKING_ROOT_API_KEY=ovk_$(openssl rand -hex 24)" >> /opt/agenticos/.env
+      # AgenticOS Postgres password — single source of truth is 1Password,
+      # passed in by Terraform as the agenticos_db_password template var
+      # (rendered below as a literal). Same UPSERT pattern as the OpenViking
+      # key: set on a fresh Droplet, and CORRECT it on any re-provision so
+      # the Droplet's .env never drifts from the value App Platform's
+      # dashboard uses to construct AGENTICOS_DB_URL.
+      #
+      # IMPORTANT CAVEAT: the agenticos-db container only consults
+      # POSTGRES_PASSWORD on FIRST init of its data volume. Rewriting the
+      # value here on an existing Droplet updates the .env (so newly-started
+      # containers read the new value) but does NOT change the password of
+      # the existing `agenticos` Postgres role. A real rotation requires
+      # either an `ALTER USER agenticos WITH PASSWORD '...'` against the
+      # running DB, or a volume reset. See docs/runbooks/backup-and-recovery.md.
+      if grep -q '^AGENTICOS_DB_PASSWORD=' /opt/agenticos/.env; then
+        sed -i "s|^AGENTICOS_DB_PASSWORD=.*|AGENTICOS_DB_PASSWORD=${agenticos_db_password}|" /opt/agenticos/.env
+      else
+        echo "AGENTICOS_DB_PASSWORD=${agenticos_db_password}" >> /opt/agenticos/.env
+      fi
+      # Refuse to proceed if the value rendered empty (missing TF_VAR) — same
+      # fail-loud posture as the OpenViking guard below.
+      DB_PW=$(grep '^AGENTICOS_DB_PASSWORD=' /opt/agenticos/.env | cut -d= -f2-)
+      if [ -z "$${DB_PW}" ]; then
+        echo "FATAL: AGENTICOS_DB_PASSWORD missing in /opt/agenticos/.env; refusing to start (set TF_VAR_agenticos_db_password)" >&2
+        exit 1
+      fi
+      # OpenViking root API key — single source of truth is 1Password, passed
+      # in by Terraform as the openviking_root_api_key template var (rendered
+      # below as a literal). We UPSERT it: set on a fresh Droplet, and CORRECT
+      # it on any re-provision so the Droplet never drifts from the value
+      # App Platform's dashboard uses. The guard further down refuses to start
+      # OpenViking if this ends up empty or the placeholder, so a missing
+      # TF_VAR fails the deploy loudly instead of shipping a weak key.
+      if grep -q '^OPENVIKING_ROOT_API_KEY=' /opt/agenticos/.env; then
+        sed -i "s|^OPENVIKING_ROOT_API_KEY=.*|OPENVIKING_ROOT_API_KEY=${openviking_root_api_key}|" /opt/agenticos/.env
+      else
+        echo "OPENVIKING_ROOT_API_KEY=${openviking_root_api_key}" >> /opt/agenticos/.env
       fi
       # Template the root_api_key into ov.conf. The repo ships a placeholder
       # (__OPENVIKING_ROOT_API_KEY__) and we substitute from .env so the
-      # actual secret never lives in git.
-      if [ -f /opt/agenticos/openviking-config/ov.conf ]; then
-        OV_KEY=$(grep '^OPENVIKING_ROOT_API_KEY=' /opt/agenticos/.env | cut -d= -f2-)
-        # Double-dollar on the sed line escapes Terraform templatefile()
-        # interpolation so the bash variable reference survives into the
-        # rendered cloud-init for the shell to expand at boot. NOTE: do not
-        # write the dollar-brace OV_KEY token in these comments either —
-        # templatefile() scans the raw file bytes, comments included, and a
-        # bare reference makes terraform plan fail with "vars map does not
-        # contain key OV_KEY".
-        sed -i "s|__OPENVIKING_ROOT_API_KEY__|$${OV_KEY}|g" /opt/agenticos/openviking-config/ov.conf
+      # actual secret never lives in git. This runs AFTER the `cp -a` above,
+      # which re-copies the repo's placeholder ov.conf over /opt on every
+      # (re-)deploy — so we must re-substitute, and VERIFY, each time. If the
+      # substitution is ever skipped or fails, the server would authenticate
+      # with the well-known literal placeholder (a security hole) or, on an
+      # empty key, every client breaks silently. We refuse to proceed in
+      # either case: a failed provision is strictly better than a
+      # placeholder-key server.
+      #
+      # Double-dollar on the shell-variable references escapes Terraform
+      # templatefile() interpolation so the bash reference survives into the
+      # rendered cloud-init for the shell to expand at boot. NOTE: do not
+      # write the dollar-brace OV_KEY token in these comments either —
+      # templatefile() scans the raw file bytes, comments included, and a
+      # bare reference makes terraform plan fail with "vars map does not
+      # contain key OV_KEY".
+      if [ ! -f /opt/agenticos/openviking-config/ov.conf ]; then
+        echo "FATAL: /opt/agenticos/openviking-config/ov.conf missing; cannot template OpenViking key" >&2
+        exit 1
+      fi
+      OV_KEY=$(grep '^OPENVIKING_ROOT_API_KEY=' /opt/agenticos/.env | cut -d= -f2-)
+      if [ -z "$${OV_KEY}" ] || [ "$${OV_KEY}" = "__OPENVIKING_ROOT_API_KEY__" ]; then
+        echo "FATAL: OPENVIKING_ROOT_API_KEY missing or still the placeholder in /opt/agenticos/.env; refusing to start OpenViking" >&2
+        exit 1
+      fi
+      sed -i "s|__OPENVIKING_ROOT_API_KEY__|$${OV_KEY}|g" /opt/agenticos/openviking-config/ov.conf
+      # Post-condition: the placeholder MUST be gone now. If it survived (sed
+      # no-match, CRLF, an edited delimiter, a stale copy racing the cp above),
+      # we would otherwise boot a placeholder-key server. Abort instead.
+      if grep -q '__OPENVIKING_ROOT_API_KEY__' /opt/agenticos/openviking-config/ov.conf; then
+        echo "FATAL: ov.conf still contains the root_api_key placeholder after substitution; aborting before container start" >&2
+        exit 1
       fi
       # --build so the locally-tagged overlay image (agenticos/hermes-agent:local)
       # is built from infra/docker/hermes-agent/Dockerfile on every fresh

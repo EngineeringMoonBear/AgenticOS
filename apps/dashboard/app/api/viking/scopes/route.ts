@@ -20,9 +20,18 @@ export async function GET(): Promise<NextResponse> {
   try {
     // Every /api/v1/* endpoint requires Bearer auth. See
     // docs/superpowers/specs/spec1-verified-api-shapes.md §4.
+    //
+    // We authenticate with the ROOT key, but stats/memories is a
+    // tenant-scoped API: OpenViking rejects a root key (400 INVALID_ARGUMENT)
+    // unless the request names the tenant explicitly via X-OpenViking-Account
+    // + X-OpenViking-User. (A user-scoped key would carry an implicit tenant;
+    // the root key does not.) These match the headers viking-backup.sh sends
+    // and the OPENVIKING_ACCOUNT/USER env we set on App Platform.
     const res = await fetch(`${baseUrl}/api/v1/stats/memories`, {
       headers: {
         Authorization: `Bearer ${process.env.OPENVIKING_ROOT_API_KEY ?? ""}`,
+        "X-OpenViking-Account": process.env.OPENVIKING_ACCOUNT ?? "agenticos",
+        "X-OpenViking-User": process.env.OPENVIKING_USER ?? "deploy",
       },
       cache: "no-store",
       signal: AbortSignal.timeout(VIKING_TIMEOUT_MS),

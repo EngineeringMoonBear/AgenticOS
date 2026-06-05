@@ -148,6 +148,40 @@ Record the date + result here:
 |------|----------|------------|-------|-------|
 | *TBD (first drill)* | | | | |
 
+## Rotating `AGENTICOS_DB_PASSWORD` on an existing Droplet
+
+The Postgres password has **one source of truth**: 1Password
+(`op://Goldberry Grove - Admin/AgenticOS Infra/agenticos_db_password`).
+Terraform passes it both to App Platform (which builds the dashboard's
+`AGENTICOS_DB_URL`) and into the Droplet's cloud-init, which UPSERTs it
+into `/opt/agenticos/.env` on every (re-)provision so the two never
+drift. **But:** the `agenticos-db` container only consults
+`POSTGRES_PASSWORD` on the *first* init of its `agenticos-db-data`
+volume. Rewriting `.env` alone does **not** rotate the actual role
+password on an existing Droplet — newly-started containers will read
+the new value from `.env` and then fail to authenticate against
+Postgres, which still has the old role password baked into its volume.
+
+To actually rotate:
+
+1. Update the value in 1Password.
+2. On the Droplet, ALTER the role to match — the canonical move:
+   ```bash
+   NEW_PW=$(op read "op://Goldberry Grove - Admin/AgenticOS Infra/agenticos_db_password")
+   docker exec -i agenticos-db psql -U agenticos -d agenticos \
+     -c "ALTER USER agenticos WITH PASSWORD '$NEW_PW';"
+   ```
+3. `terraform apply` (or wait for the next plan) to re-render `.env` on
+   the Droplet and push the new value to App Platform's env. Restart
+   the consumers (`docker compose restart`) so they pick up the new
+   `.env`; redeploy the App Platform app so the dashboard picks up the
+   new `AGENTICOS_DB_URL`.
+
+The only alternative is a **volume reset** — destroy `agenticos-db-data`
+and let the container re-init with the new password. That nukes all
+Postgres state (cost ledger, run history, dedup hashes) and requires a
+restore from `/opt/backups`. Don't do this for a routine rotation.
+
 ## Gotcha: DO "Reset root password" locks you out of SSH
 
 If you use DigitalOcean's **Reset root password**, the account is flagged
