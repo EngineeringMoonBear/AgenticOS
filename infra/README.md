@@ -377,23 +377,28 @@ retention window:
 
 Fresh Droplets get the timer from cloud-init. The `.service` / `.timer` bodies
 live inline in the cloud-init template (single source of truth — same pattern as
-the curator units). To install on an **already-running** Droplet, copy the four
-unit bodies (`agenticos-pg-backup` + `agenticos-viking-backup`, `.service` +
-`.timer` each) into `/etc/systemd/system/` as root (the `deploy` user has
-`NOPASSWD` for `systemctl` but not for writing unit files), then:
+the curator units). Installing the units needs **root** — on a running box the
+`deploy` user can't write `/etc/systemd/system` (its sudo is `NOPASSWD` only for
+`systemctl`/`ufw`, and the account password is locked). Get root via the
+DigitalOcean web **Console**, or `ssh root@$DROPLET` (your Terraform SSH key is
+on root). Then a one-liner does it:
 
 ```bash
-# 1. Refresh the repo clone so the scripts are present
-ssh deploy@$DROPLET 'cd /opt/agenticos/repo && git pull'
-# 2. As root: write the agenticos-{pg,viking}-backup .service + .timer units to
-#    /etc/systemd/system/ (paste the four blocks from the cloud-init template)
-# 3. Enable + smoke-test both
-ssh deploy@$DROPLET 'sudo systemctl daemon-reload && \
-  sudo systemctl enable --now agenticos-pg-backup.timer agenticos-viking-backup.timer && \
-  systemctl list-timers "agenticos-*-backup.timer" --no-pager && \
-  /opt/agenticos/repo/infra/scripts/pg-backup.sh && \
+# 1. Refresh the repo clone so the scripts are present (as deploy)
+ssh deploy@$DROPLET 'cd /opt/agenticos/repo && git fetch origin && git checkout -B main origin/main'
+
+# 2. As ROOT (console or ssh root@): install + enable both timers
+bash /opt/agenticos/repo/infra/scripts/install-backup-timers.sh
+
+# 3. Smoke-test as deploy (not root)
+ssh deploy@$DROPLET '/opt/agenticos/repo/infra/scripts/pg-backup.sh && \
   /opt/agenticos/repo/infra/scripts/viking-backup.sh && ls -lh /opt/backups'
 ```
+
+`install-backup-timers.sh` is idempotent (writes the four units, reloads,
+enables) and keeps its unit definitions in sync with the inline copies in the
+cloud-init template — fresh Droplets still get the units from cloud-init so a
+provision never depends on the repo clone.
 
 **Scope:** this protects against volume corruption, a bad migration, or an
 accidental `docker compose down -v`. It is **on-box only** — surviving total
