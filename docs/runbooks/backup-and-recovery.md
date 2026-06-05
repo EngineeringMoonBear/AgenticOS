@@ -148,6 +148,24 @@ Record the date + result here:
 |------|----------|------------|-------|-------|
 | *TBD (first drill)* | | | | |
 
+## Gotcha: DO "Reset root password" locks you out of SSH
+
+If you use DigitalOcean's **Reset root password**, the account is flagged
+**password-expired / must-change-on-next-login**. Until you complete the change
+via the **Console**, *all* SSH logins fail — **including key-based ones** — with
+`all configured authentication methods failed`. Your key still works at the
+`publickey` step; PAM's *account* phase then rejects the session because the
+password is expired. (Interleaved power-cycles show as `Connection refused`.)
+
+- **It is not a broken key, a bad deploy, or lost data** — don't panic-restore a
+  snapshot over it.
+- **Fix:** open DO → Droplet → **Console**, log in as `root` with the temp
+  password, set a new one. That clears the expired flag and SSH works again.
+- `deploy` is SSH-key-only with a *locked* password (its `sudo` is `NOPASSWD`
+  for `systemctl`/`ufw` only). To get general `sudo`, set its password as root:
+  `passwd deploy` (don't use `passwd -e` / `chage -d 0` — that re-triggers the
+  same expired-account lockout). Stash both passwords in 1Password.
+
 ## Optional: paid third failure domain
 
 The above keeps everything on DO + Mac. For a true third site (Droplet *and* Mac

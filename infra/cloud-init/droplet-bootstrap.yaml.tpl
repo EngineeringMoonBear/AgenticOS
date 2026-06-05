@@ -60,6 +60,9 @@ write_files:
       Persistent=true
       Unit=agenticos-curator.service
 
+      [Install]
+      WantedBy=timers.target
+
   - path: /etc/systemd/system/agenticos-pg-backup.service
     permissions: "0644"
     content: |
@@ -90,6 +93,9 @@ write_files:
       Persistent=true
       Unit=agenticos-pg-backup.service
 
+      [Install]
+      WantedBy=timers.target
+
   - path: /etc/systemd/system/agenticos-viking-backup.service
     permissions: "0644"
     content: |
@@ -119,6 +125,9 @@ write_files:
       OnCalendar=*-*-* 04:30:00
       Persistent=true
       Unit=agenticos-viking-backup.service
+
+      [Install]
+      WantedBy=timers.target
 
   # Drop-in override for the syncthing@deploy.service unit. By default
   # Syncthing's GUI binds to 127.0.0.1:8384 (loopback only), which means

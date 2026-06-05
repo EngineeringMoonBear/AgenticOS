@@ -58,6 +58,8 @@ Description=Run AgenticOS Postgres backup daily at 04:00 local
 OnCalendar=*-*-* 04:00:00
 Persistent=true
 Unit=agenticos-pg-backup.service
+[Install]
+WantedBy=timers.target
 UNIT
 
 install_unit agenticos-viking-backup.service <<UNIT
@@ -83,6 +85,8 @@ Description=Run AgenticOS OpenViking memory backup daily at 04:30 local
 OnCalendar=*-*-* 04:30:00
 Persistent=true
 Unit=agenticos-viking-backup.service
+[Install]
+WantedBy=timers.target
 UNIT
 
 systemctl daemon-reload
