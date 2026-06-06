@@ -13,7 +13,10 @@ export interface VikingScopes {
 }
 
 export async function GET(): Promise<NextResponse> {
-  const baseUrl = process.env.OPENVIKING_URL;
+  // App Platform injects OPENVIKING_ENDPOINT/OPENVIKING_API_KEY (matching the
+  // Hermes plugin convention; see app-platform.tf). Fall back to the older
+  // OPENVIKING_URL/OPENVIKING_ROOT_API_KEY names for local dev.
+  const baseUrl = process.env.OPENVIKING_ENDPOINT ?? process.env.OPENVIKING_URL;
   if (!baseUrl) {
     return NextResponse.json({ reachable: false, total: 0, scopes: {} });
   }
@@ -29,7 +32,7 @@ export async function GET(): Promise<NextResponse> {
     // and the OPENVIKING_ACCOUNT/USER env we set on App Platform.
     const res = await fetch(`${baseUrl}/api/v1/stats/memories`, {
       headers: {
-        Authorization: `Bearer ${process.env.OPENVIKING_ROOT_API_KEY ?? ""}`,
+        Authorization: `Bearer ${process.env.OPENVIKING_API_KEY ?? process.env.OPENVIKING_ROOT_API_KEY ?? ""}`,
         "X-OpenViking-Account": process.env.OPENVIKING_ACCOUNT ?? "agenticos",
         "X-OpenViking-User": process.env.OPENVIKING_USER ?? "deploy",
       },
