@@ -1,0 +1,10 @@
+{
+  "name": "sandcastle-spike",
+  "private": true,
+  "version": "0.0.0",
+  "description": "THROWAWAY spike — evaluate mattpocock/sandcastle. Delete if verdict is 'drop'.",
+  "type": "module",
+  "scripts": {
+    "spike": "tsx run.ts"
+  }
+}
