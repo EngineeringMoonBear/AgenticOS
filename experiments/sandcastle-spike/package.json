@@ -1,0 +1,19 @@
+{
+  "name": "sandcastle-spike",
+  "private": true,
+  "version": "0.0.0",
+  "description": "THROWAWAY spike — evaluate mattpocock/sandcastle. Delete if verdict is 'drop'.",
+  "type": "module",
+  "scripts": {
+    "spike": "tsx run.ts"
+  },
+  "dependencies": {
+    "@ai-hero/sandcastle": "^0.7.0",
+    "tsx": "^4.22.4",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "typescript": "^6.0.3"
+  }
+}

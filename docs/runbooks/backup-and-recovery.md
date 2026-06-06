@@ -146,7 +146,7 @@ Record the date + result here:
 
 | Date | Postgres | OpenViking | Vault | Notes |
 |------|----------|------------|-------|-------|
-| *TBD (first drill)* | | | | |
+| 2026-06-06 | ✅ restored to scratch pgvector (119 tasks, 2 calls, 2 sessions) | ✅ `unzip -t` OK; `files/user/deploy/memories/*` + manifest present | — | Drilled the **Mac off-site replica** (`~/AgenticOS-Backups`); both artifacts were the **unattended 04:00/04:30 timer runs** — so this also proved timer → dump → Syncthing off-site → restore end-to-end |
 
 ## Rotating `AGENTICOS_DB_PASSWORD` on an existing Droplet
 

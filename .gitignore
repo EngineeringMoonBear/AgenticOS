@@ -1,5 +1,9 @@
 node_modules/
 .pnpm-store/
+# Sandcastle spike: per-repo sandbox scaffold/scratch (Dockerfile, .env, logs,
+# worktrees) created by `sandcastle init` at the repo root. Spike-local; never
+# commit (the .env there holds the OpenAI key).
+.sandcastle/
 .next/
 .turbo/
 dist/

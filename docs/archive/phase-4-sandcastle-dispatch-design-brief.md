@@ -1,6 +1,14 @@
 # Phase 4 — Sandcastle Dispatch: Design Brief
 
-> **⚠️ STALE (predates 2026-05-20 foundation v2 pivot):** This brief was written when Phase 3 targeted Hermes Agent as runtime and Sandcastle was scoped as the next major build. The foundation v2 spec ([`superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md`](superpowers/specs/2026-05-20-agenticos-foundation-v2-design.md)) defers multi-agent and Sandcastle-like parallel-coding-agent work to v2+. **Don't treat this brief as current scope.** When v1 ships and v2 brainstorming begins, this brief gets revisited: most concepts (ephemeral worktrees, parallel coding agents, hand-back-for-review pattern) carry forward; the Hermes/MCP integration assumptions need rewriting against Claude Code + Honcho.
+> **🗄️ ARCHIVED / SUPERSEDED (2026-06-06):** This brief described a *homegrown*
+> "Sandcastle" parallel-coding-agent plane (worktrees, branch strategies,
+> hand-back-for-review) that was **never built** and is **not current scope**.
+> That capability is now being evaluated as a **buy-vs-build** against the
+> external library `mattpocock/sandcastle`, which provides exactly these features
+> off the shelf — see
+> [`docs/superpowers/specs/2026-06-06-sandcastle-spike-design.md`](../superpowers/specs/2026-06-06-sandcastle-spike-design.md).
+> Kept only for the design thinking (the questions here still inform the
+> evaluation). **Do not treat anything below as a build plan.**
 
 **Status**: Brainstorming questionnaire (2026-05-18) — stale; review against foundation v2 before re-scoping
 **Owner**: AgenticOS — single-developer (Josh)

@@ -3,3 +3,4 @@ packages:
   - "packages/*"
   - "packages/config/*"
   - "infra/vault-server"
+  - "experiments/*"
