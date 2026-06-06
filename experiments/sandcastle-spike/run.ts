@@ -58,6 +58,16 @@ async function main(): Promise<void> {
     prompt: PROMPT,
     output: Output.object({ tag: "result", schema: RESULT_SCHEMA }),
     idleTimeoutSeconds: 900,
+    // Codex defaults to the ChatGPT-login websocket transport and 401s on a bare
+    // API key. Run `codex login --with-api-key` inside the sandbox first (the
+    // Hermes pattern) to write ~/.codex/auth.json and flip Codex into API-key mode.
+    hooks: {
+      sandbox: {
+        onSandboxReady: [
+          { command: "printenv OPENAI_API_KEY | codex login --with-api-key" },
+        ],
+      },
+    },
   });
 
   console.log("=== SANDCASTLE SPIKE RESULT ===");
