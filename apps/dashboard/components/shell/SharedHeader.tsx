@@ -3,6 +3,7 @@ import { LanternMushroom } from "@/components/brand/LanternMushroom";
 import { TabBar } from "./TabBar";
 import { PaletteTrigger } from "@/components/layout/palette-trigger";
 import { FilterChip } from "@/components/filter/filter-chip";
+import { MaxQuotaChip } from "@/components/shell/MaxQuotaChip";
 
 /** Settings cog icon — inline SVG to avoid extra lucide-react surface here. */
 function SettingsIcon() {
@@ -35,8 +36,11 @@ export function SharedHeader() {
           </span>
         </Link>
 
-        {/* Right: utility buttons (no status chips — those moved to KpiVista) */}
+        {/* Right: utility cluster. Cost/run status moved to the KpiVista banner;
+            the Claude-Max quota chip stays here — it's a distinct at-a-glance
+            "how much subscription headroom is left" signal not shown in KpiVista. */}
         <div className="shell-header-right">
+          <MaxQuotaChip />
           <FilterChip />
           <PaletteTrigger />
           <Link
