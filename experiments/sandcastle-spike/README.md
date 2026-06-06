@@ -63,10 +63,53 @@ Package: `@ai-hero/sandcastle` v0.7.0 — `main: dist/index.js`,
 3. `noSandbox()` provider exists — useful escape hatch if Docker isolation
    proves too heavy, at the cost of host isolation.
 
-## Run Log (filled by Task 5)
+## Run Log (2026-06-06)
 
-_Recorded in Task 5._
+Each failure peeled one layer deeper and more real — exactly what a spike is for:
 
-## Verdict (filled by Task 7)
+| # | Symptom | Cause | Fix |
+|---|---------|-------|-----|
+| 1 | `pnpm add sandcastle` = wrong lib | bare `sandcastle` is an unrelated JS sandbox | install `@ai-hero/sandcastle` |
+| 2 | `Image 'sandcastle:agenticos' not found` | Docker provider isn't zero-config | `sandcastle init` (scaffold `.sandcastle/`) + `sandcastle docker build-image` |
+| 3 | `401 wss://…/v1/responses` | bare `OPENAI_API_KEY` → Codex defaults to the ChatGPT websocket transport | `onSandboxReady` hook: `codex login --with-api-key` (the Hermes pattern) |
+| 4 | silent exit 1, no 401 | hook shell never saw the key (agent env ≠ hook env; no `.sandcastle/.env`) | write `OPENAI_API_KEY` into `.sandcastle/.env` |
+| 5 | `Not inside a trusted directory…` | Codex safety gate; Sandcastle's `codex()` doesn't pass `--skip-git-repo-check` | pass the flag (manual repro) |
+| 6 | `ERROR: Quota exceeded` | **OpenAI account/project has no available Codex spend** | add credit / budget-capped key |
 
-_adopt / reshape / drop — recorded in Task 7._
+**Manual repro confirming the full chain works** (`docker run … --entrypoint bash sandcastle:agenticos`):
+`codex login --with-api-key` → `Successfully logged in`; `codex exec --skip-git-repo-check --model gpt-5-codex` → Codex v0.137.0 boots, authenticates, reaches the OpenAI API → stops only at `Quota exceeded`. Every Sandcastle/Codex layer passed.
+
+## Verdict (2026-06-06): ADOPT — pending two non-fundamental fixes
+
+The spike **technically validated** Sandcastle end-to-end on the Mac: install →
+`init` → Docker image (Node 22 + Codex CLI) → sandbox launch on a named branch →
+structured-output + lifecycle-hook APIs → Codex auth (`Successfully logged in`)
+→ valid model → trust gate cleared → live OpenAI API call. The sandboxed,
+branch-based, structured-output capability the dropped Phase 4 wanted **works**.
+
+The agent never wrote the test only because of two blockers, **neither of which
+is a Sandcastle defect**:
+
+1. **OpenAI quota (billing, external).** The run died at `Quota exceeded` — the
+   account/project key has no available Codex spend (it's valid: `/v1/models` →
+   200). Fix: add credit, or use the **budget-capped project service-account
+   key** discussed in the cost thread.
+2. **Sandcastle ↔ Codex `--skip-git-repo-check` gap (upstream).** Sandcastle's
+   `codex()` provider gives no way to pass `--skip-git-repo-check`, so in-sandbox
+   `codex exec` aborts at Codex's trust gate. Manually the flag works. Fix: file
+   an upstream issue to expose codex CLI args (or trust the dir via a
+   `~/.codex/config.toml` hook), **or** use the `claudeCode` agent — Sandcastle's
+   first-class path (but Anthropic automated = metered API key post-June-15).
+
+**Adoption cost (the honest findings):** per-repo Docker image build/maintenance;
+**Codex is a second-class citizen** in Sandcastle (auth needs the login hook, the
+`--skip-git-repo-check` gap, and **opaque error surfacing** — Sandcastle truncates
+Codex's real errors, which made debugging slow). `claudeCode` is the documented
+happy path.
+
+**Recommendation:** Sandcastle is **viable** for the parallel-dev-dispatch
+capability. Before a production adoption: (a) provision a budget-capped OpenAI
+project service-account key with quota; (b) resolve the `--skip-git-repo-check`
+gap (upstream or `config.toml` hook); (c) re-run this spike for the green
+"agent writes a passing test on a branch" confirmation. If the codex flag gap is
+sticky, evaluate `claudeCode` (accepting metered Anthropic billing).
