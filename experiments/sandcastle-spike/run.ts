@@ -64,7 +64,10 @@ async function main(): Promise<void> {
     hooks: {
       sandbox: {
         onSandboxReady: [
-          { command: "printenv OPENAI_API_KEY | codex login --with-api-key" },
+          {
+            command:
+              'if [ -n "$OPENAI_API_KEY" ]; then printenv OPENAI_API_KEY | codex login --with-api-key && echo "HOOK_LOGIN_OK"; else echo "HOOK_NO_KEY_IN_SANDBOX"; fi',
+          },
         ],
       },
     },
