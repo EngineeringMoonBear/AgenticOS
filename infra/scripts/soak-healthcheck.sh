@@ -15,13 +15,18 @@
 # WARNs rather than aborting the run, so you always get the full picture.
 #
 # Overridable via env: COMPOSE_FILE, BACKUP_DIR, OPENVIKING_URL, OV_CONF,
-# HERMES_BIN, DB_USER, DB_NAME, INGEST_MAX_AGE_MIN, BACKUP_MAX_AGE_MIN.
+# OV_ACCOUNT, OV_USER, OV_AGENT, VAULT_DIR, HERMES_BIN, DB_USER, DB_NAME,
+# INGEST_MAX_AGE_MIN, BACKUP_MAX_AGE_MIN.
 set -u
 
 COMPOSE_FILE="${COMPOSE_FILE:-/opt/agenticos/docker-compose.yml}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/backups}"
 OPENVIKING_URL="${OPENVIKING_URL:-http://10.116.16.2:1933}"
 OV_CONF="${OV_CONF:-/opt/agenticos/openviking-config/ov.conf}"
+OV_ACCOUNT="${OV_ACCOUNT:-agenticos}"
+OV_USER="${OV_USER:-deploy}"
+OV_AGENT="${OV_AGENT:-default}"
+VAULT_DIR="${VAULT_DIR:-/opt/vault}"
 HERMES_BIN="${HERMES_BIN:-/opt/hermes/.venv/bin/hermes}"
 DB_USER="${DB_USER:-agenticos}"
 DB_NAME="${DB_NAME:-agenticos}"
@@ -151,21 +156,31 @@ check_backup "viking-backup" "openviking-*.ovpack" 1024
 
 # ---------------------------------------------------------------------------
 hdr "6. OpenViking consistency + vector count"
+# Resolve the root_api_key the SAME way viking-backup.sh does: prefer the host
+# ov.conf, but fall back to the container's /app/.openviking/ov.conf — the host
+# copy can drift from what OpenViking actually loaded at boot (the dual
+# source-of-truth hazard), and the container copy is authoritative.
 OV_KEY=$(sed -n 's/.*"root_api_key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$OV_CONF" 2>/dev/null)
 if [ -z "$OV_KEY" ]; then
-  c_warn "could not read root_api_key from $OV_CONF — skipping OpenViking probes"
+  OV_KEY=$(docker exec openviking sh -lc 'sed -n "s/.*\"root_api_key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" /app/.openviking/ov.conf' 2>/dev/null || true)
+fi
+if [ -z "$OV_KEY" ]; then
+  c_warn "could not resolve root_api_key (host $OV_CONF + openviking container) — skipping OpenViking probes"
 else
+  # All OpenViking calls need Account/User/Agent headers, matching viking-backup.sh.
   ov_curl() {
     curl -s -m 15 -H "Authorization: Bearer $OV_KEY" \
-      -H "X-OpenViking-Account: agenticos" -H "X-OpenViking-User: deploy" "$@"
+      -H "X-OpenViking-Account: $OV_ACCOUNT" -H "X-OpenViking-User: $OV_USER" \
+      -H "X-OpenViking-Agent: $OV_AGENT" "$@"
   }
-  cons=$(ov_curl "$OPENVIKING_URL/api/v1/system/consistency")
-  if printf '%s' "$cons" | grep -qiE '"status"[[:space:]]*:[[:space:]]*"(ok|healthy|consistent)"|"consistent"[[:space:]]*:[[:space:]]*true'; then
-    c_pass "system/consistency OK"
-  elif [ -z "$cons" ]; then
+  # /system/consistency is POST-only (openapi v0.3.19).
+  cons=$(ov_curl -X POST "$OPENVIKING_URL/api/v1/system/consistency")
+  if [ -z "$cons" ]; then
     c_fail "system/consistency: no response (OpenViking unreachable at $OPENVIKING_URL)"
+  elif printf '%s' "$cons" | grep -qE '"(code|error)"[[:space:]]*:[[:space:]]*("?[A-Z_]*"?|\{)'; then
+    c_warn "system/consistency returned an error: $(printf '%s' "$cons" | head -c 200)"
   else
-    c_warn "system/consistency returned: $(printf '%s' "$cons" | head -c 200)"
+    c_pass "system/consistency OK"
   fi
   vcount=$(ov_curl "$OPENVIKING_URL/api/v1/debug/vector/count")
   vnum=$(printf '%s' "$vcount" | sed -n 's/.*"count"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
@@ -174,7 +189,24 @@ else
   elif [ -n "$vnum" ]; then
     c_warn "vector count = 0 (memory store empty?)"
   else
-    c_warn "vector count: could not parse ($(printf '%s' "$vcount" | head -c 120))"
+    c_warn "vector count: could not parse ($(printf '%s' "$vcount" | head -c 160))"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+hdr "7. Vault file readability (Syncthing permission drift)"
+# The hermes container's root lacks DAC override on the bind mount, so any vault
+# file that isn't world-readable (e.g. a 600 note synced from the Mac) fails
+# ingest with EACCES. Surface it here as a WARN *before* it errors an ingest run.
+if [ ! -d "$VAULT_DIR" ]; then
+  c_warn "$VAULT_DIR not found on this host — skipping readability check"
+else
+  unreadable=$(find "$VAULT_DIR" -type f -name '*.md' ! -perm -o=r 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${unreadable:-0}" -eq 0 ]; then
+    c_pass "all *.md under $VAULT_DIR are world-readable"
+  else
+    sample=$(find "$VAULT_DIR" -type f -name '*.md' ! -perm -o=r 2>/dev/null | head -1)
+    c_warn "${unreadable} *.md file(s) not world-readable — will fail ingest (e.g. ${sample}). Fix: find $VAULT_DIR -type f ! -perm -o=r -exec chmod a+r {} +"
   fi
 fi
 
