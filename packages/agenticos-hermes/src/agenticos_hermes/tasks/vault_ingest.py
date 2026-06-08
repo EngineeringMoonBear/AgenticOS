@@ -318,7 +318,12 @@ class HttpxVikingClient:
             resp = client.delete(
                 f"{self.endpoint}/api/v1/fs",
                 headers=self._headers(),
-                params={"uri": uri},
+                # OpenViking stores each ingested resource as a DIRECTORY
+                # (the file + its .abstract.md / .overview.md children), so a
+                # non-recursive delete fails with 412 FAILED_PRECONDITION
+                # ("Cannot remove directory without --recursive"). Always pass
+                # recursive=true to reconcile deletions of ingested files.
+                params={"uri": uri, "recursive": "true"},
             )
             # 404 on already-gone resource is fine; surface other errors.
             if resp.status_code == 404:
@@ -402,6 +407,7 @@ def run_ingest(
                     pass
 
         # Reconcile deletions: tracked paths not seen on disk.
+        delete_errors: list[str] = []
         for stale_path in tracked - seen:
             try:
                 uri = get_tracked_viking_uri(stale_path)
@@ -409,8 +415,14 @@ def run_ingest(
                     viking.rm(uri)
                 delete_ingest_row(stale_path)
                 summary["removed"] += 1
-            except Exception:
+            except Exception as exc:
                 summary["errored"] += 1
+                # Don't swallow: capture the failure so a stuck deletion (e.g.
+                # OpenViking 412 "Cannot remove directory without --recursive")
+                # surfaces in the task error instead of silently recurring hourly.
+                delete_errors.append(f"{stale_path}: {exc}")
+        if delete_errors:
+            summary["delete_errors"] = delete_errors
 
         # Status: 'done' if no errors OR if we made forward progress.
         if summary["errored"] == 0 or (summary["added"] + summary["updated"] > 0):
@@ -418,7 +430,8 @@ def run_ingest(
             err = None
         else:
             status = "failed"
-            err = f"all {summary['errored']} files errored"
+            detail = f"; first: {delete_errors[0]}" if delete_errors else ""
+            err = f"all {summary['errored']} files errored{detail}"
 
         record_task_completion(
             task_id=task_id,

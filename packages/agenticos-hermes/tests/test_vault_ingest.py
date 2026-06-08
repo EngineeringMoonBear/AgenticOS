@@ -238,3 +238,42 @@ def test_run_ingest_writes_running_then_done_ledger_row(tmp_path, clean_table):
     assert rows[0][1] == "done"
     md = rows[0][2] if isinstance(rows[0][2], dict) else json.loads(rows[0][2])
     assert md["added"] == 1
+
+
+def test_rm_passes_recursive_flag(monkeypatch):
+    """OpenViking stores each ingested resource as a DIRECTORY (content +
+    .abstract.md / .overview.md children), so DELETE /api/v1/fs must pass
+    recursive=true or it 412s with "Cannot remove directory without
+    --recursive" — the bug that stalled hourly deletion reconciliation.
+    """
+    from agenticos_hermes.tasks import vault_ingest as vi
+
+    captured: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class _Client:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a) -> bool:
+            return False
+
+        def delete(self, url, headers=None, params=None):
+            captured["url"] = url
+            captured["params"] = params
+            return _Resp()
+
+    monkeypatch.setattr(vi.httpx, "Client", _Client)
+    client = vi.HttpxVikingClient(endpoint="http://viking.test", api_key="k")
+    client.rm("viking://resources/HELLO-FROM-MAC.md")
+
+    assert captured["params"]["uri"] == "viking://resources/HELLO-FROM-MAC.md"
+    assert captured["params"]["recursive"] == "true"
