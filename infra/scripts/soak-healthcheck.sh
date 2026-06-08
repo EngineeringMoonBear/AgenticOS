@@ -15,14 +15,15 @@
 # WARNs rather than aborting the run, so you always get the full picture.
 #
 # Overridable via env: COMPOSE_FILE, BACKUP_DIR, OPENVIKING_URL, OV_CONF,
-# OV_ACCOUNT, OV_USER, OV_AGENT, VAULT_DIR, HERMES_BIN, DB_USER, DB_NAME,
-# INGEST_MAX_AGE_MIN, BACKUP_MAX_AGE_MIN.
+# ENV_FILE, OV_ACCOUNT, OV_USER, OV_AGENT, VAULT_DIR, HERMES_BIN, DB_USER,
+# DB_NAME, INGEST_MAX_AGE_MIN, BACKUP_MAX_AGE_MIN.
 set -u
 
 COMPOSE_FILE="${COMPOSE_FILE:-/opt/agenticos/docker-compose.yml}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/backups}"
 OPENVIKING_URL="${OPENVIKING_URL:-http://10.116.16.2:1933}"
 OV_CONF="${OV_CONF:-/opt/agenticos/openviking-config/ov.conf}"
+ENV_FILE="${ENV_FILE:-/opt/agenticos/.env}"
 OV_ACCOUNT="${OV_ACCOUNT:-agenticos}"
 OV_USER="${OV_USER:-deploy}"
 OV_AGENT="${OV_AGENT:-default}"
@@ -156,16 +157,21 @@ check_backup "viking-backup" "openviking-*.ovpack" 1024
 
 # ---------------------------------------------------------------------------
 hdr "6. OpenViking consistency + vector count"
-# Resolve the root_api_key the SAME way viking-backup.sh does: prefer the host
-# ov.conf, but fall back to the container's /app/.openviking/ov.conf — the host
-# copy can drift from what OpenViking actually loaded at boot (the dual
-# source-of-truth hazard), and the container copy is authoritative.
-OV_KEY=$(sed -n 's/.*"root_api_key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$OV_CONF" 2>/dev/null)
+# Resolve the root_api_key. AUTHORITATIVE source is OPENVIKING_ROOT_API_KEY in
+# .env — compose injects it as an env var into the openviking container, which
+# OVERRIDES ov.conf's root_api_key. ov.conf can drift back to the 27-char
+# placeholder on re-provision while the server still authenticates against the
+# 52-char env key, so reading ov.conf first would falsely report auth failure.
+# Order: .env (authoritative) → host ov.conf → container ov.conf.
+OV_KEY=$(grep -m1 '^OPENVIKING_ROOT_API_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)
+if [ -z "$OV_KEY" ]; then
+  OV_KEY=$(sed -n 's/.*"root_api_key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$OV_CONF" 2>/dev/null)
+fi
 if [ -z "$OV_KEY" ]; then
   OV_KEY=$(docker exec openviking sh -lc 'sed -n "s/.*\"root_api_key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" /app/.openviking/ov.conf' 2>/dev/null || true)
 fi
 if [ -z "$OV_KEY" ]; then
-  c_warn "could not resolve root_api_key (host $OV_CONF + openviking container) — skipping OpenViking probes"
+  c_warn "could not resolve root_api_key ($ENV_FILE, host $OV_CONF, openviking container) — skipping OpenViking probes"
 else
   # All OpenViking calls need Account/User/Agent headers, matching viking-backup.sh.
   ov_curl() {

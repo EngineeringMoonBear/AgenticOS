@@ -21,6 +21,7 @@ set -euo pipefail
 
 OPENVIKING_URL="${OPENVIKING_URL:-http://10.116.16.2:1933}"
 OV_CONF="${OV_CONF:-/opt/agenticos/openviking-config/ov.conf}"
+ENV_FILE="${ENV_FILE:-/opt/agenticos/.env}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/backups}"
 OV_ACCOUNT="${OV_ACCOUNT:-agenticos}"
 OV_USER="${OV_USER:-deploy}"
@@ -30,12 +31,20 @@ TIMEOUT="${TIMEOUT:-120}"    # seconds; large stores take a while to pack
 
 log() { echo "[$(date -u +%FT%TZ)] viking-backup: $*" >&2; }
 
-# Resolve the root API key. Prefer the host-mounted ov.conf (read-only bind of
-# the same file the server reads); fall back to reading it from the running
-# container. Never printed — only its presence/length is logged.
+# Resolve the root API key. The AUTHORITATIVE source is OPENVIKING_ROOT_API_KEY
+# in .env: compose injects it into the openviking container as an env var, which
+# OVERRIDES the root_api_key in ov.conf. ov.conf is prone to drifting back to the
+# 27-char placeholder (__OPENVIKING_ROOT_API_KEY__) on re-provision while the
+# server keeps authenticating against the 52-char env key — so reading ov.conf
+# first (as this script used to) makes the backup send an invalid key and 401.
+# Order: .env (authoritative) → host ov.conf → container ov.conf. Never printed —
+# only presence/length is logged.
 read_key() {
   local k=""
-  if [ -r "${OV_CONF}" ]; then
+  if [ -r "${ENV_FILE}" ]; then
+    k="$(grep -m1 '^OPENVIKING_ROOT_API_KEY=' "${ENV_FILE}" | cut -d= -f2-)"
+  fi
+  if [ -z "${k}" ] && [ -r "${OV_CONF}" ]; then
     k="$(sed -n 's/.*"root_api_key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${OV_CONF}")"
   fi
   if [ -z "${k}" ] && command -v docker >/dev/null 2>&1; then
