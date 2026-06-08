@@ -253,10 +253,21 @@ runcmd:
         cp -a /opt/agenticos/repo/hermes-config/. /opt/agenticos/hermes-config/
         chown -R deploy:deploy /opt/agenticos/hermes-config
       fi
-      # Symlink packages/ so the docker-compose build context for inbox-watcher
-      # (./packages/agenticos-hermes/) resolves relative to /opt/agenticos/
-      # without having to copy the entire workspace. -sfn keeps this idempotent
-      # on re-runs (replaces existing link target without dereferencing).
+      # Symlink packages/ so the docker-compose build contexts for hermes-agent
+      # and inbox-watcher (./packages/agenticos-hermes/) resolve relative to
+      # /opt/agenticos/ without copying the entire workspace.
+      #
+      # CRITICAL: `ln -sfn SRC DEST` does NOT replace an existing *directory* at
+      # DEST — the -f flag only clobbers a file or an existing symlink, never a
+      # real dir. If a stale real /opt/agenticos/packages already exists (left by
+      # an earlier provision, a manual copy, or a failed prior link), `ln -sfn`
+      # silently creates packages/packages INSIDE it and leaves the stale tree in
+      # place — so every hermes/inbox-watcher build then COPYs a frozen snapshot
+      # and ships stale code while `git pull` only updates repo/packages. Guard
+      # against that: remove any non-symlink at DEST first, then (re)link.
+      if [ -e /opt/agenticos/packages ] && [ ! -L /opt/agenticos/packages ]; then
+        rm -rf /opt/agenticos/packages
+      fi
       ln -sfn /opt/agenticos/repo/packages /opt/agenticos/packages
       # Ensure /opt/agenticos/.env exists with correct ownership/perms before
       # we UPSERT secrets into it. Touch-only (no content) so the UPSERT
