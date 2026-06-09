@@ -1,7 +1,12 @@
 # KpiVista — Wire to Real Data & Land — Design Spec
 
+> **Note:** KPI Vista ports as a **Paperclip plugin UI contribution** via
+> `@paperclipai/plugin-sdk/ui`. The visual design and data sources remain
+> valid; the integration surface changes from Next.js layout to plugin
+> extension slot. See the [2026-06-09 Paperclip integration design §8](./2026-06-09-paperclip-integration-design.md).
+
 **Date:** 2026-06-03
-**Status:** Approved (brainstorming) — pending spec review → implementation plan
+**Status:** Approved (brainstorming) — ports to Paperclip plugin UI contribution
 **Target:** Mount the persistent KPI banner in the dashboard shell, backed by
 real data on all four tiles (no stub values, no fabricated deltas).
 

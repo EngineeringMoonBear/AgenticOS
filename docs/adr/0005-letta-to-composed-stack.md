@@ -1,6 +1,6 @@
 # ADR 0005: From Letta to a composed stack (Hermes + OpenViking + Codex)
 
-**Status**: Accepted
+**Status**: Superseded (2026-06-09 — replaced by [ADR 0006](0006-hermes-to-paperclip-runtime.md))
 **Date**: 2026-05-29
 **Supersedes**: [ADR 0004 — Hermes → Letta pivot](../archive/0004-pivot-hermes-to-letta.md) (Letta was never adopted)
 **Related specs**:

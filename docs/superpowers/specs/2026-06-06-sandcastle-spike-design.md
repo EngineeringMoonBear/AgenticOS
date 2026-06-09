@@ -1,7 +1,11 @@
 # Sandcastle Spike — Design Spec
 
+> **⚠️ SUPERSEDED — Sandcastle capability replaced by Paperclip's execution
+> workspaces and adapter system.** See [ADR 0006](../../adr/0006-hermes-to-paperclip-runtime.md).
+> Preserved for history.
+
 **Date:** 2026-06-06
-**Status:** Approved (brainstorming) — pending spec review → implementation plan
+**Status:** Superseded (was Approved brainstorming; superseded 2026-06-09 by Paperclip migration)
 **Topic:** Evaluate `mattpocock/sandcastle` as the foundation for sandboxed,
 code-producing agent dispatch (the capability the dropped "Phase 4 — Sandcastle
 Integration" once scoped).

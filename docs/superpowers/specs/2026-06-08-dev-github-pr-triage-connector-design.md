@@ -1,7 +1,12 @@
 # Dev/GitHub PR-Triage Connector — Design
 
+> **Note:** This connector's architecture (five-step pipeline) is still valid
+> but ports as a **Paperclip scheduled routine** assigned to the Dev Agent,
+> not a Hermes cron task. See the [2026-06-09 Paperclip integration design
+> §5.2](./2026-06-09-paperclip-integration-design.md).
+
 **Date:** 2026-06-08
-**Status:** Approved (brainstorm) — pending implementation plan
+**Status:** Approved (brainstorm) — ports to Paperclip scheduled routine
 **Author:** Josh + Claude
 **Scope:** The **first** AgenticOS domain connector. Each connector is its own
 brainstorm; this spec covers only the dev/GitHub PR-triage connector.
