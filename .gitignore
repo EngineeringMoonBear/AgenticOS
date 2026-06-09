@@ -43,3 +43,6 @@ infra/terraform/crash.*.log
 
 # Vendored dependencies
 vendor/
+
+# Docker Compose local override (copy from docker-compose.override.example.yml)
+docker-compose.override.yml

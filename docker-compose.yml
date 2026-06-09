@@ -408,8 +408,73 @@ services:
       retries: 5
       start_period: 15s
 
+  # ---------------------------------------------------------------------------
+  # paperclip-server — Paperclip multi-agent runtime. Built from the
+  # EngineeringMoonBear/paperclip fork (cloned to /opt/paperclip on the Droplet,
+  # or vendor/paperclip locally). Auto-migrates its 80+ table Drizzle schema
+  # into the shared agenticos-db on first boot.
+  #
+  # Deployment mode: local_trusted (no auth — Cloudflare Access is the
+  # perimeter gate). Binds on the VPC interface so App Platform can reach it.
+  #
+  # Plugins: vault-plugin and openviking-plugin dist/ directories are
+  # bind-mounted read-only into PAPERCLIP_HOME/plugins/.
+  # ---------------------------------------------------------------------------
+  paperclip-server:
+    build:
+      context: /opt/paperclip
+      dockerfile: Dockerfile
+    container_name: paperclip-server
+    restart: unless-stopped
+    ports:
+      - "10.116.16.2:3100:3100"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "3100"
+      DATABASE_URL: postgresql://agenticos:${AGENTICOS_DB_PASSWORD}@agenticos-db:5432/agenticos
+      PAPERCLIP_DEPLOYMENT_MODE: local_trusted
+      PAPERCLIP_HOME: /paperclip
+      SERVE_UI: "true"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # Forwarded to plugins via process.env
+      OPENVIKING_ENDPOINT: http://openviking:1933
+      OPENVIKING_ROOT_API_KEY: ${OPENVIKING_ROOT_API_KEY}
+      OPENVIKING_ACCOUNT: agenticos
+      OPENVIKING_USER: deploy
+      VAULT_SERVER_URL: http://vault-server:7777
+      TZ: America/New_York
+    volumes:
+      - paperclip-data:/paperclip
+      - /opt/vault:/opt/vault:ro
+      - ./packages/vault-plugin/dist:/paperclip/plugins/vault-plugin:ro
+      - ./packages/openviking-plugin/dist:/paperclip/plugins/openviking-plugin:ro
+    env_file:
+      - /opt/agenticos/.env
+    depends_on:
+      agenticos-db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      openviking:
+        condition: service_healthy
+      vault-server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3100/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+
 volumes:
   agenticos-db-data:
   ollama-models:
   openviking-data:
   hermes-data:
+  paperclip-data:

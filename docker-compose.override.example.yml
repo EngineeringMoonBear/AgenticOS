@@ -1,0 +1,12 @@
+# Copy to docker-compose.override.yml for local development.
+# Points paperclip-server build context to the local fork clone.
+services:
+  paperclip-server:
+    build:
+      context: ./vendor/paperclip
+      dockerfile: Dockerfile
+    # Local: bind on localhost instead of VPC interface
+    ports:
+      - "127.0.0.1:3100:3100"
+    # Local: no .env file on Mac, use env vars directly
+    env_file: []
