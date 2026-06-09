@@ -40,3 +40,6 @@ infra/terraform/.terraform/
 infra/terraform/.terraform.lock.hcl
 infra/terraform/crash.log
 infra/terraform/crash.*.log
+
+# Vendored dependencies
+vendor/
