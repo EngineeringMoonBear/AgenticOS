@@ -173,7 +173,7 @@ describe("VaultClient", () => {
         ),
       );
 
-      const result = await client.discardInboxItem("quick-capture.md");
+      const result = await client.discardInboxItem("inbox/quick-capture.md");
 
       expect(result.ok).toBe(true);
       expect(fetch).toHaveBeenCalledWith(
@@ -181,7 +181,7 @@ describe("VaultClient", () => {
         expect.objectContaining({
           method: "POST",
           headers: expect.objectContaining({ "Content-Type": "application/json" }),
-          body: JSON.stringify({ inboxPath: "quick-capture.md" }),
+          body: JSON.stringify({ inboxPath: "inbox/quick-capture.md" }),
         }),
       );
     });
@@ -197,6 +197,55 @@ describe("VaultClient", () => {
       }
       // fetch should NOT have been called
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("rejects percent-encoded path traversal (%2e%2e)", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+      const result = await client.discardInboxItem("%2e%2e/wiki/secret.md");
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("traversal");
+      }
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("rejects paths not under inbox/ prefix", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+      const result = await client.discardInboxItem("wiki/important.md");
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("inbox/");
+      }
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("rejects invalid percent-encoding", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+      const result = await client.discardInboxItem("inbox/%ZZ/bad.md");
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("Invalid path encoding");
+      }
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("allows valid inbox paths", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ archivedPath: "inbox/archived/note.md" }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await client.discardInboxItem("inbox/note.md");
+
+      expect(result.ok).toBe(true);
     });
   });
 });

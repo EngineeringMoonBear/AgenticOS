@@ -78,8 +78,19 @@ export class VaultClient {
   }
 
   async discardInboxItem(inboxPath: string): Promise<Result<DiscardResult>> {
-    if (inboxPath.includes("..") || inboxPath.startsWith("/")) {
+    // Decode percent-encoding before traversal check to prevent %2e%2e bypass
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(inboxPath);
+    } catch {
+      return { ok: false, error: "Invalid path encoding" };
+    }
+    if (decoded.includes("..") || decoded.startsWith("/")) {
       return { ok: false, error: "Path traversal not allowed" };
+    }
+    // Enforce inbox/ prefix — discard is only permitted for inbox paths
+    if (!decoded.startsWith("inbox/") && decoded !== "inbox") {
+      return { ok: false, error: "Discard is only permitted for inbox/ paths" };
     }
     return this.post("/discard", { inboxPath });
   }
