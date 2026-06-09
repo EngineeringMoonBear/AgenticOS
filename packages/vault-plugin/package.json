@@ -1,0 +1,23 @@
+{
+  "name": "@agenticos/vault-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/worker.js",
+  "scripts": {
+    "build": "esbuild src/worker.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/worker.js --external:@paperclipai/plugin-sdk",
+    "dev": "esbuild src/worker.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/worker.js --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "latest"
+  },
+  "devDependencies": {
+    "@agenticos/tsconfig": "workspace:*",
+    "@types/node": "^25",
+    "esbuild": "^0.25.0",
+    "typescript": "^6",
+    "vitest": "^4.1.8"
+  }
+}
