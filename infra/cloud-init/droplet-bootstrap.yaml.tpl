@@ -228,6 +228,9 @@ runcmd:
   # --- Clone repo ---
   - sudo -u deploy git clone https://github.com/${github_repo}.git /opt/agenticos/repo
 
+  # --- Clone Paperclip fork (pinned to agenticos-v0.1.0) ---
+  - sudo -u deploy git clone --branch agenticos-v0.1.0 --depth 1 https://github.com/EngineeringMoonBear/paperclip.git /opt/paperclip
+
   # --- AgenticOS docker-compose (telemetry DB + Ollama + OpenViking + Hermes).
   #
   # The openviking-config directory in the repo holds ov.conf, which the

@@ -49,6 +49,8 @@ op item create \
     "cloudflare_api_token[concealed]=PASTE_CLOUDFLARE_API_TOKEN_HERE" \
     "cloudflare_zone_id=PASTE_CLOUDFLARE_ZONE_ID_HERE" \
     "cloudflare_account_id=PASTE_CLOUDFLARE_ACCOUNT_ID_HERE" \
+    "anthropic_api_key[concealed]=PASTE_ANTHROPIC_API_KEY_HERE" \
+    "deepseek_api_key[concealed]=PASTE_DEEPSEEK_API_KEY_HERE" \
     --url="https://github.com/EngineeringMoonBear/AgenticOS"
 
 cat <<EOF
@@ -73,6 +75,8 @@ How to generate each token (per infra/README.md §3):
                        (DNS:Edit + Access:Edit + Tunnel:Edit on gatheringatthegrove.com)
   cloudflare_zone_id   Cloudflare zone Overview page → sidebar
   cloudflare_account_id Same page, sidebar
+  anthropic_api_key    https://console.anthropic.com/settings/keys
+  deepseek_api_key     https://platform.deepseek.com/api_keys
 
 Once filled in, verify the loader works:
   source infra/scripts/load-secrets.sh
