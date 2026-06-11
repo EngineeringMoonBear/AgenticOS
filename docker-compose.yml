@@ -444,12 +444,15 @@ services:
       OPENVIKING_ACCOUNT: agenticos
       OPENVIKING_USER: deploy
       VAULT_SERVER_URL: http://vault-server:7777
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_ORG: ${GITHUB_ORG:-EngineeringMoonBear}
       TZ: America/New_York
     volumes:
       - paperclip-data:/paperclip
       - /opt/vault:/opt/vault:ro
       - ./packages/vault-plugin/dist:/paperclip/plugins/vault-plugin:ro
       - ./packages/openviking-plugin/dist:/paperclip/plugins/openviking-plugin:ro
+      - ./packages/github-plugin/dist:/paperclip/plugins/github-plugin:ro
     env_file:
       - /opt/agenticos/.env
     depends_on:
