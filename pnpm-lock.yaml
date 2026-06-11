@@ -225,6 +225,28 @@ importers:
 
   packages/config/tsconfig: {}
 
+  packages/github-plugin:
+    dependencies:
+      '@paperclipai/plugin-sdk':
+        specifier: 2026.609.0
+        version: 2026.609.0(react@19.2.7)
+    devDependencies:
+      '@agenticos/tsconfig':
+        specifier: workspace:*
+        version: link:../config/tsconfig
+      '@types/node':
+        specifier: ^25
+        version: 25.9.2
+      esbuild:
+        specifier: ^0.25.0
+        version: 0.25.12
+      typescript:
+        specifier: ^6
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.8(@types/node@25.9.2)(jsdom@29.1.1(@noble/hashes@1.8.0))(msw@2.14.6(@types/node@25.9.2)(typescript@6.0.3))(vite@8.0.16(@types/node@25.9.2)(esbuild@0.25.12)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
+
   packages/openviking-plugin:
     dependencies:
       '@paperclipai/plugin-sdk':
