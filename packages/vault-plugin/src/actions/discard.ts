@@ -10,5 +10,5 @@ export async function handleDiscard(
 ): Promise<Record<string, unknown>> {
   const result = await client.discardInboxItem(input.path);
   if (!result.ok) return { error: result.error };
-  return result.data;
+  return { ...result.data };
 }

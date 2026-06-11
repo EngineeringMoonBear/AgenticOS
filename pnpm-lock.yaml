@@ -228,7 +228,7 @@ importers:
   packages/openviking-plugin:
     dependencies:
       '@paperclipai/plugin-sdk':
-        specifier: latest
+        specifier: 2026.609.0
         version: 2026.609.0(react@19.2.7)
     devDependencies:
       '@agenticos/tsconfig':
@@ -305,7 +305,7 @@ importers:
   packages/vault-plugin:
     dependencies:
       '@paperclipai/plugin-sdk':
-        specifier: latest
+        specifier: 2026.609.0
         version: 2026.609.0(react@19.2.7)
     devDependencies:
       '@agenticos/tsconfig':

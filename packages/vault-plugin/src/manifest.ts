@@ -8,7 +8,7 @@ const manifest: PaperclipPluginManifestV1 = {
   description:
     "Obsidian vault integration — read-only knowledge access + inbox archival",
   author: "AgenticOS",
-  categories: ["knowledge", "integration"],
+  categories: ["connector"],
   capabilities: ["projects.managed"],
   entrypoints: {
     worker: "./dist/worker.js",

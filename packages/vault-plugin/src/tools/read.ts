@@ -10,5 +10,5 @@ export async function handleRead(
 ): Promise<Record<string, unknown>> {
   const result = await client.getPage(input.path);
   if (!result.ok) return { error: result.error };
-  return result.data;
+  return { ...result.data };
 }
