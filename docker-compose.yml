@@ -450,9 +450,9 @@ services:
     volumes:
       - paperclip-data:/paperclip
       - /opt/vault:/opt/vault:ro
-      - ./packages/vault-plugin/dist:/paperclip/plugins/vault-plugin:ro
-      - ./packages/openviking-plugin/dist:/paperclip/plugins/openviking-plugin:ro
-      - ./packages/github-plugin/dist:/paperclip/plugins/github-plugin:ro
+      - ./packages/vault-plugin:/paperclip/plugins/vault-plugin:ro
+      - ./packages/openviking-plugin:/paperclip/plugins/openviking-plugin:ro
+      - ./packages/github-plugin:/paperclip/plugins/github-plugin:ro
     env_file:
       - /opt/agenticos/.env
     depends_on:
