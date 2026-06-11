@@ -5,7 +5,7 @@
 > [`2026-06-10-github-plugin-pr-triage-paperclip-design.md`](../specs/2026-06-10-github-plugin-pr-triage-paperclip-design.md)
 > (a deterministic `@agenticos/github-plugin` job). Preserved for history; do
 > not execute.
-
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a read-only Hermes cron task (`pr_triage`) that polls open PRs across the GitHub org, classifies each, writes a living digest note to the vault, and records a `pr-triage` row in Postgres.

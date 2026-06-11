@@ -155,8 +155,8 @@ one vault-server write. **No LLM. ~$0**, within the Max + DigitalOcean budget.
 
 ## 9. Testing (TDD, vitest — same harness as the other plugins)
 
-- **`classify`** — unit tests over fixture PR facts (each bucket + combinations
-  + stale boundary).
+- **`classify`** — unit tests over fixture PR facts (each bucket, combinations,
+  and the stale boundary).
 - **`render`** — snapshot/segment test from fixed assessed input.
 - **`github-client`** — mocked `fetch` (the vault-client test style) asserting
   read-only calls, pagination, and fact extraction; never hits the network.
