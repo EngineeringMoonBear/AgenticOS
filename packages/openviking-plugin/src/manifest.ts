@@ -8,7 +8,7 @@ const manifest: PaperclipPluginManifestV1 = {
   description:
     "Agent semantic memory — remember, recall, find, and abstract",
   author: "AgenticOS",
-  categories: ["memory", "integration"],
+  categories: ["connector"],
   capabilities: [],
   entrypoints: {
     worker: "./dist/worker.js",

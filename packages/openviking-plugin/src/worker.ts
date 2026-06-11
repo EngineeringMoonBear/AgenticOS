@@ -1,10 +1,17 @@
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
+import type { ToolResult } from "@paperclipai/plugin-sdk";
 import { VikingClient } from "./viking-client.js";
 import { handleRemember } from "./tools/remember.js";
 import { handleRecall } from "./tools/recall.js";
 import { handleFind } from "./tools/find.js";
 import { handleAbstract } from "./tools/abstract.js";
 import { handleMemoryStats } from "./data/memory-stats.js";
+
+/** Map a handler's domain result onto the SDK ToolResult contract. */
+function toToolResult(out: Record<string, unknown>): ToolResult {
+  if (typeof out.error === "string") return { error: out.error };
+  return { data: out };
+}
 
 const plugin = definePlugin({
   async setup(ctx) {
@@ -24,60 +31,86 @@ const plugin = definePlugin({
 
     // --- Tools (read-write agent memory) ---
 
-    ctx.tools.register("viking_remember", {
-      description: "Store a memory in the agent's semantic memory (OpenViking)",
-      parameters: {
-        type: "object",
-        properties: {
-          text: { type: "string", description: "Memory content to store" },
-          category: { type: "string", description: "Category (e.g. farm-ops, dev, content)" },
-          tags: { type: "array", items: { type: "string" }, description: "Tags for retrieval" },
+    ctx.tools.register(
+      "viking_remember",
+      {
+        displayName: "Remember",
+        description: "Store a memory in the agent's semantic memory (OpenViking)",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            text: { type: "string", description: "Memory content to store" },
+            category: { type: "string", description: "Category (e.g. farm-ops, dev, content)" },
+            tags: { type: "array", items: { type: "string" }, description: "Tags for retrieval" },
+          },
+          required: ["text"],
         },
-        required: ["text"],
       },
-      handler: async (input) =>
-        handleRemember(client, input as { text: string; category?: string; tags?: string[] }),
-    });
+      async (params) =>
+        toToolResult(
+          await handleRemember(
+            client,
+            params as { text: string; category?: string; tags?: string[] },
+          ),
+        ),
+    );
 
-    ctx.tools.register("viking_recall", {
-      description: "Search agent memory by meaning (semantic retrieval)",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "What to search for" },
-          limit: { type: "number", description: "Max results (default: 10)" },
-          category: { type: "string", description: "Filter by category" },
+    ctx.tools.register(
+      "viking_recall",
+      {
+        displayName: "Recall",
+        description: "Search agent memory by meaning (semantic retrieval)",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "What to search for" },
+            limit: { type: "number", description: "Max results (default: 10)" },
+            category: { type: "string", description: "Filter by category" },
+          },
+          required: ["query"],
         },
-        required: ["query"],
       },
-      handler: async (input) =>
-        handleRecall(client, input as { query: string; limit?: number; category?: string }),
-    });
+      async (params) =>
+        toToolResult(
+          await handleRecall(
+            client,
+            params as { query: string; limit?: number; category?: string },
+          ),
+        ),
+    );
 
-    ctx.tools.register("viking_find", {
-      description: "Browse agent memories by directory path (structured lookup)",
-      parameters: {
-        type: "object",
-        properties: {
-          path: { type: "string", description: "viking:// URI path to browse" },
+    ctx.tools.register(
+      "viking_find",
+      {
+        displayName: "Find",
+        description: "Browse agent memories by directory path (structured lookup)",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "viking:// URI path to browse" },
+          },
+          required: ["path"],
         },
-        required: ["path"],
       },
-      handler: async (input) => handleFind(client, input as { path: string }),
-    });
+      async (params) => toToolResult(await handleFind(client, params as { path: string })),
+    );
 
-    ctx.tools.register("viking_abstract", {
-      description: "Summarize/compress a set of memories into a higher-level abstraction",
-      parameters: {
-        type: "object",
-        properties: {
-          memoryIds: { type: "array", items: { type: "string" }, description: "Memory IDs to compress" },
+    ctx.tools.register(
+      "viking_abstract",
+      {
+        displayName: "Abstract",
+        description: "Summarize/compress a set of memories into a higher-level abstraction",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            memoryIds: { type: "array", items: { type: "string" }, description: "Memory IDs to compress" },
+          },
+          required: ["memoryIds"],
         },
-        required: ["memoryIds"],
       },
-      handler: async (input) =>
-        handleAbstract(client, input as { memoryIds: string[] }),
-    });
+      async (params) =>
+        toToolResult(await handleAbstract(client, params as { memoryIds: string[] })),
+    );
 
     // --- Data providers ---
 

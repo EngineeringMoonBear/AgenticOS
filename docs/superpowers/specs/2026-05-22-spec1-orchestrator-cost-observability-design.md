@@ -5,7 +5,7 @@
 > schema are retired. See [ADR 0006](../../adr/0006-hermes-to-paperclip-runtime.md)
 > and the [2026-06-09 Paperclip integration design](./2026-06-09-paperclip-integration-design.md).
 > Preserved for history.
-
+>
 > **Status:** Superseded (was Shipped 2026-05-24; superseded 2026-06-09 by Paperclip migration)
 > **Final summary:** All 32 plan tasks merged. Live Droplet healthy with 6 containers (agenticos-db, ollama, openviking, hermes-agent, hermes-gateway, inbox-watcher). End-to-end acceptance test passed in 21s at $0.00 cost (Mac→Syncthing→Droplet→SLM triage→vault→Mac round-trip). cron jobs (daily-brief 07:00 ET, cost-report 23:00 ET) registered and scheduled. Dashboard reskinned with forest+autumn palette + glass primitives per §10. See `docs/plans/spec1-orchestrator.md` for the task-by-task PR list, and §11 for resolved open-question results.
 > **Supersedes (partial):** Sections 5–6 of `2026-05-20-agenticos-foundation-v2-design.md` (memory + scheduler)
