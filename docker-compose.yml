@@ -463,9 +463,15 @@ services:
     volumes:
       - paperclip-data:/paperclip
       - /opt/vault:/opt/vault:ro
-      - ./packages/vault-plugin/dist:/paperclip/plugins/vault-plugin:ro
-      - ./packages/openviking-plugin/dist:/paperclip/plugins/openviking-plugin:ro
-      - ./packages/github-plugin/dist:/paperclip/plugins/github-plugin:ro
+      # Each plugin needs its package.json (with the `paperclipPlugin` manifest
+      # pointers) AND its built dist/ (worker.js + manifest.js) at the install
+      # path, so Paperclip's `plugin install -l` can read the manifest.
+      - ./packages/vault-plugin/package.json:/paperclip/plugins/vault-plugin/package.json:ro
+      - ./packages/vault-plugin/dist:/paperclip/plugins/vault-plugin/dist:ro
+      - ./packages/openviking-plugin/package.json:/paperclip/plugins/openviking-plugin/package.json:ro
+      - ./packages/openviking-plugin/dist:/paperclip/plugins/openviking-plugin/dist:ro
+      - ./packages/github-plugin/package.json:/paperclip/plugins/github-plugin/package.json:ro
+      - ./packages/github-plugin/dist:/paperclip/plugins/github-plugin/dist:ro
     env_file:
       - /opt/agenticos/.env
     depends_on:

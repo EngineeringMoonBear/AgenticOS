@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/worker.js",
   "scripts": {
-    "build": "esbuild src/worker.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/worker.js --external:@paperclipai/plugin-sdk",
+    "build": "esbuild src/worker.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/worker.js --external:@paperclipai/plugin-sdk && esbuild src/manifest.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/manifest.js --external:@paperclipai/plugin-sdk",
     "dev": "esbuild src/worker.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/worker.js --watch",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
@@ -19,5 +19,9 @@
     "esbuild": "^0.25.0",
     "typescript": "^6",
     "vitest": "^4.1.8"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
   }
 }
