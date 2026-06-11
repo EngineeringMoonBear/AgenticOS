@@ -11,6 +11,7 @@ import { registerRecentChangesRoute } from "./routes/recent-changes.js";
 import { registerSkillsRoute } from "./routes/skills.js";
 import { registerDiscardRoute } from "./routes/discard.js";
 import { registerInboxReadRoute } from "./routes/inbox-read.js";
+import { registerPageWriteRoute } from "./routes/page-write.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
   registerSkillsRoute(app, config);
   registerDiscardRoute(app, config);
   registerInboxReadRoute(app, config);
+  registerPageWriteRoute(app, config);
 
   await app.listen({ host: "0.0.0.0", port: config.port });
   app.log.info(`vault-server listening on :${config.port}`);
