@@ -41,6 +41,48 @@ const plugin = definePlugin({
       },
     );
 
+    ctx.tools.register(
+      "github_pr_detail",
+      {
+        displayName: "PR Detail",
+        description: "Get mergeable state and head SHA for a specific PR",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string" },
+            number: { type: "number" },
+          },
+          required: ["repo", "number"],
+        },
+      },
+      async (params) => {
+        const { repo, number } = params as { repo: string; number: number };
+        const res = await client.prDetail(repo, number);
+        return res.ok ? ok(res.data) : { error: res.error };
+      },
+    );
+
+    ctx.tools.register(
+      "github_pr_checks",
+      {
+        displayName: "PR Checks State",
+        description: "Get the rollup checks state for a PR head SHA",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string" },
+            headSha: { type: "string" },
+          },
+          required: ["repo", "headSha"],
+        },
+      },
+      async (params) => {
+        const { repo, headSha } = params as { repo: string; headSha: string };
+        const res = await client.prChecksState(repo, headSha);
+        return res.ok ? ok(res.data) : { error: res.error };
+      },
+    );
+
     // --- Scheduled job: daily PR triage digest ---
 
     ctx.jobs.register("pr-triage", async () => {

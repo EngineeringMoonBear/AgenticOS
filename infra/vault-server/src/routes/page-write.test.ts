@@ -43,6 +43,17 @@ describe("PUT /page", () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it("rejects path containing a null byte", async () => {
+    const app = Fastify();
+    registerPageWriteRoute(app, cfg());
+    const res = await app.inject({
+      method: "PUT",
+      url: "/page",
+      payload: { path: "wiki/_meta/x\0.md", content: "x" },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it("rejects writes outside the allowed subtree", async () => {
     const app = Fastify();
     registerPageWriteRoute(app, cfg());

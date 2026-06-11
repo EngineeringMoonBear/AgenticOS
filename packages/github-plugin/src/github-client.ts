@@ -61,17 +61,31 @@ export class GitHubClient {
     }
   }
 
-  /** All open (non-archived) PRs across the org via the Search API. */
+  /** All open (non-archived) PRs across the org via the Search API (paginated, max 1000). */
   async searchOpenPrs(): Promise<Result<OpenPr[]>> {
     const q = encodeURIComponent(
       `org:${this.org} is:pr is:open archived:false`,
     );
-    const res = await this.get<{ items?: unknown[] }>(
-      `/search/issues?q=${q}&per_page=100`,
-    );
-    if (!res.ok) return res;
-    const items = (res.data.items ?? []) as Array<Record<string, any>>;
-    const prs: OpenPr[] = items.map((it) => {
+    const collected: Array<Record<string, any>> = [];
+    let totalCount = Infinity;
+    let page = 1;
+    const MAX_PAGES = 10;
+
+    while (collected.length < totalCount && page <= MAX_PAGES) {
+      const res = await this.get<{ items?: unknown[]; total_count?: number }>(
+        `/search/issues?q=${q}&per_page=100&page=${page}`,
+      );
+      if (!res.ok) return res;
+      const items = (res.data.items ?? []) as Array<Record<string, any>>;
+      if (page === 1) {
+        totalCount = Number(res.data.total_count ?? 0);
+      }
+      collected.push(...items);
+      page++;
+      if (items.length === 0) break;
+    }
+
+    const prs: OpenPr[] = collected.map((it) => {
       const repoUrl = String(it.repository_url ?? "");
       return {
         repoFullName: repoUrl.split("/repos/")[1] ?? "",

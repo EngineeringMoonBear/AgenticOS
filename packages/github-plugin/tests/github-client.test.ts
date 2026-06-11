@@ -14,6 +14,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("GitHubClient.searchOpenPrs", () => {
   it("queries the Search API and parses items", async () => {
     const fetchMock = mockFetch({
+      total_count: 1,
       items: [
         {
           number: 7,
@@ -45,6 +46,44 @@ describe("GitHubClient.searchOpenPrs", () => {
     expect(String(url)).toContain("/search/issues");
     expect(String(url)).toContain("org%3Ao");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer t");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("paginates when total_count exceeds one page", async () => {
+    const makeItem = (n: number) => ({
+      number: n,
+      title: `PR ${n}`,
+      user: { login: "user" },
+      draft: false,
+      updated_at: "2026-06-01T00:00:00Z",
+      html_url: `https://github.com/o/r/pull/${n}`,
+      repository_url: "https://api.github.com/repos/o/r",
+    });
+    const page1Items = Array.from({ length: 100 }, (_, i) => makeItem(i + 1));
+    const page2Items = Array.from({ length: 50 }, (_, i) => makeItem(i + 101));
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ total_count: 150, items: page1Items }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ total_count: 150, items: page2Items }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new GitHubClient({ token: "t", org: "o", timeoutMs: 5000 });
+    const result = await client.searchOpenPrs();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toHaveLength(150);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("returns an error Result on HTTP failure", async () => {

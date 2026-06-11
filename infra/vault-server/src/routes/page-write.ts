@@ -21,6 +21,10 @@ export function registerPageWriteRoute(app: FastifyInstance, config: Config): vo
     if (relPath.split("/").some((seg) => seg === "..")) {
       return reply.code(400).send({ error: "invalid path" });
     }
+    // Reject null bytes and CRLF characters that bypass fs checks or split paths.
+    if (relPath.includes("\0") || /[\r\n]/.test(relPath)) {
+      return reply.code(400).send({ error: "invalid path" });
+    }
     const normalized = path.posix.normalize(relPath);
     if (!normalized.startsWith(ALLOWED_PREFIX)) {
       return reply
