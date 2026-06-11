@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { GitHubClient } from "../src/github-client.js";
+import { GitHubClient, rollupChecks, deriveReviewState } from "../src/github-client.js";
 
 function mockFetch(body: unknown, ok = true, status = 200) {
   return vi.fn().mockResolvedValue({
@@ -52,5 +52,46 @@ describe("GitHubClient.searchOpenPrs", () => {
     const client = new GitHubClient({ token: "bad", org: "o", timeoutMs: 5000 });
     const result = await client.searchOpenPrs();
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("rollupChecks", () => {
+  it("classifies", () => {
+    expect(rollupChecks([])).toBe("none");
+    expect(rollupChecks([{ status: "completed", conclusion: "success" }])).toBe("success");
+    expect(
+      rollupChecks([
+        { status: "completed", conclusion: "success" },
+        { status: "in_progress", conclusion: null },
+      ]),
+    ).toBe("pending");
+    expect(
+      rollupChecks([
+        { status: "completed", conclusion: "success" },
+        { status: "completed", conclusion: "failure" },
+      ]),
+    ).toBe("failure");
+  });
+});
+
+describe("deriveReviewState", () => {
+  it("uses latest decisive review per author", () => {
+    expect(deriveReviewState([])).toBe("none");
+    expect(
+      deriveReviewState([
+        { user: { login: "a" }, state: "APPROVED", submitted_at: "2026-06-01T00:00:00Z" },
+      ]),
+    ).toBe("approved");
+    expect(
+      deriveReviewState([
+        { user: { login: "a" }, state: "APPROVED", submitted_at: "2026-06-01T00:00:00Z" },
+        { user: { login: "a" }, state: "CHANGES_REQUESTED", submitted_at: "2026-06-02T00:00:00Z" },
+      ]),
+    ).toBe("changes_requested");
+    expect(
+      deriveReviewState([
+        { user: { login: "a" }, state: "COMMENTED", submitted_at: "2026-06-01T00:00:00Z" },
+      ]),
+    ).toBe("none");
   });
 });
