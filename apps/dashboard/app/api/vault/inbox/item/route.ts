@@ -22,7 +22,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     return NextResponse.json(note);
   } catch (err) {
-    console.error("[GET /api/vault/inbox/item]", err);
+    // The error message can embed the user-supplied `path` (e.g. remote-client
+    // throws `vault-server /inbox/${inboxPath} -> HTTP ...`). Strip line
+    // terminators before logging so a crafted `?path=` can't forge log entries
+    // (CWE-117 log injection).
+    const detail = (err instanceof Error ? err.message : String(err)).replace(
+      /[\r\n]+/g,
+      " "
+    );
+    console.error("[GET /api/vault/inbox/item]", detail);
     return NextResponse.json(
       { error: "Failed to load inbox item" },
       { status: 500 }

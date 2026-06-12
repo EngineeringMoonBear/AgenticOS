@@ -69,10 +69,11 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-          # security-and-quality is the broader query set; security-extended is
-          # the security-only subset. Pick the broader one for a new repo so
-          # quality smells get caught alongside CVEs.
-          queries: security-and-quality
+          # Query suite (security-and-quality) and query-filters live in the
+          # config file so the vault-server rate-limiting carve-out is durable
+          # and reviewed alongside the queries it filters. See that file's
+          # header for the rationale.
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4

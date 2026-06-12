@@ -431,10 +431,23 @@ services:
     environment:
       HOST: "0.0.0.0"
       PORT: "3100"
-      DATABASE_URL: postgresql://agenticos:${AGENTICOS_DB_PASSWORD}@agenticos-db:5432/agenticos
-      PAPERCLIP_DEPLOYMENT_MODE: local_trusted
+      # Dedicated database (NOT the shared agenticos DB): Paperclip uses Drizzle
+      # auto-migrations, which refuse to run against a non-empty DB they didn't
+      # initialize. A separate `paperclip` DB also decouples it from the legacy
+      # Hermes tables. The bootstrap creates this DB (CREATE DATABASE paperclip).
+      DATABASE_URL: postgresql://agenticos:${AGENTICOS_DB_PASSWORD}@agenticos-db:5432/paperclip
+      # `authenticated` + `private`: login required, binds non-loopback (HOST
+      # 0.0.0.0 = "lan"), reachable over the VPC/Tailscale. `local_trusted`
+      # cannot be used here — it requires loopback binding, which breaks the
+      # VPC port mapping and Docker service-name DNS.
+      PAPERCLIP_DEPLOYMENT_MODE: authenticated
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: private
       PAPERCLIP_HOME: /paperclip
       SERVE_UI: "true"
+      # Session/JWT signing secret for authenticated mode (high-entropy; from
+      # .env / 1Password). Stable across reprovisions, else sessions + agent
+      # JWTs are invalidated on every restart.
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
