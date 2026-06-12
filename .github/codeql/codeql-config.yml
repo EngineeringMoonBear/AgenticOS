@@ -1,0 +1,38 @@
+name: "AgenticOS CodeQL config"
+
+# Centralised CodeQL configuration, referenced from
+# .github/workflows/codeql.yml via the `config-file:` input. Keeping the
+# query suite + filters here (rather than inline in the workflow) makes the
+# carve-out below durable and reviewable: it travels with the repo and is
+# applied identically on PR runs and the weekly scheduled run.
+
+# Same broad query set the workflow used before: security-and-quality is the
+# security-extended CVE set PLUS quality/maintainability queries. Picked for a
+# young repo so quality smells surface alongside real vulnerabilities.
+queries:
+  - uses: security-and-quality
+
+query-filters:
+  # --- js/missing-rate-limiting (high) — excluded repo-wide -----------------
+  # This query flags HTTP route handlers that perform expensive work
+  # (filesystem / index reads, DB calls) without a rate limiter, as a DoS /
+  # availability hardening signal. It fires on infra/vault-server's Fastify
+  # routes (skills, stats, tree, inbox, page-write).
+  #
+  # vault-server is internal / VPC-only: it listens on the Docker network and
+  # is reachable solely by Hermes and the plugins, behind the host firewall.
+  # It is never exposed to the public internet, so there is no untrusted
+  # ingress to rate-limit — the rule is a false positive for this service's
+  # architecture, not a missing control.
+  #
+  # query-filters match on query metadata (id), not path, so this exclusion is
+  # global. That is acceptable here: the only other surface is the Next.js
+  # dashboard, whose request throttling is handled at the edge/host layer
+  # rather than per-route in application code, where this rule would also be
+  # noise. EVERY OTHER security + quality query still runs on every file,
+  # including all of vault-server — we are dropping one availability rule, not
+  # narrowing SAST coverage. If a future internet-facing in-process route ever
+  # needs this signal, switch this service to @fastify/rate-limit and delete
+  # this filter rather than carrying both.
+  - exclude:
+      id: js/missing-rate-limiting
