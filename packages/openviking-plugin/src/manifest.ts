@@ -9,7 +9,9 @@ const manifest: PaperclipPluginManifestV1 = {
     "Agent semantic memory — remember, recall, find, and abstract",
   author: "AgenticOS",
   categories: ["connector"],
-  capabilities: [],
+  // Schema requires >=1 capability; the worker's clients do outbound HTTP
+  // to OpenViking, which is what this grants.
+  capabilities: ["http.outbound"],
   entrypoints: {
     worker: "./dist/worker.js",
   },
