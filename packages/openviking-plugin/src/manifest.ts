@@ -9,9 +9,39 @@ const manifest: PaperclipPluginManifestV1 = {
     "Agent semantic memory — remember, recall, find, and abstract",
   author: "AgenticOS",
   categories: ["connector"],
-  // Schema requires >=1 capability; the worker's clients do outbound HTTP
-  // to OpenViking, which is what this grants.
-  capabilities: ["http.outbound"],
+  // http.outbound: the worker's client calls the OpenViking HTTP API.
+  // secrets.read-ref: resolve the configured API key (supplied by the operator
+  // via plugin settings — Paperclip sandboxes workers away from host env).
+  capabilities: ["http.outbound", "secrets.read-ref"],
+  instanceConfigSchema: {
+    type: "object",
+    properties: {
+      apiKey: {
+        type: "string",
+        format: "secret-ref",
+        title: "OpenViking API Key",
+        description:
+          "Root API key for the OpenViking server. Paste the value here; it is stored as a secret.",
+      },
+      endpoint: {
+        type: "string",
+        title: "OpenViking Endpoint",
+        description: "Internal URL of the OpenViking server.",
+        default: "http://openviking:1933",
+      },
+      account: {
+        type: "string",
+        title: "Account",
+        default: "agenticos",
+      },
+      user: {
+        type: "string",
+        title: "User",
+        default: "deploy",
+      },
+    },
+    required: ["apiKey"],
+  },
   entrypoints: {
     worker: "./dist/worker.js",
   },

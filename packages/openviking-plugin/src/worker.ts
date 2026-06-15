@@ -1,5 +1,5 @@
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
-import type { ToolResult } from "@paperclipai/plugin-sdk";
+import type { PluginContext, ToolResult } from "@paperclipai/plugin-sdk";
 import { VikingClient } from "./viking-client.js";
 import { handleRemember } from "./tools/remember.js";
 import { handleRecall } from "./tools/recall.js";
@@ -13,21 +13,50 @@ function toToolResult(out: Record<string, unknown>): ToolResult {
   return { data: out };
 }
 
+interface VikingConfig {
+  /** Secret ref (UUID) for the OpenViking API key — resolved via ctx.secrets. */
+  apiKey: string;
+  endpoint: string;
+  account: string;
+  user: string;
+}
+
+function readConfig(raw: Record<string, unknown>): VikingConfig {
+  return {
+    apiKey: String(raw.apiKey ?? ""),
+    endpoint: String(raw.endpoint ?? "http://openviking:1933"),
+    account: String(raw.account ?? "agenticos"),
+    user: String(raw.user ?? "deploy"),
+  };
+}
+
+/**
+ * Build a VikingClient from the current plugin config, resolving the API key
+ * secret at call time (never cached — supports rotation, and config edits take
+ * effect without a worker restart).
+ */
+async function build(ctx: PluginContext): Promise<VikingClient> {
+  const cfg = readConfig(await ctx.config.get());
+  if (!cfg.apiKey) {
+    throw new Error("OpenViking API key not configured — set it in the plugin settings");
+  }
+  const apiKey = await ctx.secrets.resolve(cfg.apiKey);
+  if (!apiKey) {
+    throw new Error("OpenViking API key secret resolved to an empty value");
+  }
+  return new VikingClient({
+    baseUrl: cfg.endpoint,
+    apiKey,
+    account: cfg.account,
+    user: cfg.user,
+    readTimeoutMs: 5000,
+    writeTimeoutMs: 10000,
+  });
+}
+
 const plugin = definePlugin({
   async setup(ctx) {
-    const client = new VikingClient({
-      baseUrl: process.env.OPENVIKING_ENDPOINT ?? "http://openviking:1933",
-      apiKey: process.env.OPENVIKING_ROOT_API_KEY ?? "",
-      account: process.env.OPENVIKING_ACCOUNT ?? "agenticos",
-      user: process.env.OPENVIKING_USER ?? "deploy",
-      readTimeoutMs: 5000,
-      writeTimeoutMs: 10000,
-    });
-
-    ctx.logger.info("OpenViking plugin starting", {
-      endpoint: process.env.OPENVIKING_ENDPOINT ?? "http://openviking:1933",
-      account: process.env.OPENVIKING_ACCOUNT ?? "agenticos",
-    });
+    ctx.logger.info("OpenViking plugin starting");
 
     // --- Tools (read-write agent memory) ---
 
@@ -49,7 +78,7 @@ const plugin = definePlugin({
       async (params) =>
         toToolResult(
           await handleRemember(
-            client,
+            await build(ctx),
             params as { text: string; category?: string; tags?: string[] },
           ),
         ),
@@ -73,7 +102,7 @@ const plugin = definePlugin({
       async (params) =>
         toToolResult(
           await handleRecall(
-            client,
+            await build(ctx),
             params as { query: string; limit?: number; category?: string },
           ),
         ),
@@ -92,7 +121,7 @@ const plugin = definePlugin({
           required: ["path"],
         },
       },
-      async (params) => toToolResult(await handleFind(client, params as { path: string })),
+      async (params) => toToolResult(await handleFind(await build(ctx), params as { path: string })),
     );
 
     ctx.tools.register(
@@ -109,12 +138,12 @@ const plugin = definePlugin({
         },
       },
       async (params) =>
-        toToolResult(await handleAbstract(client, params as { memoryIds: string[] })),
+        toToolResult(await handleAbstract(await build(ctx), params as { memoryIds: string[] })),
     );
 
     // --- Data providers ---
 
-    ctx.data.register("memory-stats", async () => handleMemoryStats(client));
+    ctx.data.register("memory-stats", async () => handleMemoryStats(await build(ctx)));
   },
 
   async onHealth() {
