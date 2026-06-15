@@ -15,14 +15,11 @@ function toToolResult(out: Record<string, unknown>): ToolResult {
 
 const plugin = definePlugin({
   async setup(ctx) {
-    const client = new VaultClient({
-      baseUrl: process.env.VAULT_SERVER_URL ?? "http://vault-server:7777",
-      timeoutMs: 5000,
-    });
+    const cfg = await ctx.config.get();
+    const baseUrl = String(cfg.vaultServerUrl ?? "http://vault-server:7777");
+    const client = new VaultClient({ baseUrl, timeoutMs: 5000 });
 
-    ctx.logger.info("Vault plugin starting", {
-      vaultServerUrl: process.env.VAULT_SERVER_URL ?? "http://vault-server:7777",
-    });
+    ctx.logger.info("Vault plugin starting", { vaultServerUrl: baseUrl });
 
     // --- Tools (read-only access to vault content) ---
 

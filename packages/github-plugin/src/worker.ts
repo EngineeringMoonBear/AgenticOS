@@ -1,12 +1,52 @@
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
-import type { ToolResult } from "@paperclipai/plugin-sdk";
+import type { PluginContext, ToolResult } from "@paperclipai/plugin-sdk";
 import { GitHubClient } from "./github-client.js";
 import { VaultWriter } from "./vault-writer.js";
 import { runPrTriage } from "./job.js";
 
-const ORG = process.env.GITHUB_ORG ?? "EngineeringMoonBear";
-const STALE_DAYS = Number(process.env.PR_TRIAGE_STALE_DAYS ?? "7");
-const VAULT_PATH = process.env.PR_TRIAGE_VAULT_PATH ?? "wiki/_meta/dev-pr-digest.md";
+interface GithubConfig {
+  /** Secret ref (UUID) for the GitHub token — resolved via ctx.secrets. */
+  githubToken: string;
+  org: string;
+  staleDays: number;
+  vaultPath: string;
+  vaultServerUrl: string;
+}
+
+function readConfig(raw: Record<string, unknown>): GithubConfig {
+  return {
+    githubToken: String(raw.githubToken ?? ""),
+    org: String(raw.org ?? "EngineeringMoonBear"),
+    staleDays: Number(raw.staleDays ?? 7),
+    vaultPath: String(raw.vaultPath ?? "wiki/_meta/dev-pr-digest.md"),
+    vaultServerUrl: String(raw.vaultServerUrl ?? "http://vault-server:7777"),
+  };
+}
+
+/**
+ * Build a GitHubClient + VaultWriter from the current plugin config, resolving
+ * the token secret at call time (never cached — supports rotation, and config
+ * edits take effect without a worker restart).
+ */
+async function build(ctx: PluginContext): Promise<{
+  client: GitHubClient;
+  writer: VaultWriter;
+  cfg: GithubConfig;
+}> {
+  const cfg = readConfig(await ctx.config.get());
+  if (!cfg.githubToken) {
+    throw new Error("GitHub token not configured — set it in the plugin settings");
+  }
+  const token = await ctx.secrets.resolve(cfg.githubToken);
+  if (!token) {
+    throw new Error("GitHub token secret resolved to an empty value");
+  }
+  return {
+    client: new GitHubClient({ token, org: cfg.org, timeoutMs: 15000 }),
+    writer: new VaultWriter({ baseUrl: cfg.vaultServerUrl, timeoutMs: 10000 }),
+    cfg,
+  };
+}
 
 function ok(data: unknown): ToolResult {
   return { data };
@@ -14,17 +54,7 @@ function ok(data: unknown): ToolResult {
 
 const plugin = definePlugin({
   async setup(ctx) {
-    const client = new GitHubClient({
-      token: process.env.GITHUB_TOKEN ?? "",
-      org: ORG,
-      timeoutMs: 15000,
-    });
-    const writer = new VaultWriter({
-      baseUrl: process.env.VAULT_SERVER_URL ?? "http://vault-server:7777",
-      timeoutMs: 10000,
-    });
-
-    ctx.logger.info("GitHub plugin starting", { org: ORG });
+    ctx.logger.info("GitHub plugin starting");
 
     // --- Read-only tools (for on-demand Dev Agent use) ---
 
@@ -36,6 +66,7 @@ const plugin = definePlugin({
         parametersSchema: { type: "object", properties: {} },
       },
       async () => {
+        const { client } = await build(ctx);
         const res = await client.searchOpenPrs();
         return res.ok ? ok(res.data) : { error: res.error };
       },
@@ -57,6 +88,7 @@ const plugin = definePlugin({
       },
       async (params) => {
         const { repo, number } = params as { repo: string; number: number };
+        const { client } = await build(ctx);
         const res = await client.prDetail(repo, number);
         return res.ok ? ok(res.data) : { error: res.error };
       },
@@ -78,6 +110,7 @@ const plugin = definePlugin({
       },
       async (params) => {
         const { repo, headSha } = params as { repo: string; headSha: string };
+        const { client } = await build(ctx);
         const res = await client.prChecksState(repo, headSha);
         return res.ok ? ok(res.data) : { error: res.error };
       },
@@ -86,15 +119,13 @@ const plugin = definePlugin({
     // --- Scheduled job: daily PR triage digest ---
 
     ctx.jobs.register("pr-triage", async () => {
-      if (!process.env.GITHUB_TOKEN) {
-        throw new Error("GITHUB_TOKEN not set; cannot reach GitHub");
-      }
+      const { client, writer, cfg } = await build(ctx);
       const summary = await runPrTriage({
         client,
         writer,
         now: new Date(),
-        staleDays: STALE_DAYS,
-        vaultPath: VAULT_PATH,
+        staleDays: cfg.staleDays,
+        vaultPath: cfg.vaultPath,
       });
       ctx.logger.info("pr-triage complete", summary as unknown as Record<string, unknown>);
     });
