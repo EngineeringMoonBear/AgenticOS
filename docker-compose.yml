@@ -448,17 +448,16 @@ services:
       # .env / 1Password). Stable across reprovisions, else sessions + agent
       # JWTs are invalidated on every restart.
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+      # LLM keys are consumed by paperclip-server CORE (agent runs), not by the
+      # plugins — kept. (They're in the SDK's env-passthrough allowlist.)
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      # Forwarded to plugins via process.env
-      OPENVIKING_ENDPOINT: http://openviking:1933
-      OPENVIKING_ROOT_API_KEY: ${OPENVIKING_ROOT_API_KEY}
-      OPENVIKING_ACCOUNT: agenticos
-      OPENVIKING_USER: deploy
-      VAULT_SERVER_URL: http://vault-server:7777
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      GITHUB_ORG: ${GITHUB_ORG:-EngineeringMoonBear}
+      # NOTE: plugin config (GitHub token, OpenViking key/endpoint, vault URL)
+      # is NOT passed via env. Paperclip sandboxes plugin workers away from the
+      # host process.env, so the previous OPENVIKING_*/VAULT_SERVER_URL/GITHUB_*
+      # vars here were dead. Plugins read their config via ctx.config; values
+      # are pushed from 1Password by scripts/sync-paperclip-secrets.sh.
       TZ: America/New_York
     volumes:
       - paperclip-data:/paperclip
