@@ -229,7 +229,10 @@ runcmd:
   - sudo -u deploy git clone https://github.com/${github_repo}.git /opt/agenticos/repo
 
   # --- Clone Paperclip fork (pinned to agenticos-v0.1.0) ---
-  - sudo -u deploy git clone --branch agenticos-v0.1.0 --depth 1 https://github.com/EngineeringMoonBear/paperclip.git /opt/paperclip
+  # Canonical fork repo name is Paperclip-AgenticOS (GitHub redirects the bare
+  # `paperclip` name, but pin the real one). paperclip-server's compose service
+  # builds its image from this clone at /opt/paperclip.
+  - sudo -u deploy git clone --branch agenticos-v0.1.0 --depth 1 https://github.com/EngineeringMoonBear/Paperclip-AgenticOS.git /opt/paperclip
 
   # --- AgenticOS docker-compose (telemetry DB + Ollama + OpenViking + Hermes).
   #
@@ -279,6 +282,14 @@ runcmd:
         touch /opt/agenticos/.env
         chmod 600 /opt/agenticos/.env
         chown deploy:deploy /opt/agenticos/.env
+      fi
+      # BETTER_AUTH_SECRET — required by paperclip-server in authenticated mode
+      # (compose reads it from .env as $${BETTER_AUTH_SECRET}). Self-generated on
+      # the Droplet (not a shared secret — it only signs local sessions). Set
+      # ONLY when absent so a re-provision preserves the existing value and
+      # doesn't invalidate live sessions.
+      if ! grep -q '^BETTER_AUTH_SECRET=' /opt/agenticos/.env; then
+        echo "BETTER_AUTH_SECRET=$(openssl rand -base64 48)" >> /opt/agenticos/.env
       fi
       # AgenticOS Postgres password — single source of truth is 1Password,
       # passed in by Terraform as the agenticos_db_password template var
@@ -353,6 +364,28 @@ runcmd:
         echo "FATAL: ov.conf still contains the root_api_key placeholder after substitution; aborting before container start" >&2
         exit 1
       fi
+      # Build the Paperclip plugin dists (vault / openviking / github) BEFORE
+      # compose up. paperclip-server bind-mounts packages/<p>/dist into
+      # /paperclip/plugins/<p>/dist, so the dist must exist or the plugins can't
+      # load. Node + pnpm were installed earlier in this runcmd block; build as
+      # deploy via a login shell so they're on PATH. (Updates post-provision are
+      # handled by the deploy-droplet-plugins.yml GH Actions workflow.)
+      sudo -iu deploy bash -lc 'cd /opt/agenticos/repo && pnpm install --frozen-lockfile --filter @agenticos/vault-plugin --filter @agenticos/openviking-plugin --filter @agenticos/github-plugin && pnpm --filter @agenticos/vault-plugin --filter @agenticos/openviking-plugin --filter @agenticos/github-plugin build'
+
+      # Ensure the dedicated `paperclip` database exists before paperclip-server
+      # starts (its DATABASE_URL targets .../paperclip, but agenticos-db only
+      # auto-creates POSTGRES_DB=agenticos on first volume init). Bring up
+      # Postgres first, wait for it, then CREATE DATABASE if absent (idempotent).
+      cd /opt/agenticos && sudo -u deploy docker compose -f /opt/agenticos/docker-compose.yml --env-file /opt/agenticos/.env up -d agenticos-db
+      for i in $(seq 1 30); do
+        if sudo -u deploy docker exec agenticos-db pg_isready -U agenticos -d agenticos >/dev/null 2>&1; then break; fi
+        sleep 2
+      done
+      if ! sudo -u deploy docker exec agenticos-db psql -U agenticos -d agenticos -tAc "SELECT 1 FROM pg_database WHERE datname='paperclip'" | grep -q 1; then
+        sudo -u deploy docker exec agenticos-db psql -U agenticos -d agenticos -c "CREATE DATABASE paperclip"
+        echo "created paperclip database"
+      fi
+
       # --build so the locally-tagged overlay image (agenticos/hermes-agent:local)
       # is built from infra/docker/hermes-agent/Dockerfile on every fresh
       # deploy. Idempotent: if the image already exists at the same content
@@ -427,5 +460,16 @@ runcmd:
 
 final_message: |
   AgenticOS Droplet bootstrap complete.
-  ONE manual step remains: SSH in and run `claude /login` to authenticate with Claude Max.
-  Then verify: `claude --print "hello"` should return a response.
+  Manual steps remaining:
+   1. SSH in and run `claude /login` to authenticate with Claude Max.
+      Verify: `claude --print "hello"` returns a response.
+   2. Configure the Paperclip plugins (token/key + register). The plugins are
+      built and loaded, but their config (GitHub token, OpenViking key) is not
+      set — Paperclip's plugin secret store is disabled in this version, so
+      config lives in plugin config and is pushed from 1Password, never baked
+      into the image. Mint a board key once:
+        docker compose exec paperclip-server paperclipai token board create \
+          --name secret-sync --never-expires
+      store it in 1Password (AgenticOS Infra / paperclip_board_key), then from
+      the Mac (tunnel open) run:
+        TRIGGER_TRIAGE=1 scripts/sync-paperclip-secrets.sh
