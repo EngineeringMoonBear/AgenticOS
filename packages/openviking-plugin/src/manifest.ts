@@ -10,18 +10,19 @@ const manifest: PaperclipPluginManifestV1 = {
   author: "AgenticOS",
   categories: ["connector"],
   // http.outbound: the worker's client calls the OpenViking HTTP API.
-  // secrets.read-ref: resolve the configured API key (supplied by the operator
-  // via plugin settings — Paperclip sandboxes workers away from host env).
-  capabilities: ["http.outbound", "secrets.read-ref"],
+  // The API key is a plain config value (supplied by the operator via plugin
+  // settings — workers can't read host env). NOT a secret-ref: the plugin
+  // secret-resolution path is disabled in Paperclip 2026.609.0. Migrate to
+  // format:"secret-ref" + secrets.read-ref once company-scoped config lands.
+  capabilities: ["http.outbound"],
   instanceConfigSchema: {
     type: "object",
     properties: {
       apiKey: {
         type: "string",
-        format: "secret-ref",
         title: "OpenViking API Key",
         description:
-          "Root API key for the OpenViking server. Paste the value here; it is stored as a secret.",
+          "Root API key for the OpenViking server. Stored in plugin config; set via the secret-sync script, not by hand.",
       },
       endpoint: {
         type: "string",

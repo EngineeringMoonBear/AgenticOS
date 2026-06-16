@@ -5,7 +5,7 @@ import { VaultWriter } from "./vault-writer.js";
 import { runPrTriage } from "./job.js";
 
 interface GithubConfig {
-  /** Secret ref (UUID) for the GitHub token — resolved via ctx.secrets. */
+  /** The GitHub token itself, stored as a plain config value (see manifest). */
   githubToken: string;
   org: string;
   staleDays: number;
@@ -24,9 +24,10 @@ function readConfig(raw: Record<string, unknown>): GithubConfig {
 }
 
 /**
- * Build a GitHubClient + VaultWriter from the current plugin config, resolving
- * the token secret at call time (never cached — supports rotation, and config
- * edits take effect without a worker restart).
+ * Build a GitHubClient + VaultWriter from the current plugin config, read at
+ * call time so config edits take effect without a worker restart. The token is
+ * a plain config value (Paperclip's plugin secret-resolution path is disabled
+ * in 2026.609.0 — see manifest).
  */
 async function build(ctx: PluginContext): Promise<{
   client: GitHubClient;
@@ -37,12 +38,8 @@ async function build(ctx: PluginContext): Promise<{
   if (!cfg.githubToken) {
     throw new Error("GitHub token not configured — set it in the plugin settings");
   }
-  const token = await ctx.secrets.resolve(cfg.githubToken);
-  if (!token) {
-    throw new Error("GitHub token secret resolved to an empty value");
-  }
   return {
-    client: new GitHubClient({ token, org: cfg.org, timeoutMs: 15000 }),
+    client: new GitHubClient({ token: cfg.githubToken, org: cfg.org, timeoutMs: 15000 }),
     writer: new VaultWriter({ baseUrl: cfg.vaultServerUrl, timeoutMs: 10000 }),
     cfg,
   };

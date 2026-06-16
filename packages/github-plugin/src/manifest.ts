@@ -8,10 +8,13 @@ const manifest: PaperclipPluginManifestV1 = {
   description: "Read-only GitHub PR triage — daily digest of open PRs",
   author: "AgenticOS",
   categories: ["connector"],
-  // secrets.read-ref lets the worker resolve the configured GitHub token; the
-  // token itself is supplied by the operator via plugin settings (never env —
-  // Paperclip sandboxes workers away from the host process env).
-  capabilities: ["jobs.schedule", "http.outbound", "secrets.read-ref"],
+  // The token is supplied by the operator via plugin settings (never env —
+  // Paperclip sandboxes workers away from the host process env). It is stored
+  // as a plain config value, NOT a secret-ref: the plugin secret-resolution
+  // path (ctx.secrets) is stubbed/disabled in Paperclip 2026.609.0 ("disabled
+  // until company-scoped plugin config lands"). Migrate githubToken to
+  // format:"secret-ref" + secrets.read-ref once that lands upstream.
+  capabilities: ["jobs.schedule", "http.outbound"],
   jobs: [
     {
       jobKey: "pr-triage",
@@ -25,10 +28,9 @@ const manifest: PaperclipPluginManifestV1 = {
     properties: {
       githubToken: {
         type: "string",
-        format: "secret-ref",
         title: "GitHub Token",
         description:
-          "Fine-grained read-only PAT (Contents, Pull requests, Checks, Metadata). Paste the value here; it is stored as a secret.",
+          "Fine-grained read-only PAT (Contents, Pull requests, Checks, Metadata). Stored in plugin config; set via the secret-sync script, not by hand.",
       },
       org: {
         type: "string",

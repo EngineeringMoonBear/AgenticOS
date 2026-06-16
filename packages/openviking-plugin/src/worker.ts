@@ -14,7 +14,7 @@ function toToolResult(out: Record<string, unknown>): ToolResult {
 }
 
 interface VikingConfig {
-  /** Secret ref (UUID) for the OpenViking API key — resolved via ctx.secrets. */
+  /** The OpenViking API key itself, stored as a plain config value (see manifest). */
   apiKey: string;
   endpoint: string;
   account: string;
@@ -31,22 +31,19 @@ function readConfig(raw: Record<string, unknown>): VikingConfig {
 }
 
 /**
- * Build a VikingClient from the current plugin config, resolving the API key
- * secret at call time (never cached — supports rotation, and config edits take
- * effect without a worker restart).
+ * Build a VikingClient from the current plugin config, read at call time so
+ * config edits take effect without a worker restart. The API key is a plain
+ * config value (Paperclip's plugin secret-resolution path is disabled in
+ * 2026.609.0 — see manifest).
  */
 async function build(ctx: PluginContext): Promise<VikingClient> {
   const cfg = readConfig(await ctx.config.get());
   if (!cfg.apiKey) {
     throw new Error("OpenViking API key not configured — set it in the plugin settings");
   }
-  const apiKey = await ctx.secrets.resolve(cfg.apiKey);
-  if (!apiKey) {
-    throw new Error("OpenViking API key secret resolved to an empty value");
-  }
   return new VikingClient({
     baseUrl: cfg.endpoint,
-    apiKey,
+    apiKey: cfg.apiKey,
     account: cfg.account,
     user: cfg.user,
     readTimeoutMs: 5000,
