@@ -95,6 +95,52 @@ export interface HealthStatus {
   [key: string]: unknown;
 }
 
+/**
+ * A single bucketed cost data point for the time-series panel.
+ *
+ * NOTE: The Paperclip API endpoint `GET /companies/:id/costs/by-period` may not
+ * support per-bucket aggregation in all deployments. If the live API does not
+ * honour the `bucket` query param, callers should fall back to fetching
+ * `costSummary` and building the time series client-side.
+ */
+export interface CostPeriodPoint {
+  /** ISO date string for the start of the bucket, e.g. "2024-01-01" */
+  date: string;
+  costCents: number;
+}
+
+export interface Issue {
+  id: string;
+  title: string;
+  status: string;
+  priority: string | null;
+  assignee: string | null;
+  createdAt: string;
+}
+
+export interface Routine {
+  id: string;
+  name: string;
+  schedule: string | null;
+  nextRunAt: string | null;
+  status: string;
+}
+
+export interface OrgNode {
+  id: string;
+  name: string;
+  type: string;
+  parentId: string | null;
+}
+
+export interface Approval {
+  id: string;
+  title: string;
+  status: string;
+  requestedBy: string | null;
+  createdAt: string;
+}
+
 // ── Date-range / param helpers ───────────────────────────────────────────────
 
 export interface DateRangeParams {
@@ -111,6 +157,21 @@ export interface HeartbeatRunsParams extends LimitParams {
   agentId?: string;
 }
 
+export interface CostByPeriodParams {
+  from?: string;
+  to?: string;
+  bucket?: "day";
+}
+
+export interface IssuesParams {
+  status?: string;
+  limit?: number;
+}
+
+export interface ApprovalsParams {
+  status?: string;
+}
+
 // ── Client ───────────────────────────────────────────────────────────────────
 
 const TIMEOUT_MS = 8_000;
@@ -122,6 +183,11 @@ export interface PaperclipClient {
   activity(params: LimitParams): Promise<Result<ActivityItem[]>>;
   agents(): Promise<Result<Agent[]>>;
   health(): Promise<Result<HealthStatus>>;
+  costByPeriod(params: CostByPeriodParams): Promise<Result<CostPeriodPoint[]>>;
+  issues(params: IssuesParams): Promise<Result<Issue[]>>;
+  routines(): Promise<Result<Routine[]>>;
+  org(): Promise<Result<OrgNode[]>>;
+  approvals(params: ApprovalsParams): Promise<Result<Approval[]>>;
 }
 
 export function createPaperclipClient(cfg: PaperclipClientConfig): PaperclipClient {
@@ -206,6 +272,32 @@ export function createPaperclipClient(cfg: PaperclipClientConfig): PaperclipClie
 
     health() {
       return fetchJson<HealthStatus>(`${base}/api/health`);
+    },
+
+    costByPeriod({ from, to, bucket }: CostByPeriodParams) {
+      const url = buildUrl(`${companyBase}/costs/by-period`, { from, to, bucket });
+      return fetchJson<CostPeriodPoint[]>(url);
+    },
+
+    issues({ status, limit }: IssuesParams) {
+      const url = buildUrl(`${companyBase}/issues`, {
+        status,
+        limit: limit !== undefined ? String(limit) : undefined,
+      });
+      return fetchJson<Issue[]>(url);
+    },
+
+    routines() {
+      return fetchJson<Routine[]>(`${companyBase}/routines`);
+    },
+
+    org() {
+      return fetchJson<OrgNode[]>(`${companyBase}/org`);
+    },
+
+    approvals({ status }: ApprovalsParams) {
+      const url = buildUrl(`${companyBase}/approvals`, { status });
+      return fetchJson<Approval[]>(url);
     },
   };
 }

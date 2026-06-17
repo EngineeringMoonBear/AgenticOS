@@ -281,6 +281,185 @@ describe("PaperclipClient", () => {
     });
   });
 
+  // ── costByPeriod ───────────────────────────────────────────────────────────
+
+  describe("costByPeriod", () => {
+    const payload = [
+      { date: "2024-01-01", costCents: 1200 },
+      { date: "2024-01-02", costCents: 800 },
+    ];
+
+    it("calls the correct path with bearer auth and returns parsed data", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+
+      const result = await client.costByPeriod({ from: "2024-01-01", to: "2024-01-31", bucket: "day" });
+
+      expect(result).toEqual({ ok: true, data: payload });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain(`/api/companies/${COMPANY_ID}/costs/by-period`);
+      expect(url).toContain("from=2024-01-01");
+      expect(url).toContain("to=2024-01-31");
+      expect(url).toContain("bucket=day");
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("omits optional params when not provided", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+      await client.costByPeriod({});
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).not.toContain("from=");
+      expect(url).not.toContain("to=");
+      expect(url).not.toContain("bucket=");
+    });
+
+    it("returns {ok:false} on non-2xx", async () => {
+      globalThis.fetch = mockFetch(500, { error: "Internal Server Error" });
+      const client = await getClient();
+      const result = await client.costByPeriod({});
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/500/);
+    });
+  });
+
+  // ── issues ─────────────────────────────────────────────────────────────────
+
+  describe("issues", () => {
+    const payload = [
+      { id: "iss-1", title: "Agent failing", status: "open", priority: "high", assignee: null, createdAt: "2024-01-01T00:00:00Z" },
+    ];
+
+    it("calls the correct path with bearer auth and returns parsed data", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+
+      const result = await client.issues({ status: "open", limit: 20 });
+
+      expect(result).toEqual({ ok: true, data: payload });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain(`/api/companies/${COMPANY_ID}/issues`);
+      expect(url).toContain("status=open");
+      expect(url).toContain("limit=20");
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("omits optional params when not provided", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+      await client.issues({});
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).not.toContain("status=");
+      expect(url).not.toContain("limit=");
+    });
+
+    it("returns {ok:false} on non-2xx", async () => {
+      globalThis.fetch = mockFetch(403, { error: "Forbidden" });
+      const client = await getClient();
+      const result = await client.issues({});
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/403/);
+    });
+  });
+
+  // ── routines ───────────────────────────────────────────────────────────────
+
+  describe("routines", () => {
+    const payload = [
+      { id: "rtn-1", name: "Daily report", schedule: "0 9 * * *", nextRunAt: "2024-01-02T09:00:00Z", status: "active" },
+    ];
+
+    it("calls the correct path with bearer auth and returns parsed data", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+
+      const result = await client.routines();
+
+      expect(result).toEqual({ ok: true, data: payload });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain(`/api/companies/${COMPANY_ID}/routines`);
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("returns {ok:false} on non-2xx", async () => {
+      globalThis.fetch = mockFetch(404, { error: "Not Found" });
+      const client = await getClient();
+      const result = await client.routines();
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/404/);
+    });
+  });
+
+  // ── org ────────────────────────────────────────────────────────────────────
+
+  describe("org", () => {
+    const payload = [
+      { id: "node-1", name: "Engineering", type: "team", parentId: null },
+    ];
+
+    it("calls the correct path with bearer auth and returns parsed data", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+
+      const result = await client.org();
+
+      expect(result).toEqual({ ok: true, data: payload });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain(`/api/companies/${COMPANY_ID}/org`);
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("returns {ok:false} on non-2xx", async () => {
+      globalThis.fetch = mockFetch(401, { error: "Unauthorized" });
+      const client = await getClient();
+      const result = await client.org();
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/401/);
+    });
+  });
+
+  // ── approvals ──────────────────────────────────────────────────────────────
+
+  describe("approvals", () => {
+    const payload = [
+      { id: "appr-1", title: "Deploy agent", status: "pending", requestedBy: "a1", createdAt: "2024-01-01T00:00:00Z" },
+    ];
+
+    it("calls the correct path with bearer auth and returns parsed data", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+
+      const result = await client.approvals({ status: "pending" });
+
+      expect(result).toEqual({ ok: true, data: payload });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain(`/api/companies/${COMPANY_ID}/approvals`);
+      expect(url).toContain("status=pending");
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("omits status param when not provided", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+      await client.approvals({});
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).not.toContain("status=");
+    });
+
+    it("returns {ok:false} on non-2xx", async () => {
+      globalThis.fetch = mockFetch(403, { error: "Forbidden" });
+      const client = await getClient();
+      const result = await client.approvals({});
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/403/);
+    });
+  });
+
   // ── non-JSON error body (e.g. 502 gateway with HTML page) ─────────────────
 
   describe("non-JSON error body", () => {
