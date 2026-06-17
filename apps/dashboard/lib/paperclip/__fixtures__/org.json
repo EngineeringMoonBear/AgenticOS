@@ -1,0 +1,17 @@
+[
+  {
+    "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    "name": "Bob",
+    "role": "ceo",
+    "status": "active",
+    "reports": [
+      {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "name": "Alice",
+        "role": "ic",
+        "status": "active",
+        "reports": []
+      }
+    ]
+  }
+]

@@ -79,8 +79,9 @@ where neither has the full picture of agent state, cost, or assignment.
 
 ## Consequences
 
-- The Next.js dashboard is replaced by Paperclip's React (Vite) UI, with a
-  theme override file preserving the AgenticOS brand palette and custom CSS.
+- ~~The Next.js dashboard is replaced by Paperclip's React (Vite) UI, with a
+  theme override file preserving the AgenticOS brand palette and custom CSS.~~
+  **Amended 2026-06-17 — see [Amendment: Dashboard kept + repointed](#amendment-2026-06-17--dashboard-kept--repointed) below.**
 - Vault governance invariants must be enforced at the plugin level — the vault
   plugin's write paths are strictly scoped to `inbox/` archival.
 - The PR-triage connector design (2026-06-08) ports as a Paperclip scheduled
@@ -88,3 +89,37 @@ where neither has the full picture of agent state, cost, or assignment.
 - OpenViking integration moves from a native Hermes memory provider to a
   Paperclip plugin exposing `viking://` URIs through Paperclip's data feed
   or tool system.
+
+## Amendment (2026-06-17) — Dashboard kept + repointed
+
+**Status**: Accepted · amends (does not supersede) ADR 0006.
+
+The original Consequences said the Next.js dashboard would be **replaced** by
+Paperclip's own React (Vite) UI with only a theme override. That is no longer
+the plan. **AgenticOS keeps its existing Next.js "Vista" dashboard and repoints
+its API routes onto Paperclip's REST API** (the
+[Dashboard Paperclip Repoint plan](../superpowers/plans/2026-06-17-dashboard-paperclip-repoint.md)).
+
+**Why the change:**
+
+- The Vista dashboard is a bespoke, branded observability surface (KPI Vistas,
+  forester's-almanac palette, custom layouts) — substantially more than a theme
+  override on top of Paperclip's generic operator UI. Re-skinning Paperclip's UI
+  would lose that and still require rebuilding the panels.
+- Repointing is decoupled from the runtime cutover: the dashboard moves onto
+  Paperclip's API behind a `DASHBOARD_DATA_SOURCE` flag while Hermes is retired
+  underneath it, with no UI rewrite on the critical path.
+- The repoint also adds **Paperclip-native panels** (agents roster, issues /
+  work-queue, routines, org + approvals) that Paperclip exposes and Hermes never
+  did — capturing the same capability surface a UI swap would have, inside the
+  dashboard we already own.
+
+**What this changes vs. the original ADR:** only the dashboard-UI consequence.
+Everything else in ADR 0006 (replace Hermes orchestration/cost/memory/scheduling
+with Paperclip; retire the Task/Session/Call schema; OpenViking + vault as
+plugins) stands unchanged.
+
+**Open question deferred to the repoint plan (not this ADR):** the dashboard is
+**read-only** against Paperclip — run write-actions (cancel / retry) that
+currently call Hermes endpoints are out of scope for the repoint and resolved
+per-panel there.

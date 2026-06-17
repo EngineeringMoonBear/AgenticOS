@@ -51,7 +51,8 @@ export interface HeartbeatRun {
   companyId: string;
   agentId: string;
   status: string;
-  invocationSource: string | null;
+  /** Non-nullable — HeartbeatInvocationSource enum ("timer"|"assignment"|"on_demand"|"automation"). Source: vendor/paperclip/packages/shared/src/types/heartbeat.ts:15 */
+  invocationSource: string;
   triggerDetail: string | null;
   startedAt: string | null;
   finishedAt: string | null;
@@ -68,6 +69,8 @@ export interface ActivityItem {
   actorType: string;
   actorId: string;
   agentId: string | null;
+  /** Present when the activity was generated during a heartbeat run. Source: vendor/paperclip/packages/db/src/schema/activity_log.ts */
+  runId: string | null;
   action: string;
   entityType: string;
   entityId: string;
@@ -95,6 +98,183 @@ export interface HealthStatus {
   [key: string]: unknown;
 }
 
+/**
+ * ABSENT: The Paperclip API does NOT expose a `GET /companies/:id/costs/by-period`
+ * endpoint. The vendored source (vendor/paperclip/server/src/routes/costs.ts) only
+ * defines `/costs/summary` and `/costs/by-agent-model`. There is no server-side
+ * bucketing by day. The `costByPeriod()` method below is retained as a stub that
+ * always returns a 404 error so callers can detect the absence at runtime.
+ *
+ * @deprecated endpoint does not exist in Paperclip server
+ */
+export interface CostPeriodPoint {
+  /** ISO date string for the start of the bucket, e.g. "2024-01-01" */
+  date: string;
+  costCents: number;
+}
+
+/**
+ * Issue shape from vendor/paperclip/packages/shared/src/types/issue.ts
+ * Key corrections from A2 guess:
+ *   - REMOVED: assignee (does not exist)
+ *   - ADDED: assigneeAgentId, assigneeUserId (two separate nullable fields)
+ *   - ADDED: identifier, issueNumber, workMode, companyId, priority (real fields)
+ *   - ADDED: successfulRunHandoff, activeRecoveryAction (appended by route handler)
+ */
+export interface Issue {
+  id: string;
+  companyId: string;
+  title: string;
+  status: string;
+  priority: string | null;
+  /** No single assignee field — split into two nullable FK fields. */
+  assigneeAgentId: string | null;
+  assigneeUserId: string | null;
+  identifier: string | null;
+  issueNumber: number | null;
+  workMode: string | null;
+  successfulRunHandoff: unknown | null;
+  activeRecoveryAction: unknown | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Plugin-managed routine metadata.
+ * Source: vendor/paperclip/packages/shared/src/types/routine.ts:79 (RoutineManagedByPlugin)
+ */
+export interface RoutineManagedByPlugin {
+  id: string;
+  pluginId: string;
+  pluginKey: string;
+  pluginDisplayName: string;
+  resourceKind: "routine";
+  resourceKey: string;
+  defaultsJson: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Trigger sub-shape for RoutineListItem.
+ * Source: vendor/paperclip/packages/shared/src/types/routine.ts (RoutineListItem)
+ */
+export interface RoutineTrigger {
+  id: string;
+  kind: string;
+  label: string | null;
+  enabled: boolean;
+  /** Cron expression — no top-level `schedule` field on Routine. */
+  cronExpression: string | null;
+  timezone: string | null;
+  nextRunAt: string | null;
+  lastFiredAt: string | null;
+  lastResult: string | null;
+}
+
+export interface RoutineIssueSummary {
+  id: string;
+  identifier: string | null;
+  title: string;
+  status: string;
+  priority: string;
+  updatedAt: string;
+}
+
+/**
+ * Routine list item shape from vendor/paperclip/packages/shared/src/types/routine.ts
+ * Key corrections from A2 guess:
+ *   - REMOVED: name (field is `title`), schedule (does not exist), nextRunAt (lives in triggers[])
+ *   - ADDED: triggers[], lastRun, activeIssue
+ *   - Cron info lives in triggers[].cronExpression and triggers[].nextRunAt
+ *
+ * Intentionally narrowed to dashboard-relevant fields only; full shape (projectId, goalId,
+ * description, variables, env, revision fields, etc.) lives in the vendored Routine type at
+ * vendor/paperclip/packages/shared/src/types/routine.ts:51.
+ */
+export interface Routine {
+  id: string;
+  companyId: string;
+  title: string;
+  status: string;
+  priority: string | null;
+  assigneeAgentId: string | null;
+  concurrencyPolicy: string | null;
+  catchUpPolicy: string | null;
+  lastTriggeredAt: string | null;
+  lastEnqueuedAt: string | null;
+  /** Plugin that owns this routine, or null if unmanaged. Source: vendor/paperclip/packages/shared/src/types/routine.ts:79 */
+  managedByPlugin: RoutineManagedByPlugin | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Cron/webhook triggers — schedule/nextRunAt live here, not on Routine itself. */
+  triggers: RoutineTrigger[];
+  lastRun: Record<string, unknown> | null;
+  activeIssue: RoutineIssueSummary | null;
+}
+
+/**
+ * Org tree node from vendor/paperclip/server/src/routes/agents.ts `toLeanOrgNode()` (line 1430).
+ * Key corrections from A2 guess:
+ *   - REMOVED: type (does not exist), parentId (does not exist)
+ *   - ADDED: role, status, reports[] (nested tree — NOT flat array with parentId)
+ * The `/org` endpoint returns a NESTED TREE, not a flat list.
+ */
+export interface OrgNode {
+  id: string;
+  name: string;
+  /** Agent role (e.g. "ceo", "ic") — replaces the incorrect `type` field. */
+  role: string;
+  status: string;
+  /** Child nodes — the tree is recursive, not flat. */
+  reports: OrgNode[];
+}
+
+/**
+ * Approval shape from vendor/paperclip/packages/shared/src/types/approval.ts
+ * Key corrections from A2 guess:
+ *   - REMOVED: title (does not exist), requestedBy (does not exist as a single field)
+ *   - ADDED: type (ApprovalType enum), requestedByAgentId, requestedByUserId, payload (opaque/redacted)
+ */
+export interface Approval {
+  id: string;
+  companyId: string;
+  /** One of: "hire_agent" | "approve_ceo_strategy" | "budget_override_required" | "request_board_approval" */
+  type: string;
+  requestedByAgentId: string | null;
+  requestedByUserId: string | null;
+  status: string;
+  /** Opaque payload — redacted to "[redacted]" string in API response by redactApprovalPayload(). */
+  payload: unknown;
+  decisionNote: string | null;
+  decidedByUserId: string | null;
+  decidedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Scheduler heartbeat agent from vendor/paperclip/packages/shared/src/types/heartbeat.ts
+ * (InstanceSchedulerHeartbeatAgent interface, line ~1)
+ * NOTE: Does NOT expose plugin-job data (no vault-ingest/pr-triage last-run or next-run).
+ */
+export interface SchedulerHeartbeatAgent {
+  id: string;
+  companyId: string;
+  companyName: string;
+  companyIssuePrefix: string;
+  agentName: string;
+  agentUrlKey: string | null;
+  role: string;
+  title: string | null;
+  status: string;
+  adapterType: string;
+  intervalSec: number;
+  heartbeatEnabled: boolean;
+  schedulerActive: boolean;
+  lastHeartbeatAt: string | null;
+}
+
 // ── Date-range / param helpers ───────────────────────────────────────────────
 
 export interface DateRangeParams {
@@ -111,6 +291,22 @@ export interface HeartbeatRunsParams extends LimitParams {
   agentId?: string;
 }
 
+/** @deprecated costByPeriod endpoint does not exist in Paperclip server */
+export interface CostByPeriodParams {
+  from?: string;
+  to?: string;
+  bucket?: "day";
+}
+
+export interface IssuesParams {
+  status?: string;
+  limit?: number;
+}
+
+export interface ApprovalsParams {
+  status?: string;
+}
+
 // ── Client ───────────────────────────────────────────────────────────────────
 
 const TIMEOUT_MS = 8_000;
@@ -122,6 +318,14 @@ export interface PaperclipClient {
   activity(params: LimitParams): Promise<Result<ActivityItem[]>>;
   agents(): Promise<Result<Agent[]>>;
   health(): Promise<Result<HealthStatus>>;
+  /** @deprecated endpoint does not exist in Paperclip server — always returns 404 */
+  costByPeriod(params: CostByPeriodParams): Promise<Result<CostPeriodPoint[]>>;
+  issues(params: IssuesParams): Promise<Result<Issue[]>>;
+  routines(): Promise<Result<Routine[]>>;
+  org(): Promise<Result<OrgNode[]>>;
+  approvals(params: ApprovalsParams): Promise<Result<Approval[]>>;
+  /** Instance-level scheduler heartbeat status for all agents across all companies. */
+  schedulerHeartbeats(): Promise<Result<SchedulerHeartbeatAgent[]>>;
 }
 
 export function createPaperclipClient(cfg: PaperclipClientConfig): PaperclipClient {
@@ -206,6 +410,36 @@ export function createPaperclipClient(cfg: PaperclipClientConfig): PaperclipClie
 
     health() {
       return fetchJson<HealthStatus>(`${base}/api/health`);
+    },
+
+    costByPeriod({ from, to, bucket }: CostByPeriodParams) {
+      const url = buildUrl(`${companyBase}/costs/by-period`, { from, to, bucket });
+      return fetchJson<CostPeriodPoint[]>(url);
+    },
+
+    issues({ status, limit }: IssuesParams) {
+      const url = buildUrl(`${companyBase}/issues`, {
+        status,
+        limit: limit !== undefined ? String(limit) : undefined,
+      });
+      return fetchJson<Issue[]>(url);
+    },
+
+    routines() {
+      return fetchJson<Routine[]>(`${companyBase}/routines`);
+    },
+
+    org() {
+      return fetchJson<OrgNode[]>(`${companyBase}/org`);
+    },
+
+    approvals({ status }: ApprovalsParams) {
+      const url = buildUrl(`${companyBase}/approvals`, { status });
+      return fetchJson<Approval[]>(url);
+    },
+
+    schedulerHeartbeats() {
+      return fetchJson<SchedulerHeartbeatAgent[]>(`${base}/api/instance/scheduler-heartbeats`);
     },
   };
 }

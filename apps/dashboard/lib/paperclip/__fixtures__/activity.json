@@ -1,0 +1,34 @@
+[
+  {
+    "id": "11111111-aaaa-aaaa-aaaa-111111111111",
+    "companyId": "11111111-1111-1111-1111-111111111111",
+    "actorType": "agent",
+    "actorId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "action": "issue.status_updated",
+    "entityType": "issue",
+    "entityId": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+    "agentId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "runId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+    "details": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "createdAt": "2025-06-17T08:12:34.000Z"
+  },
+  {
+    "id": "22222222-bbbb-bbbb-bbbb-222222222222",
+    "companyId": "11111111-1111-1111-1111-111111111111",
+    "actorType": "user",
+    "actorId": "user-abc",
+    "action": "issue.created",
+    "entityType": "issue",
+    "entityId": "ffffffff-eeee-eeee-eeee-ffffffffffff",
+    "agentId": null,
+    "runId": null,
+    "details": {
+      "title": "Implement new feature",
+      "status": "todo"
+    },
+    "createdAt": "2025-06-17T07:30:00.000Z"
+  }
+]

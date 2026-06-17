@@ -189,8 +189,22 @@ describe("PaperclipClient", () => {
   // ── activity ───────────────────────────────────────────────────────────────
 
   describe("activity", () => {
+    // Real ActivityItem shape includes runId (nullable uuid).
+    // Source: vendor/paperclip/packages/db/src/schema/activity_log.ts
     const payload = [
-      { id: "act-1", action: "issue.created", entityType: "issue", entityId: "i1", createdAt: "2024-01-01T00:00:00Z" },
+      {
+        id: "act-1",
+        companyId: COMPANY_ID,
+        actorType: "agent",
+        actorId: "a1",
+        agentId: "a1",
+        runId: "run-123",
+        action: "issue.created",
+        entityType: "issue",
+        entityId: "i1",
+        details: null,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
     ];
 
     it("calls the correct path with limit param and bearer auth", async () => {
@@ -278,6 +292,315 @@ describe("PaperclipClient", () => {
       const result = await client.health();
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/ECONNREFUSED/i);
+    });
+  });
+
+  // ── costByPeriod ───────────────────────────────────────────────────────────
+
+  describe("costByPeriod", () => {
+    const payload = [
+      { date: "2024-01-01", costCents: 1200 },
+      { date: "2024-01-02", costCents: 800 },
+    ];
+
+    it("calls the correct path with bearer auth and returns parsed data", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+
+      const result = await client.costByPeriod({ from: "2024-01-01", to: "2024-01-31", bucket: "day" });
+
+      expect(result).toEqual({ ok: true, data: payload });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain(`/api/companies/${COMPANY_ID}/costs/by-period`);
+      expect(url).toContain("from=2024-01-01");
+      expect(url).toContain("to=2024-01-31");
+      expect(url).toContain("bucket=day");
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("omits optional params when not provided", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+      await client.costByPeriod({});
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).not.toContain("from=");
+      expect(url).not.toContain("to=");
+      expect(url).not.toContain("bucket=");
+    });
+
+    it("returns {ok:false} on non-2xx", async () => {
+      globalThis.fetch = mockFetch(500, { error: "Internal Server Error" });
+      const client = await getClient();
+      const result = await client.costByPeriod({});
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/500/);
+    });
+  });
+
+  // ── issues ─────────────────────────────────────────────────────────────────
+
+  describe("issues", () => {
+    // Real Issue shape: no `assignee` field; split into assigneeAgentId + assigneeUserId.
+    // Source: vendor/paperclip/packages/shared/src/types/issue.ts
+    const payload = [
+      {
+        id: "iss-1",
+        companyId: COMPANY_ID,
+        title: "Agent failing",
+        status: "in_progress",
+        priority: "high",
+        assigneeAgentId: "a1",
+        assigneeUserId: null,
+        identifier: "DEMO-1",
+        issueNumber: 1,
+        workMode: "normal",
+        successfulRunHandoff: null,
+        activeRecoveryAction: null,
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-02T00:00:00Z",
+      },
+    ];
+
+    it("calls the correct path with bearer auth and returns parsed data", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+
+      const result = await client.issues({ status: "open", limit: 20 });
+
+      expect(result).toEqual({ ok: true, data: payload });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain(`/api/companies/${COMPANY_ID}/issues`);
+      expect(url).toContain("status=open");
+      expect(url).toContain("limit=20");
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("omits optional params when not provided", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+      await client.issues({});
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).not.toContain("status=");
+      expect(url).not.toContain("limit=");
+    });
+
+    it("returns {ok:false} on non-2xx", async () => {
+      globalThis.fetch = mockFetch(403, { error: "Forbidden" });
+      const client = await getClient();
+      const result = await client.issues({});
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/403/);
+    });
+  });
+
+  // ── routines ───────────────────────────────────────────────────────────────
+
+  describe("routines", () => {
+    // Real RoutineListItem shape: no `name` (field is `title`), no `schedule` (cron lives in
+    // triggers[].cronExpression), no top-level `nextRunAt` (lives in triggers[].nextRunAt).
+    // Source: vendor/paperclip/packages/shared/src/types/routine.ts (RoutineListItem)
+    const payload = [
+      {
+        id: "rtn-1",
+        companyId: COMPANY_ID,
+        title: "Daily report",
+        status: "active",
+        priority: "normal",
+        assigneeAgentId: "a1",
+        concurrencyPolicy: "skip",
+        catchUpPolicy: "skip_missed",
+        lastTriggeredAt: null,
+        lastEnqueuedAt: null,
+        managedByPlugin: null,
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-01T00:00:00Z",
+        triggers: [
+          {
+            id: "trg-1",
+            kind: "cron",
+            label: "Daily 9am",
+            enabled: true,
+            cronExpression: "0 9 * * *",
+            timezone: "UTC",
+            nextRunAt: "2024-01-02T09:00:00Z",
+            lastFiredAt: null,
+            lastResult: null,
+          },
+        ],
+        lastRun: null,
+        activeIssue: null,
+      },
+    ];
+
+    it("calls the correct path with bearer auth and returns parsed data", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+
+      const result = await client.routines();
+
+      expect(result).toEqual({ ok: true, data: payload });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain(`/api/companies/${COMPANY_ID}/routines`);
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("returns {ok:false} on non-2xx", async () => {
+      globalThis.fetch = mockFetch(404, { error: "Not Found" });
+      const client = await getClient();
+      const result = await client.routines();
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/404/);
+    });
+  });
+
+  // ── org ────────────────────────────────────────────────────────────────────
+
+  describe("org", () => {
+    // Real OrgNode shape: nested tree via toLeanOrgNode() — NOT flat with parentId.
+    // Fields `type` and `parentId` do NOT exist. Real fields: role, status, reports[].
+    // Source: vendor/paperclip/server/src/routes/agents.ts, toLeanOrgNode() at line 1430
+    const payload = [
+      {
+        id: "node-1",
+        name: "Bob",
+        role: "ceo",
+        status: "active",
+        reports: [
+          { id: "node-2", name: "Alice", role: "ic", status: "active", reports: [] },
+        ],
+      },
+    ];
+
+    it("calls the correct path with bearer auth and returns parsed data", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+
+      const result = await client.org();
+
+      expect(result).toEqual({ ok: true, data: payload });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain(`/api/companies/${COMPANY_ID}/org`);
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("returns {ok:false} on non-2xx", async () => {
+      globalThis.fetch = mockFetch(401, { error: "Unauthorized" });
+      const client = await getClient();
+      const result = await client.org();
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/401/);
+    });
+  });
+
+  // ── approvals ──────────────────────────────────────────────────────────────
+
+  describe("approvals", () => {
+    // Real Approval shape: no `title`, no single `requestedBy`.
+    // Has: type (ApprovalType), requestedByAgentId, requestedByUserId, payload (redacted).
+    // Source: vendor/paperclip/packages/shared/src/types/approval.ts
+    const payload = [
+      {
+        id: "appr-1",
+        companyId: COMPANY_ID,
+        type: "budget_override_required",
+        requestedByAgentId: "a1",
+        requestedByUserId: null,
+        status: "pending",
+        payload: "[redacted]",
+        decisionNote: null,
+        decidedByUserId: null,
+        decidedAt: null,
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-01T00:00:00Z",
+      },
+    ];
+
+    it("calls the correct path with bearer auth and returns parsed data", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+
+      const result = await client.approvals({ status: "pending" });
+
+      expect(result).toEqual({ ok: true, data: payload });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain(`/api/companies/${COMPANY_ID}/approvals`);
+      expect(url).toContain("status=pending");
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("omits status param when not provided", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+      await client.approvals({});
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).not.toContain("status=");
+    });
+
+    it("returns {ok:false} on non-2xx", async () => {
+      globalThis.fetch = mockFetch(403, { error: "Forbidden" });
+      const client = await getClient();
+      const result = await client.approvals({});
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/403/);
+    });
+  });
+
+  // ── schedulerHeartbeats ────────────────────────────────────────────────────
+
+  describe("schedulerHeartbeats", () => {
+    // InstanceSchedulerHeartbeatAgent shape from vendor/paperclip/packages/shared/src/types/heartbeat.ts
+    // NOTE: Does NOT expose plugin-job data (no vault-ingest/pr-triage last-run or next-run).
+    const payload = [
+      {
+        id: "a1",
+        companyId: COMPANY_ID,
+        companyName: "Demo Corp",
+        companyIssuePrefix: "DEMO",
+        agentName: "Alice",
+        agentUrlKey: "alice",
+        role: "ic",
+        title: null,
+        status: "active",
+        adapterType: "acpx_local",
+        intervalSec: 300,
+        heartbeatEnabled: true,
+        schedulerActive: true,
+        lastHeartbeatAt: "2024-01-01T00:00:00Z",
+      },
+    ];
+
+    it("calls /api/instance/scheduler-heartbeats with bearer auth", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+
+      const result = await client.schedulerHeartbeats();
+
+      expect(result).toEqual({ ok: true, data: payload });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain("/api/instance/scheduler-heartbeats");
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("does NOT include companyId in the URL path", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+      await client.schedulerHeartbeats();
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).not.toContain(`/companies/${COMPANY_ID}`);
+    });
+
+    it("returns {ok:false} on non-2xx", async () => {
+      globalThis.fetch = mockFetch(403, { error: "Forbidden" });
+      const client = await getClient();
+      const result = await client.schedulerHeartbeats();
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/403/);
     });
   });
 

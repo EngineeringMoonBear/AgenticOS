@@ -1,0 +1,38 @@
+[
+  {
+    "agentId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "agentName": "Alice",
+    "provider": "anthropic",
+    "biller": "anthropic",
+    "billingType": "metered_api",
+    "model": "claude-opus-4-5",
+    "costCents": 8200,
+    "inputTokens": 410000,
+    "cachedInputTokens": 82000,
+    "outputTokens": 24600
+  },
+  {
+    "agentId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "agentName": "Alice",
+    "provider": "anthropic",
+    "biller": "anthropic",
+    "billingType": "metered_api",
+    "model": "claude-haiku-3-5",
+    "costCents": 340,
+    "inputTokens": 85000,
+    "cachedInputTokens": 0,
+    "outputTokens": 4250
+  },
+  {
+    "agentId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    "agentName": "Bob",
+    "provider": "anthropic",
+    "biller": "anthropic",
+    "billingType": "metered_api",
+    "model": "claude-opus-4-5",
+    "costCents": 3100,
+    "inputTokens": 155000,
+    "cachedInputTokens": 31000,
+    "outputTokens": 9300
+  }
+]

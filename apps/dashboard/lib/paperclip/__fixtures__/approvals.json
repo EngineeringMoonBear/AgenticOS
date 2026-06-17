@@ -1,0 +1,30 @@
+[
+  {
+    "id": "appr-0001-0000-0000-000000000000",
+    "companyId": "11111111-1111-1111-1111-111111111111",
+    "type": "budget_override_required",
+    "requestedByAgentId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "requestedByUserId": null,
+    "status": "pending",
+    "payload": "[redacted]",
+    "decisionNote": null,
+    "decidedByUserId": null,
+    "decidedAt": null,
+    "createdAt": "2025-06-17T06:00:00.000Z",
+    "updatedAt": "2025-06-17T06:00:00.000Z"
+  },
+  {
+    "id": "appr-0002-0000-0000-000000000000",
+    "companyId": "11111111-1111-1111-1111-111111111111",
+    "type": "hire_agent",
+    "requestedByAgentId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    "requestedByUserId": null,
+    "status": "approved",
+    "payload": "[redacted]",
+    "decisionNote": "Approved for Q3 hiring plan",
+    "decidedByUserId": "user-abc",
+    "decidedAt": "2025-06-15T14:30:00.000Z",
+    "createdAt": "2025-06-14T09:00:00.000Z",
+    "updatedAt": "2025-06-15T14:30:00.000Z"
+  }
+]
