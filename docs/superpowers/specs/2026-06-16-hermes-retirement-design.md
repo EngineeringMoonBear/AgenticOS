@@ -67,8 +67,8 @@ Tab-by-tab source mapping:
 - **Runs feed** → `GET /api/companies/{id}/heartbeat-runs` + `GET /api/companies/{id}/activity`.
   Replaces the `tasks`/`sessions` queries.
 - **Agent-health tile** → **synthesized** (no single endpoint): `agent.status`
-  + latest `heartbeat_run` (`status`, `livenessState`, `lastOutputAt`) +
-  pending routines. This synthesis is the one piece of net-new dashboard logic
+  plus the latest `heartbeat_run` (`status`, `livenessState`, `lastOutputAt`)
+  plus pending routines. This synthesis is the one piece of net-new dashboard logic
   and the riskiest read; it is verified on the preview before cutover (§5).
 
 A board key is added to the dashboard's App Platform env (the same key the
