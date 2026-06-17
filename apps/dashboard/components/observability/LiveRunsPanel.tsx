@@ -76,7 +76,22 @@ async function cancelRun(id: string): Promise<void> {
   await fetch(`/api/tasks/${id}`, { method: "DELETE" }).catch(() => {});
 }
 
-export function LiveRunsPanel() {
+interface LiveRunsPanelProps {
+  /**
+   * Whether to render the cancel button on each run row.
+   *
+   * Set to false on the Paperclip data source: the cancel button POSTs to a
+   * Hermes-only endpoint (`DELETE /api/tasks/:id`) that does not exist on the
+   * Paperclip path. A native Paperclip cancel endpoint exists
+   * (`POST /api/heartbeat-runs/:runId/cancel`) but is not yet wired — see the
+   * run-control follow-up FR.
+   *
+   * Defaults to true (Hermes behaviour is preserved).
+   */
+  showCancelButton?: boolean;
+}
+
+export function LiveRunsPanel({ showCancelButton = true }: LiveRunsPanelProps) {
   const { data, isLoading } = useQuery<{ runs: ActiveRun[] }>({
     queryKey: ["tasks", "active"],
     queryFn: async () => {
@@ -93,6 +108,9 @@ export function LiveRunsPanel() {
     runs.length === 0
       ? "no active runs"
       : `${runs.length} active${stuckCount > 0 ? ` · ${stuckCount} stuck` : ""}`;
+
+  // Row column template: omit the cancel-button column on the Paperclip path.
+  const rowColumns = showCancelButton ? "auto 1fr auto auto" : "auto 1fr auto";
 
   return (
     <Card lane="gold">
@@ -114,7 +132,7 @@ export function LiveRunsPanel() {
             <Row
               key={r.id}
               stuck={r.stuck}
-              style={{ gridTemplateColumns: ROW_COLUMNS, gap: 10 }}
+              style={{ gridTemplateColumns: rowColumns, gap: 10 }}
             >
               <Pill variant={r.stuck ? "err" : "run"}>
                 {r.stuck ? "stuck" : "running"}
@@ -142,13 +160,15 @@ export function LiveRunsPanel() {
               >
                 {formatElapsed(r.elapsed_seconds)}
               </span>
-              <IconBtn
-                variant={r.stuck ? "alert" : "default"}
-                ariaLabel={r.stuck ? "Force cancel stuck run" : "Cancel run"}
-                onClick={() => cancelRun(r.id)}
-              >
-                {CancelIcon}
-              </IconBtn>
+              {showCancelButton && (
+                <IconBtn
+                  variant={r.stuck ? "alert" : "default"}
+                  ariaLabel={r.stuck ? "Force cancel stuck run" : "Cancel run"}
+                  onClick={() => cancelRun(r.id)}
+                >
+                  {CancelIcon}
+                </IconBtn>
+              )}
             </Row>
           ))}
         </RowList>

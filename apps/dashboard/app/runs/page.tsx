@@ -6,6 +6,7 @@ import { ScheduledRunsPanel } from "@/components/observability/ScheduledRunsPane
 import { VaultIngestPanel } from "@/components/observability/VaultIngestPanel";
 import { RunsVista } from "@/components/shell/RunsVista";
 import { LiveRunFeedSection } from "./live-run-feed-section";
+import { dataSource } from "@/lib/config/data-source";
 
 export default function LiveOpsPage() {
   return (
@@ -19,7 +20,10 @@ export default function LiveOpsPage() {
         <VaultIngestPanel />
       </section>
       <section className="col-span-12 md:col-span-6 lg:col-span-4">
-        <LiveRunsPanel />
+        {/* Cancel button is hidden on the Paperclip path: the Hermes DELETE
+            endpoint it targets does not exist on Paperclip. The native cancel
+            endpoint will be wired in the run-control follow-up FR. */}
+        <LiveRunsPanel showCancelButton={dataSource() !== "paperclip"} />
       </section>
       <section className="col-span-12 md:col-span-6 lg:col-span-4">
         <QueueDepthPanel />
