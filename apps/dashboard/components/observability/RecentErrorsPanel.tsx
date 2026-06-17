@@ -63,7 +63,13 @@ const RetryIcon = (
   </svg>
 );
 
-export function RecentErrorsPanel() {
+interface RecentErrorsPanelProps {
+  /** Hide the per-row retry button. Pass false on the Paperclip path — the
+   *  Hermes DELETE endpoint it targets does not exist in Paperclip. */
+  showRetryButton?: boolean;
+}
+
+export function RecentErrorsPanel({ showRetryButton = true }: RecentErrorsPanelProps) {
   const { data, isLoading } = useQuery<{ rows: RecentErrorRow[] }>({
     queryKey: ["tasks", "recent-errors"],
     queryFn: async () => {
@@ -100,13 +106,15 @@ export function RecentErrorsPanel() {
                 {r.error ?? ""}
               </div>
               <div className="ts">{formatRelative(r.started_at)}</div>
-              <IconBtn
-                variant="alert"
-                ariaLabel={`Retry ${r.kind}`}
-                onClick={() => retryTask(r.id)}
-              >
-                {RetryIcon}
-              </IconBtn>
+              {showRetryButton && (
+                <IconBtn
+                  variant="alert"
+                  ariaLabel={`Retry ${r.kind}`}
+                  onClick={() => retryTask(r.id)}
+                >
+                  {RetryIcon}
+                </IconBtn>
+              )}
             </div>
           ))}
         </div>

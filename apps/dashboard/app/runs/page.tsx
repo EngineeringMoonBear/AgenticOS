@@ -32,7 +32,9 @@ export default function LiveOpsPage() {
         <ScheduledRunsPanel />
       </section>
       <section className="col-span-12 lg:col-span-6">
-        <RecentErrorsPanel />
+        {/* Retry button is hidden on the Paperclip path — the Hermes retry
+            endpoint it targets does not exist in Paperclip. */}
+        <RecentErrorsPanel showRetryButton={dataSource() !== "paperclip"} />
       </section>
       <section className="col-span-12">
         <LiveRunFeedSection />
