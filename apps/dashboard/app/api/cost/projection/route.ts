@@ -47,7 +47,7 @@ function utcDateOffsetStart(offset: number): string {
   const d = new Date();
   d.setUTCDate(d.getUTCDate() - offset);
   d.setUTCHours(0, 0, 0, 0);
-  return d.toISOString().replace(".000Z", "Z");
+  return d.toISOString().slice(0, 19) + "Z";
 }
 
 // ---------------------------------------------------------------------------

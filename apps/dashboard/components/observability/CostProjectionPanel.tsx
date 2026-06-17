@@ -43,7 +43,8 @@ function useCostProjection() {
 export function CostProjectionPanel() {
   const { data, isLoading } = useCostProjection();
 
-  const pct = data ? Math.min(100, (data.spend_usd / data.cap_usd) * 100) : 0;
+  const hasCap = data ? data.cap_usd > 0 : false;
+  const pct = data && hasCap ? Math.min(100, (data.spend_usd / data.cap_usd) * 100) : 0;
 
   return (
     <Card lane="gold">
@@ -66,17 +67,23 @@ export function CostProjectionPanel() {
             }}
           >
             <div className="big-num">
-              ${data.spend_usd.toFixed(2)}{" "}
-              <span className="of">/ ${data.cap_usd}</span>
+              ${data.spend_usd.toFixed(2)}
+              {hasCap && (
+                <span className="of"> / ${data.cap_usd}</span>
+              )}
             </div>
-            <Pill variant="ok">{Math.round(pct)}% of cap</Pill>
+            {hasCap && (
+              <Pill variant="ok">{Math.round(pct)}% of cap</Pill>
+            )}
           </div>
-          <div className="progress-track">
-            <div
-              className="progress-fill gold"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
+          {hasCap && (
+            <div className="progress-track">
+              <div
+                className="progress-fill gold"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          )}
           <RowList>
             <Row style={{ gridTemplateColumns: "1fr auto", gap: 0, minHeight: 18 }}>
               <span className="meta">MTD spend</span>
