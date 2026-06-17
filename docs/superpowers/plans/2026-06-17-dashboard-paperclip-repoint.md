@@ -92,7 +92,7 @@ For every Phase B/C task: **read the component + its existing `/api/...` fetch f
 **Interfaces:**
 - Consumes: `/api/runs` (foundation) → `{ runs: RunRecord[], live: RunRecord[] }`.
 
-- [ ] Step 1: Failing test: with the flag on, the hook/components fetch `/api/runs` and render the `RunRecord[]`/`live` data; with it off, `/api/tasks` (existing). 
+- [ ] Step 1: Failing test: with the flag on, the hook/components fetch `/api/runs` and render the `RunRecord[]`/`live` data; with it off, `/api/tasks` (existing).
 - [ ] Step 2: FAIL. Step 3: Implement the flag branch in the hook. Step 4: PASS + typecheck. Step 5: Commit.
 
 ### Task B3: RecentErrorsPanel
