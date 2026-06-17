@@ -23,8 +23,8 @@ docs carry a **SUPERSEDED** banner. Start here.
 | [`superpowers/specs/2026-06-01-inbox-write-surface-design.md`](superpowers/specs/2026-06-01-inbox-write-surface-design.md) | Current | Inbox promote/discard write surface. |
 | [`superpowers/specs/2026-06-08-dev-github-pr-triage-connector-design.md`](superpowers/specs/2026-06-08-dev-github-pr-triage-connector-design.md) | Current (porting) | PR-triage connector — architecture valid, ports to Paperclip scheduled routine. |
 | [`superpowers/specs/2026-06-03-kpivista-wire-and-land-design.md`](superpowers/specs/2026-06-03-kpivista-wire-and-land-design.md) | Current (porting) | KPI Vista — visual design valid, ports to Paperclip plugin UI contribution. |
-| [`superpowers/specs/2026-06-02-ia-spec-rewrite-design.md`](superpowers/specs/2026-06-02-ia-spec-rewrite-design.md) | Superseded | IA spec rewrite — superseded by Paperclip's native UI. |
-| [`superpowers/specs/2026-05-25-v2-unified-dashboard-design.md`](superpowers/specs/2026-05-25-v2-unified-dashboard-design.md) | Superseded | Unified dashboard shell — superseded by Paperclip React UI + theme override. |
+| [`superpowers/specs/2026-06-02-ia-spec-rewrite-design.md`](superpowers/specs/2026-06-02-ia-spec-rewrite-design.md) | Superseded | IA spec rewrite — superseded. Current dashboard direction: the Next.js dashboard repoint ([ADR 0006 amendment](adr/0006-hermes-to-paperclip-runtime.md#amendment-2026-06-17--dashboard-kept--repointed)), not Paperclip's native UI. |
+| [`superpowers/specs/2026-05-25-v2-unified-dashboard-design.md`](superpowers/specs/2026-05-25-v2-unified-dashboard-design.md) | Superseded | Unified dashboard shell — superseded. (The interim "adopt Paperclip's React UI" direction was itself reversed: the Next.js "Vista" dashboard is kept + repointed — [ADR 0006 amendment](adr/0006-hermes-to-paperclip-runtime.md#amendment-2026-06-17--dashboard-kept--repointed).) |
 | [`superpowers/specs/2026-05-22-spec1-orchestrator-cost-observability-design.md`](superpowers/specs/2026-05-22-spec1-orchestrator-cost-observability-design.md) | Superseded | Spec 1 — Hermes orchestrator + cost observability. Replaced by Paperclip runtime. |
 | [`superpowers/specs/spec1-verified-api-shapes.md`](superpowers/specs/spec1-verified-api-shapes.md) | Superseded | Verified API shapes for Spec 1 (Hermes-era). |
 | [`superpowers/specs/2026-06-06-sandcastle-spike-design.md`](superpowers/specs/2026-06-06-sandcastle-spike-design.md) | Superseded | Sandcastle spike — replaced by Paperclip execution workspaces. |
@@ -35,7 +35,7 @@ docs carry a **SUPERSEDED** banner. Start here.
 | Doc | Status | Purpose |
 |---|---|---|
 | [`plans/spec1-orchestrator.md`](plans/spec1-orchestrator.md) | Superseded | Runtime build plan (Hermes/OpenViking/Codex) — replaced by Paperclip. |
-| [`plans/v2-unified-dashboard.md`](plans/v2-unified-dashboard.md) | Superseded | Dashboard build plan — replaced by Paperclip React UI. |
+| [`plans/v2-unified-dashboard.md`](plans/v2-unified-dashboard.md) | Superseded | Dashboard build plan — superseded. Current direction: the Next.js dashboard repoint onto Paperclip's API ([ADR 0006 amendment](adr/0006-hermes-to-paperclip-runtime.md#amendment-2026-06-17--dashboard-kept--repointed)), not Paperclip's own UI. |
 | [`plans/phase-2-vault-memory.md`](plans/phase-2-vault-memory.md) | Partially current | vault-core / Memory lineage valid; promotion model unchanged. |
 | [`plans/phase-1-mvp-foundation.md`](plans/phase-1-mvp-foundation.md) | Superseded | Early all-mock dashboard scaffold. |
 | [`plans/phase-3-hermes-integration.md`](plans/phase-3-hermes-integration.md) | Superseded | Hermes integration — replaced by Paperclip. |
