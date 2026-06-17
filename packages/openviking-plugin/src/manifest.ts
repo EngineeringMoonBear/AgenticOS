@@ -16,7 +16,16 @@ const manifest: PaperclipPluginManifestV1 = {
   // format:"secret-ref" + secrets.read-ref once company-scoped config lands.
   // database.namespace.read/write: vault-ingest job persists SHA reconciliation
   // state in a plugin DB namespace to avoid re-ingesting unchanged files.
-  capabilities: ["jobs.schedule", "http.outbound", "database.namespace.read", "database.namespace.write"],
+  // database.namespace.migrate: the job runs `CREATE TABLE IF NOT EXISTS
+  // vault_ingest_state` (idempotent DDL) on each run instead of a formal
+  // migration, which the host gates behind this capability.
+  capabilities: [
+    "jobs.schedule",
+    "http.outbound",
+    "database.namespace.read",
+    "database.namespace.write",
+    "database.namespace.migrate",
+  ],
   jobs: [
     {
       jobKey: "vault-ingest",

@@ -6,6 +6,8 @@ import { handleRecall } from "./tools/recall.js";
 import { handleFind } from "./tools/find.js";
 import { handleAbstract } from "./tools/abstract.js";
 import { handleMemoryStats } from "./data/memory-stats.js";
+import { runVaultIngest } from "./ingest/job.js";
+import { readVault } from "./ingest/vault-reader.js";
 
 /** Map a handler's domain result onto the SDK ToolResult contract. */
 function toToolResult(out: Record<string, unknown>): ToolResult {
@@ -19,6 +21,7 @@ interface VikingConfig {
   endpoint: string;
   account: string;
   user: string;
+  vaultServerUrl: string;
 }
 
 function readConfig(raw: Record<string, unknown>): VikingConfig {
@@ -27,6 +30,7 @@ function readConfig(raw: Record<string, unknown>): VikingConfig {
     endpoint: String(raw.endpoint ?? "http://openviking:1933"),
     account: String(raw.account ?? "agenticos"),
     user: String(raw.user ?? "deploy"),
+    vaultServerUrl: String(raw.vaultServerUrl ?? "http://vault-server:7777"),
   };
 }
 
@@ -141,6 +145,20 @@ const plugin = definePlugin({
     // --- Data providers ---
 
     ctx.data.register("memory-stats", async () => handleMemoryStats(await build(ctx)));
+
+    // --- Scheduled job: hourly vault → OpenViking resource ingest ---
+
+    ctx.jobs.register("vault-ingest", async () => {
+      const cfg = readConfig(await ctx.config.get());
+      const viking = await build(ctx);
+      const summary = await runVaultIngest({
+        reader: (url) => readVault(url),
+        viking,
+        db: ctx.db,
+        vaultServerUrl: cfg.vaultServerUrl,
+      });
+      ctx.logger.info("vault-ingest complete", summary as unknown as Record<string, unknown>);
+    });
   },
 
   async onHealth() {
