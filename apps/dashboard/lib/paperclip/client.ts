@@ -51,7 +51,8 @@ export interface HeartbeatRun {
   companyId: string;
   agentId: string;
   status: string;
-  invocationSource: string | null;
+  /** Non-nullable — HeartbeatInvocationSource enum ("timer"|"assignment"|"on_demand"|"automation"). Source: vendor/paperclip/packages/shared/src/types/heartbeat.ts:15 */
+  invocationSource: string;
   triggerDetail: string | null;
   startedAt: string | null;
   finishedAt: string | null;
@@ -139,6 +140,22 @@ export interface Issue {
 }
 
 /**
+ * Plugin-managed routine metadata.
+ * Source: vendor/paperclip/packages/shared/src/types/routine.ts:79 (RoutineManagedByPlugin)
+ */
+export interface RoutineManagedByPlugin {
+  id: string;
+  pluginId: string;
+  pluginKey: string;
+  pluginDisplayName: string;
+  resourceKind: "routine";
+  resourceKey: string;
+  defaultsJson: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
  * Trigger sub-shape for RoutineListItem.
  * Source: vendor/paperclip/packages/shared/src/types/routine.ts (RoutineListItem)
  */
@@ -170,6 +187,10 @@ export interface RoutineIssueSummary {
  *   - REMOVED: name (field is `title`), schedule (does not exist), nextRunAt (lives in triggers[])
  *   - ADDED: triggers[], lastRun, activeIssue
  *   - Cron info lives in triggers[].cronExpression and triggers[].nextRunAt
+ *
+ * Intentionally narrowed to dashboard-relevant fields only; full shape (projectId, goalId,
+ * description, variables, env, revision fields, etc.) lives in the vendored Routine type at
+ * vendor/paperclip/packages/shared/src/types/routine.ts:51.
  */
 export interface Routine {
   id: string;
@@ -182,7 +203,8 @@ export interface Routine {
   catchUpPolicy: string | null;
   lastTriggeredAt: string | null;
   lastEnqueuedAt: string | null;
-  managedByPlugin: string | null;
+  /** Plugin that owns this routine, or null if unmanaged. Source: vendor/paperclip/packages/shared/src/types/routine.ts:79 */
+  managedByPlugin: RoutineManagedByPlugin | null;
   createdAt: string;
   updatedAt: string;
   /** Cron/webhook triggers — schedule/nextRunAt live here, not on Routine itself. */
