@@ -108,6 +108,7 @@ export interface LimitParams {
 
 export interface HeartbeatRunsParams extends LimitParams {
   status?: string;
+  agentId?: string;
 }
 
 // ── Client ───────────────────────────────────────────────────────────────────
@@ -185,10 +186,11 @@ export function createPaperclipClient(cfg: PaperclipClientConfig): PaperclipClie
       return fetchJson<CostByAgentModelRow[]>(url);
     },
 
-    heartbeatRuns({ limit, status }: HeartbeatRunsParams) {
+    heartbeatRuns({ limit, status, agentId }: HeartbeatRunsParams) {
       const url = buildUrl(`${companyBase}/heartbeat-runs`, {
         limit: String(limit),
         status,
+        agentId,
       });
       return fetchJson<HeartbeatRun[]>(url);
     },

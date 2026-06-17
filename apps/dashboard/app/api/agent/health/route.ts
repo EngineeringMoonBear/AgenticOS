@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import type { HeartbeatRun } from "@/lib/paperclip/client";
 import { getHermesClient } from "@/lib/agent";
 
 export const dynamic = "force-dynamic";
@@ -60,27 +59,18 @@ async function getPaperclipHealth(): Promise<Response> {
     );
   }
 
-  // Step 3: check whether any running agent has a stuck latest heartbeat run.
-  // Fetch a window of recent runs once, then group by agentId to find the
-  // latest run per agent (API returns most-recent-first, so first seen per
-  // agentId is its latest). System is "ok" if at least one running agent has
-  // a latest run whose livenessState !== "stuck".
-  const heartbeatResult = await client.heartbeatRuns({ limit: 50 });
+  // Step 3: check whether any running agent has a non-stuck latest heartbeat
+  // run. Query each running agent's own latest run in parallel using the
+  // agentId filter — avoids the silent window-miss that a shared limit:50 batch
+  // can produce when one busy agent consumes all 50 slots.
+  const perAgentResults = await Promise.all(
+    runningAgents.map((a) => client.heartbeatRuns({ agentId: a.id, limit: 1 })),
+  );
 
-  // Build a map: agentId → latest HeartbeatRun (first occurrence wins).
-  const latestRunByAgent = new Map<string, HeartbeatRun>();
-  if (heartbeatResult.ok) {
-    for (const run of heartbeatResult.data) {
-      if (!latestRunByAgent.has(run.agentId)) {
-        latestRunByAgent.set(run.agentId, run);
-      }
-    }
-  }
-
-  const hasHealthyRunningAgent = runningAgents.some((agent) => {
-    if (!heartbeatResult.ok) return false;
-    const latestRun = latestRunByAgent.get(agent.id);
-    // No run found for this agent = cannot confirm healthy.
+  const hasHealthyRunningAgent = perAgentResults.some((result) => {
+    if (!result.ok) return false;
+    const latestRun = result.data[0];
+    // No run returned for this agent = cannot confirm healthy.
     if (!latestRun) return false;
     return latestRun.livenessState !== "stuck";
   });

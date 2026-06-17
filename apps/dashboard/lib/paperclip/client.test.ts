@@ -160,6 +160,23 @@ describe("PaperclipClient", () => {
       expect(url).toContain("status=running");
     });
 
+    it("forwards agentId as a query param when provided", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+      await client.heartbeatRuns({ limit: 1, agentId: "agent-xyz" });
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain("agentId=agent-xyz");
+      expect(url).toContain("limit=1");
+    });
+
+    it("omits agentId from query string when not provided", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+      await client.heartbeatRuns({ limit: 50 });
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).not.toContain("agentId=");
+    });
+
     it("returns {ok:false} on non-2xx", async () => {
       globalThis.fetch = mockFetch(401, { error: "Unauthorized" });
       const client = await getClient();

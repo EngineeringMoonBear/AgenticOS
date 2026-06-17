@@ -90,6 +90,7 @@ describe("GET /api/agent/health — Paperclip path (DASHBOARD_DATA_SOURCE=paperc
         },
       ],
     });
+    // Per-agent query: returns the single latest run for agent-1.
     mockHeartbeatRuns.mockResolvedValue({
       ok: true,
       data: [
@@ -116,6 +117,9 @@ describe("GET /api/agent/health — Paperclip path (DASHBOARD_DATA_SOURCE=paperc
 
     const body = await res.json();
     expect(body.status).toBe("ok");
+    // One per-agent call with agentId filter.
+    expect(mockHeartbeatRuns).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatRuns).toHaveBeenCalledWith({ agentId: "agent-1", limit: 1 });
   });
 
   it('returns status "degraded" when health passes but no agent is running', async () => {
@@ -162,6 +166,7 @@ describe("GET /api/agent/health — Paperclip path (DASHBOARD_DATA_SOURCE=paperc
         },
       ],
     });
+    // Per-agent query: returns the single latest run for agent-1, which is stuck.
     mockHeartbeatRuns.mockResolvedValue({
       ok: true,
       data: [
@@ -188,6 +193,9 @@ describe("GET /api/agent/health — Paperclip path (DASHBOARD_DATA_SOURCE=paperc
 
     const body = await res.json();
     expect(body.status).toBe("degraded");
+    // One per-agent call with agentId filter.
+    expect(mockHeartbeatRuns).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatRuns).toHaveBeenCalledWith({ agentId: "agent-1", limit: 1 });
   });
 
   it('returns status "down" with 503 when health() fails', async () => {
@@ -244,51 +252,59 @@ describe("GET /api/agent/health — Paperclip path (DASHBOARD_DATA_SOURCE=paperc
         },
       ],
     });
-    // Batch of recent runs: agent-B's run comes first (most recent), agent-A's is stuck.
-    mockHeartbeatRuns.mockResolvedValue({
-      ok: true,
-      data: [
-        {
-          id: "run-B-1",
-          companyId: "co-test",
-          agentId: "agent-B",
-          status: "running",
-          invocationSource: "cron",
-          triggerDetail: null,
-          startedAt: "2026-06-17T10:01:00.000Z",
-          finishedAt: null,
-          createdAt: "2026-06-17T10:00:59.000Z",
-          livenessState: "alive",
-          livenessReason: null,
-          contextSnapshot: null,
-          resultJson: null,
-        },
-        {
-          id: "run-A-1",
-          companyId: "co-test",
-          agentId: "agent-A",
-          status: "running",
-          invocationSource: "cron",
-          triggerDetail: null,
-          startedAt: "2026-06-17T10:00:00.000Z",
-          finishedAt: null,
-          createdAt: "2026-06-17T09:59:59.000Z",
-          livenessState: "stuck",
-          livenessReason: "no heartbeat for 5 minutes",
-          contextSnapshot: null,
-          resultJson: null,
-        },
-      ],
-    });
+    // Per-agent queries (one call per agent, agentId filtered, limit:1).
+    // agent-A → stuck; agent-B → alive.
+    mockHeartbeatRuns
+      .mockResolvedValueOnce({
+        ok: true,
+        data: [
+          {
+            id: "run-A-1",
+            companyId: "co-test",
+            agentId: "agent-A",
+            status: "running",
+            invocationSource: "cron",
+            triggerDetail: null,
+            startedAt: "2026-06-17T10:00:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-06-17T09:59:59.000Z",
+            livenessState: "stuck",
+            livenessReason: "no heartbeat for 5 minutes",
+            contextSnapshot: null,
+            resultJson: null,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: [
+          {
+            id: "run-B-1",
+            companyId: "co-test",
+            agentId: "agent-B",
+            status: "running",
+            invocationSource: "cron",
+            triggerDetail: null,
+            startedAt: "2026-06-17T10:01:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-06-17T10:00:59.000Z",
+            livenessState: "alive",
+            livenessReason: null,
+            contextSnapshot: null,
+            resultJson: null,
+          },
+        ],
+      });
 
     const res = await GET();
     expect(res.status).toBe(200);
 
     const body = await res.json();
     expect(body.status).toBe("ok");
-    // Confirm only one batch call was made (not one per agent).
-    expect(mockHeartbeatRuns).toHaveBeenCalledTimes(1);
-    expect(mockHeartbeatRuns).toHaveBeenCalledWith({ limit: 50 });
+    // Two per-agent calls — one per running agent, each with agentId filter.
+    expect(mockHeartbeatRuns).toHaveBeenCalledTimes(2);
+    expect(mockHeartbeatRuns).toHaveBeenCalledWith({ agentId: "agent-A", limit: 1 });
+    expect(mockHeartbeatRuns).toHaveBeenCalledWith({ agentId: "agent-B", limit: 1 });
   });
 
   it('multi-agent: only running agent has a stuck latest run → overall "degraded"', async () => {
@@ -320,26 +336,11 @@ describe("GET /api/agent/health — Paperclip path (DASHBOARD_DATA_SOURCE=paperc
         },
       ],
     });
-    // Only agent-A is running, and its latest run is stuck.
-    // agent-B has a healthy run but is not in runningAgents, so it doesn't count.
+    // Only agent-A is running — only one per-agent call is made (agent-B is idle,
+    // so it is not included in runningAgents and gets no heartbeat query).
     mockHeartbeatRuns.mockResolvedValue({
       ok: true,
       data: [
-        {
-          id: "run-B-1",
-          companyId: "co-test",
-          agentId: "agent-B",
-          status: "completed",
-          invocationSource: "cron",
-          triggerDetail: null,
-          startedAt: "2026-06-17T10:01:00.000Z",
-          finishedAt: "2026-06-17T10:02:00.000Z",
-          createdAt: "2026-06-17T10:00:59.000Z",
-          livenessState: "alive",
-          livenessReason: null,
-          contextSnapshot: null,
-          resultJson: null,
-        },
         {
           id: "run-A-1",
           companyId: "co-test",
@@ -364,6 +365,9 @@ describe("GET /api/agent/health — Paperclip path (DASHBOARD_DATA_SOURCE=paperc
     const body = await res.json();
     expect(body.status).toBe("degraded");
     expect(body.paperclip?.stuck).toBe(true);
+    // Only one per-agent call for agent-A (agent-B is idle, not queried).
+    expect(mockHeartbeatRuns).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatRuns).toHaveBeenCalledWith({ agentId: "agent-A", limit: 1 });
   });
 });
 
