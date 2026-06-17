@@ -23,6 +23,8 @@
 
 ## Phase 1 — Dashboard preview on Paperclip API (Hermes untouched)
 
+> **Re-spec'd 2026-06-17.** During execution this phase proved ~3x scope (~10 Hermes endpoints across ~12 consumers). The foundation (Tasks 1.1–1.4) shipped in PR #180; the rest became a standalone effort — see [Dashboard Paperclip Repoint plan](2026-06-17-dashboard-paperclip-repoint.md) (Phases A–D) and the [ADR 0006 amendment](../../adr/0006-hermes-to-paperclip-runtime.md#amendment-2026-06-17--dashboard-kept--repointed) (dashboard kept + repointed, not replaced by Paperclip's UI). Tasks 1.5/1.6 below are superseded by that plan.
+
 ### Task 1.1: Paperclip API read client
 
 **Files:**

@@ -11,6 +11,7 @@
 ## Global Constraints
 
 - Spec: [docs/superpowers/specs/2026-06-17-dashboard-paperclip-repoint-design.md](../specs/2026-06-17-dashboard-paperclip-repoint-design.md).
+- Architecture decision: this plan is authorized by the [ADR 0006 amendment (2026-06-17) — Dashboard kept + repointed](../../adr/0006-hermes-to-paperclip-runtime.md#amendment-2026-06-17--dashboard-kept--repointed). The dashboard is **kept and repointed**, not replaced by Paperclip's UI.
 - Read Paperclip via the REST API client only — never the `paperclip` DB directly.
 - Every route returns `503 {error}` on client `{ok:false}` or missing config; never throws.
 - All work is **additive + flag-gated** — `dataSource()!=="paperclip"` must run the existing Hermes path byte-for-byte unchanged. No current behavior changes until the final flip.
@@ -47,7 +48,7 @@
 
 **Interfaces:**
 - Produces (add to `PaperclipClient`, mirroring existing method/`Result<T>` style; read the §5 spec note re: cost time-series):
-  - `costByPeriod(params: { from?: string; to?: string; bucket?: "day" }): Promise<Result<CostPeriodPoint[]>>` → `GET /companies/:id/costs/by-period?from=&to=&bucket=` (if the API lacks bucketing, document it and fetch `costSummary` per-day in the route instead — decide in this task by checking the live API shape via the spec/`/tmp/pc-verify` if available; default to `by-period`).
+  - `costByPeriod(params: { from?: string; to?: string; bucket?: "day" }): Promise<Result<CostPeriodPoint[]>>` → `GET /companies/:id/costs/by-period?from=&to=&bucket=` — **add this method only if Phase A.5 confirms `costs/by-period` buckets server-side.** If A.5 shows it does not bucket, do **not** add `costByPeriod`; B1 burndown uses the capped per-day `costSummary` fan-out instead (see B1).
   - `issues(params: { status?: string; limit?: number }): Promise<Result<Issue[]>>` → `GET /companies/:id/issues`
   - `routines(): Promise<Result<Routine[]>>` → `GET /companies/:id/routines`
   - `org(): Promise<Result<OrgNode[]>>` → `GET /companies/:id/org`
@@ -63,6 +64,25 @@
 
 ---
 
+## Phase A.5 — Capture real Paperclip response shapes (gate before Phase B)
+
+**Why:** Phases B/C build ~13 route branches that map Paperclip responses → existing component shapes. Four shapes (`by-period`/cost bucketing, `org`, `approvals`, `issues`) are unverified, and the mocked-client tests prove the *mapper* (X→Y) but nothing about whether Paperclip actually returns X. A wrong shape discovered at the D2 preview gate (after 13 tasks) is a re-architecture, not a patch (e.g. if `costs/by-period` lacks server-side bucketing, B1 burndown becomes an N-per-day-`summary` fan-out — a different route, not a different mapping). Capturing real responses **once, up front** converts the test suite from theatre to real coverage and de-risks every downstream task.
+
+### Task A0.5: Capture live Paperclip fixtures + confirm shapes
+
+**Files:**
+- Create: `apps/dashboard/lib/paperclip/__fixtures__/*.json` (one raw response per endpoint behind a panel group)
+- Create: `apps/dashboard/lib/paperclip/__fixtures__/SHAPES.md` (per-endpoint: confirmed fields the panels consume, plus any field the panel wants that Paperclip does **not** provide → feeds the "real-data-or-`n/a`" decision in B/C)
+
+- [ ] **Step 1:** Against the real Paperclip API (board key + company id from the 1Password item / `/tmp/pc-verify`, VPC or tunnel), `curl` each endpoint the repoint depends on: `costs/summary`, `costs/by-agent-model`, `costs/by-period?bucket=day` (**does it bucket server-side? this single answer decides B1's burndown route shape**), `heartbeat-runs`, `activity`, `agents`, `issues`, `routines`, `org`, `approvals`. Save each raw JSON to `__fixtures__/`.
+- [ ] **Step 2:** For each, record in `SHAPES.md` which panel-consumed fields are present, and flag every **absent** field a panel currently shows (per-call tokens, per-run error text, "kind", run duration, `age`, etc.). Absent → that field is `n/a`/hidden in B/C, **never a fabricated zero/synthesized string** (council: observability tools must not display invented data as measured).
+- [ ] **Step 3:** Promote the captured JSON into the B/C route tests as fixtures so the mocked client returns **real-shaped** data. Reconcile any client interface from A2 that guessed wrong (`CostPeriodPoint`/`Issue`/`Routine`/`OrgNode`/`Approval`).
+- [ ] **Step 4:** Commit (`chore(dashboard): capture real Paperclip response fixtures + SHAPES.md`). **Gate:** Phase B does not start until `SHAPES.md` exists and B1's cost-bucketing question is answered.
+
+> If the live API is unreachable at this point, this task still produces `SHAPES.md` from the vendored `vendor/paperclip/server/src` response builders (read the route handlers) — a verified-from-source shape is acceptable; a *guessed* shape is not.
+
+---
+
 ## Phase B — Repoint clean-mapping panels (one task per panel group)
 
 For every Phase B/C task: **read the component + its existing `/api/...` fetch first** to learn the exact consumed shape; build the route's `paperclip` branch to return that shape; gate the component's fetch URL (or its hook) on `dataSource()` only if it must change endpoints — prefer keeping the same URL and branching inside the route. Each task: failing route test (mocked client) → implement route branch → wire component if needed → typecheck → commit.
@@ -75,25 +95,41 @@ For every Phase B/C task: **read the component + its existing `/api/...` fetch f
 - Consumers (verify shapes): `components/observability/CostBurndownChart.tsx` (`BurndownResponse`), `CostProjectionPanel.tsx` (`CostProjectionData`), `lib/hooks/use-kpi-data.ts`
 
 **Interfaces:**
-- Consumes: `costByPeriod`, `costSummary`, `costByAgentModel` (A2).
+- Consumes: `costSummary`, `costByAgentModel` (foundation), and **conditionally** `costByPeriod` (A2 — only if Phase A.5 confirms server-side bucketing; see below).
+
+**Cost-series source (resolved 2026-06-17 grill + Phase A.5):**
+- **Burndown** is conditional on A.5's bucketing check: **if** `costs/by-period?bucket=day` buckets server-side → burndown ← `costByPeriod` daily series (one call). **If not** → burndown ← **per-day `costSummary` fan-out**, window-capped to N days (cap the loop; don't fan out an unbounded range), fail-closed `503` if any day errors — and `costByPeriod` is dropped from A2 as a phantom.
+- **Cap / budget line** (both `BurndownResponse` target, `CostProjectionData.cap_usd`, KPI `cap_cents`) ← **`costSummary.budgetCents`** (already on the foundation client — no new endpoint). If no budget policy is configured, cap is `null`/absent → panels render spend without a cap line, **not** a fabricated cap.
 
 - [ ] Step 1: For each route, failing test asserting the paperclip branch maps Paperclip cost data → the existing response interface (`BurndownResponse`/`CostProjectionData`/KPI today shape) and 503 on `{ok:false}`.
 - [ ] Step 2: FAIL.
-- [ ] Step 3: Implement each route's paperclip branch (burndown ← `costByPeriod` daily series; projection ← `costSummary` mtd + days-remaining math; today ← `costSummary` for the day).
+- [ ] Step 3: Implement each route's paperclip branch (burndown ← per A.5: `costByPeriod` series **or** capped per-day `costSummary` fan-out; projection ← `costSummary` mtd + cap + days-remaining math; today ← today/yesterday/mtd `costSummary` ranges + `budgetCents` cap).
 - [ ] Step 4: PASS + typecheck.
 - [ ] Step 5: Commit.
 
 ### Task B2: Runs panels (RunsVista + LiveRunsPanel)
 
-**Files:**
-- Modify: `apps/dashboard/components/shell/RunsVista.tsx`, `apps/dashboard/components/observability/LiveRunsPanel.tsx` (and/or `lib/hooks/use-run-feed.ts`) to fetch `/api/runs` (the #180 route) when `dataSource()==="paperclip"`, else the existing `/api/tasks`.
-- Test: `lib/hooks/use-run-feed.test.ts` (or the component tests) covering both branches.
+> **Re-scoped 2026-06-17 (review):** the runs view is **four** Hermes endpoints across two components, not the single `/api/runs` the original brief named. `/api/runs` (#180) supplies only the feed; it provides no time-bucketed event series and no aggregate tiles, so it cannot feed `RunsVista`. Per the plan's own rule (line 20: prefer branching **inside** the existing route), repoint each endpoint **in place** rather than swapping components to `/api/runs`. Build every `paperclip` branch from `heartbeatRuns()`, reusing #180's `HeartbeatRun → RunRecord` mapper. Split into B2a–B2d; each is its own failing-test → implement → typecheck → commit cycle.
 
-**Interfaces:**
-- Consumes: `/api/runs` (foundation) → `{ runs: RunRecord[], live: RunRecord[] }`.
+**Shared mapping decisions (apply to all of B2):**
+- **`kind` ← `invocationSource`** (values: `timer` / `assignment` / `automation` / `on_demand` / `manual`). `HeartbeatRun` has no Hermes "task-kind"; `invocationSource` is the inline, no-join, genuinely kind-like field. The provider/adapter dimension (claude / codex / ollama) is **not** the run `kind` — it stays in the cost-by-agent-model view (B5), not duplicated onto runs.
+- **status mapping:** Paperclip run status → `running | done | failed` (the enum the chart/feed consume). Confirm the source status values in Phase A.5 `SHAPES.md` before writing the map; do not guess.
+- Token fields stay zeroed and surfaced as `n/a` (Paperclip carries no per-call tokens — A.5-confirmed); do not render fabricated zeros as if measured.
 
-- [ ] Step 1: Failing test: with the flag on, the hook/components fetch `/api/runs` and render the `RunRecord[]`/`live` data; with it off, `/api/tasks` (existing).
-- [ ] Step 2: FAIL. Step 3: Implement the flag branch in the hook. Step 4: PASS + typecheck. Step 5: Commit.
+**B2a — Live-runs feed.** Branch `app/api/agent/runs` (the endpoint `lib/hooks/use-run-feed.ts` actually hits — *not* `/api/tasks`) on `dataSource()`: paperclip → `heartbeatRuns()` mapped to the `{ runs }` shape the hook expects. Failing route test (mock client) → implement → typecheck → commit.
+
+**B2b — RunsVista chart.** Branch `app/api/tasks/recent-events` on `dataSource()`: paperclip → recent `heartbeatRuns()` mapped to `RecentRunEvent { at, status, kind, id }[]`. Failing test → implement → commit.
+
+**B2c — RunsVista tiles.** Branch `app/api/tasks/stats` on `dataSource()`: paperclip → `RunsStats { activeCount, failedToday, avgDurationSec, activeKinds }` derived from `heartbeatRuns()` (`activeKinds` = distinct `invocationSource` of currently-running). `avgDurationSec` from `startedAt`/`finishedAt`; if unavailable, `null` (the tile already handles null), not a fabricated value. Failing test → implement → commit.
+
+**B2d — LiveRunsPanel poll.** Branch `app/api/tasks/active` on `dataSource()`: paperclip → `heartbeatRuns()` filtered to live statuses (queued/running), mapped to the panel's row shape. Failing test → implement → commit.
+
+**B2e — Write actions (cancel/retry): OUT OF SCOPE — hide on the paperclip path.** `LiveRunsPanel` has a cancel button (`DELETE /api/tasks/:id`) and `RecentErrorsPanel` (B3) a retry (`POST /api/tasks/:id/retry`) — both Hermes endpoints that die at retirement. Spec §9 scopes the repoint **read-only**, so they must not stay wired to a corpse.
+
+**Resolved 2026-06-17 (write-actions grill): hide both buttons when `dataSource()==="paperclip"`** (gate the button render, not just the fetch). Honors §9 and the [ADR 0006 amendment](../../adr/0006-hermes-to-paperclip-runtime.md#amendment-2026-06-17--dashboard-kept--repointed) ("dashboard is read-only against Paperclip"). The Hermes branch keeps the buttons unchanged until retirement. Asymmetry to record in the FR: **cancel has a native Paperclip endpoint** (`POST /api/heartbeat-runs/:runId/cancel`, [agents.ts:3405](../../../vendor/paperclip/server/src/routes/agents.ts:3405)) so it's a quick future wire; **retry has none** (retry is issue-level — `scheduledRetryRunId` — and needs design).
+
+- [ ] Step 1: In `LiveRunsPanel.tsx` and `RecentErrorsPanel.tsx`, render the cancel/retry control only when `dataSource()!=="paperclip"`. Test both branches (button present under hermes, absent under paperclip). Step 2: typecheck. Step 3: Commit. Step 4: File the follow-up FR (below) and reference it in the commit body.
+- [x] **Follow-up FR filed:** [FR: Dashboard run-control on Paperclip (cancel / retry)](https://app.asana.com/1/1213817682522376/project/1214851151154315/task/1215826306763708) (AgenticOS → Backlog, 2026-06-17) — restore cancel (wire to `POST /api/heartbeat-runs/:runId/cancel`) and design a run-retry path (no direct Paperclip endpoint; route through issue-level retry). Tracks the cutover capability gap.
 
 ### Task B3: RecentErrorsPanel
 
@@ -101,7 +137,12 @@ For every Phase B/C task: **read the component + its existing `/api/...` fetch f
 - Create: `apps/dashboard/app/api/runs/errors/route.ts` (paperclip: failed `heartbeat-runs`/`activity` → the `RecentErrorRow` shape; hermes branch: existing `/api/tasks` error rows) + test
 - Modify: `components/observability/RecentErrorsPanel.tsx` to fetch the new route under the flag.
 
-- [ ] Step 1: Failing route test (mock client): maps failed runs → `{id,kind,error,started_at}` rows; 503 on failure. Step 2: FAIL. Step 3: Implement. Step 4: PASS. Step 5: Commit (+ wire panel).
+**Mapping decisions (consistent with B2):**
+- **`kind` ← `invocationSource`** (same as B2 — not the Hermes task-kind).
+- **`error` text:** Paperclip carries **no per-run error string** (A.5-confirmed; `livenessReason` is a *status* string like "stuck"/"waiting", not an error message). Source `error` from `livenessReason` only when it denotes a failure, else `null` → the panel shows the row without a fabricated message. **Do not synthesize an error string** (council: observability must not display invented data as measured).
+- **Retry button: hidden on the paperclip path** (see B2e) — gate its render on `dataSource()!=="paperclip"`.
+
+- [ ] Step 1: Failing route test (mock client): maps failed `heartbeat-runs` → `{id,kind,error,started_at}` rows (`kind`←invocationSource, `error`←failure-only livenessReason or `null`); 503 on failure. Step 2: FAIL. Step 3: Implement + hide the retry control under the flag. Step 4: PASS + typecheck. Step 5: Commit (+ wire panel).
 
 ### Task B4: ScheduledRunsPanel
 

@@ -1,7 +1,7 @@
 # Dashboard Paperclip Repoint — Design
 
-**Date:** 2026-06-17
-**Status:** Approved (brainstorm) — pending implementation plan
+**Date:** 2026-06-17 (updated 2026-06-17 — council review + grill)
+**Status:** Approved; implementation plan written ([plan](../plans/2026-06-17-dashboard-paperclip-repoint.md)). Authorized by the [ADR 0006 amendment (2026-06-17) — Dashboard kept + repointed](../../adr/0006-hermes-to-paperclip-runtime.md#amendment-2026-06-17--dashboard-kept--repointed): AgenticOS **keeps its bespoke Next.js "Vista" dashboard and repoints it** onto Paperclip's API — it is **not** replaced by Paperclip's own React/Vite UI.
 **Author:** Josh + Claude
 **Context:** Re-scoped out of the Hermes Retirement effort
 ([spec](2026-06-16-hermes-retirement-design.md)). During Phase 1 execution the
@@ -40,16 +40,36 @@ Extend the foundation pattern (PR #180), unchanged:
 The client gains read methods as panels need them (`issues`, `routines`, `org`,
 `approvals`, `costByPeriod`, …) following the existing method shape.
 
+**Shape-capture gate (Phase A.5, added 2026-06-17 after council review).** Before
+building the ~13 route branches, capture **real** Paperclip responses for every
+endpoint behind a panel group into test fixtures + a `SHAPES.md`, and confirm the
+unverified shapes (`costs/by-period` bucketing, `org`, `approvals`, `issues`).
+Mocked-client tests prove the *mapper* (X→Y) but nothing about whether Paperclip
+returns X; capturing real shapes once, up front, converts the suite from theatre
+to real coverage. (If the live API is unreachable, derive shapes from the
+vendored `vendor/paperclip/server/src` response builders — verified-from-source
+is acceptable, *guessed* is not.)
+
+**Data-fidelity principle (no fabrication).** Where Paperclip lacks a field a
+Hermes-era panel showed, render `n/a`/hide it — **never a fabricated zero or
+synthesized string**. This is an *observability* surface; invented values
+displayed as measured are worse than blank. Confirmed gaps: no per-call token
+counts (aggregate only); no per-run error text (`livenessReason` is a status
+string); no Hermes "kind" taxonomy. The run **`kind`** maps to Paperclip's
+inline `invocationSource` (`timer`/`assignment`/`automation`/`on_demand`/
+`manual`); the provider/adapter dimension (claude/codex/opencode) stays in the
+cost-by-agent-model view, not duplicated onto runs.
+
 ## 3. Panel disposition
 
 ### 3.1 Repoint (clean Paperclip map)
 
 | Panel(s) | Paperclip source |
 | --- | --- |
-| CostVista, CostBurndownChart, CostProjectionPanel, KPI cost tiles | `GET /companies/:id/costs/{summary,by-provider,by-period}` |
-| RunsVista, LiveRunsPanel | `GET /companies/:id/heartbeat-runs` (+ the `/api/runs` route from #180) |
+| CostVista, CostBurndownChart, CostProjectionPanel, KPI cost tiles | `costs/summary` (+ cap line ← `summary.budgetCents`); burndown series ← `costs/by-period?bucket=day` **iff A.5 confirms server-side bucketing, else a window-capped per-day `costs/summary` fan-out** |
+| RunsVista, LiveRunsPanel | `heartbeat-runs` mapped in-place across **four** existing routes (the runs view is not a single endpoint): feed (`/api/agent/runs`), chart events (`/api/tasks/recent-events`), stat tiles (`/api/tasks/stats`), live poll (`/api/tasks/active`). `kind ← invocationSource`. |
 | AgentStatusChip / agent health | Done in #180 (`/api/agent/health` synthesis) |
-| RecentErrorsPanel | failed `heartbeat-runs` (status=failed) / `activity` |
+| RecentErrorsPanel | failed `heartbeat-runs` → rows; `error` ← failure-only `livenessReason` or `null` (no fabricated message); `kind ← invocationSource` |
 | ScheduledRunsPanel | `GET /companies/:id/routines` (see §5 constraint on plugin-job crons) |
 | OpenAICodexPanel (per-model spend) | `GET /companies/:id/costs/by-agent-model` |
 
@@ -84,11 +104,13 @@ TanStack `useQuery` hook (the repo's established data-fetch pattern).
 
 ## 5. Constraints to verify during planning
 
-- **Cost time-series.** Burndown/projection need a per-day cost series. Confirm
-  the Paperclip cost API exposes period/bucketed cost (`costs/by-period` or a
-  windowed query); if it only gives a single summary, the route synthesizes the
-  series from dated `cost_events` or the burndown panel is reduced to what the
-  API supports (noted, not faked).
+- **Cost time-series.** Burndown/projection need a per-day cost series. **Resolved
+  via the Phase A.5 shape-capture gate:** if `costs/by-period?bucket=day` buckets
+  server-side, use it (one call); if not, the route builds the series from a
+  **window-capped per-day `costs/summary` fan-out** (cap the loop; fail-closed
+  `503` if any day errors). The budget/cap line comes from `summary.budgetCents`
+  (already on the foundation client); if no budget policy exists, the cap line is
+  omitted, not faked.
 - **Scheduled plugin-job crons.** Paperclip's plugin-job scheduler is
   host-internal; the public API exposes `routines`, not plugin-job crons
   (pr-triage, vault-ingest). ScheduledRunsPanel will show routines; surfacing
@@ -127,7 +149,13 @@ fails closed to a degraded/empty state, never a blank crash.
 
 - Re-adding the three retired panels (backlog FRs §6).
 - Deleting the Hermes route branches (happens in retirement Phases 4-5).
-- Any write actions to Paperclip from the dashboard — read-only repoint.
+- Any write actions to Paperclip from the dashboard — read-only repoint. The
+  existing run-control buttons (LiveRunsPanel **cancel**, RecentErrorsPanel
+  **retry**) are **hidden when `dataSource()==="paperclip"`** (they call Hermes
+  endpoints that die at retirement) and tracked for re-add as a backlog FR:
+  *Dashboard run-control on Paperclip* (cancel has a native endpoint
+  `POST /api/heartbeat-runs/:runId/cancel`; retry is issue-level and needs
+  design).
 
 ## 10. Acceptance criteria
 
