@@ -57,15 +57,18 @@ async function getPaperclipErrors(): Promise<Response> {
       id: run.id,
       // kind ← invocationSource (per shared mapping decision across B-tasks).
       kind: run.invocationSource,
-      // error ← livenessReason ONLY when livenessState denotes a failure.
-      // Paperclip has no per-run error message field — do NOT synthesize one.
-      // null is correct when there is no failure reason.
+      // error ← run.error (PRIMARY: per-run text written on failure paths).
+      // Fallback to livenessReason when livenessState denotes a failure and run.error is absent.
+      // Source: vendor/paperclip/server/src/db/schema/heartbeat_runs.ts (error text column),
+      //         heartbeatRunListColumns at vendor/paperclip/server/src/services/heartbeat.ts:1116
       error:
-        run.livenessState !== null &&
-        FAILURE_LIVENESS_STATES.has(run.livenessState) &&
-        run.livenessReason !== null
-          ? run.livenessReason
-          : null,
+        run.error !== null && run.error !== undefined
+          ? run.error
+          : run.livenessState !== null &&
+              FAILURE_LIVENESS_STATES.has(run.livenessState) &&
+              run.livenessReason !== null
+            ? run.livenessReason
+            : null,
       started_at: run.startedAt ?? run.createdAt,
     }));
 

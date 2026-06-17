@@ -65,7 +65,7 @@ const RetryIcon = (
 
 interface RecentErrorsPanelProps {
   /** Hide the per-row retry button. Pass false on the Paperclip path — the
-   *  Hermes DELETE endpoint it targets does not exist in Paperclip. */
+   *  POST /api/tasks/{id}/retry endpoint it targets does not exist in Paperclip. */
   showRetryButton?: boolean;
 }
 

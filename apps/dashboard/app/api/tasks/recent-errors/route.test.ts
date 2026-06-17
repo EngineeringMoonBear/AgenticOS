@@ -248,6 +248,32 @@ describe("GET /api/tasks/recent-errors — Paperclip path", () => {
     expect(body.rows[0].error).toBeNull();
   });
 
+  it("uses run.error as primary error source even when livenessState is not 'failed'", async () => {
+    // A timed_out run with a non-null run.error but livenessState NOT "failed".
+    // run.error must appear in the output — it must NOT be dropped in favour of
+    // the livenessReason fallback path.
+    // Source: heartbeat_runs.ts `error text` column; heartbeat.ts:1116 (heartbeatRunListColumns)
+    mockHeartbeatRuns.mockResolvedValue({
+      ok: true,
+      data: [
+        makeRun({
+          id: "r-timeout",
+          status: "timed_out",
+          error: "process pid 9876 lost (process_lost); retrying once",
+          livenessState: "needs_followup",
+          livenessReason: "Agent last output was stale",
+        }),
+      ],
+    });
+
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.rows).toHaveLength(1);
+    // run.error wins — not null, not the livenessReason fallback
+    expect(body.rows[0].error).toBe("process pid 9876 lost (process_lost); retrying once");
+  });
+
   it("returns 503 with {error} when heartbeatRuns fails", async () => {
     mockHeartbeatRuns.mockResolvedValue({
       ok: false,

@@ -176,7 +176,15 @@ Plus synthesized: `contextSnapshot` (JSON summary), `resultJson` (JSON summary).
 
 Note: `stdoutExcerpt` and `stderrExcerpt` are returned as `NULL` in list responses.
 
-Fixture: `heartbeat-runs.json`
+**`error: string | null` IS exposed and populated on failure runs.**
+Source: `vendor/paperclip/server/src/db/schema/heartbeat_runs.ts` (`error: text("error")`),
+projected in `heartbeatRunListColumns` at `vendor/paperclip/server/src/services/heartbeat.ts:1116`.
+Failure paths write real messages, e.g. `"process pid N lost (process_lost); retrying once"` at
+`vendor/paperclip/server/src/services/heartbeat.ts:7376`. Null on succeeded/running runs.
+Use `run.error` as the PRIMARY error source for failed/timed_out rows; fall back to
+`livenessReason` (when `livenessState === "failed"`) only when `run.error` is null.
+
+Fixture: `heartbeat-runs.json` (includes a `timed_out` row with non-null `error`)
 
 ### Activity — `GET /api/companies/:id/activity`
 
