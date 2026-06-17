@@ -146,21 +146,33 @@ For every Phase B/C task: **read the component + its existing `/api/...` fetch f
 
 ### Task B4: ScheduledRunsPanel
 
+> **Resolved 2026-06-17 (grill, option B):** the panel must show **routines + the statically-known plugin-job crons** (`vault-ingest`, `pr-triage`) — not routines-only. Those crons are the operator's actual scheduled work (vault-ingest is the "$0 North Star" job); dropping them from the schedule view at cutover is an observability regression the retirement is meant to avoid. Their schedules are statically declared in the plugin manifests, so hiding them is a choice, not a limitation.
+
 **Files:**
-- Create: `apps/dashboard/app/api/routines/route.ts` (paperclip: `routines()` → `{name,cron,last_run_label,next_in}` shape) + test
-- Modify: `components/observability/ScheduledRunsPanel.tsx` to fetch it under the flag.
+- Modify: `apps/dashboard/app/api/tasks/scheduled/route.ts` (the endpoint the panel actually calls — branch in-place on `dataSource()`, per the line-20 rule) + test
+- Modify: `components/observability/ScheduledRunsPanel.tsx` — hide the **"trigger now"** write button when `dataSource()==="paperclip"` (it `POST`s a dying Hermes endpoint; same read-only rule as B2e — covered by the run-control FR).
 
-Note (spec §5): this shows **routines**, not plugin-job crons (pr-triage/vault-ingest). Add a code comment + the panel's empty-state copy reflecting that; surfacing plugin-job crons is a deferred follow-up.
+**Mapping (paperclip branch) → `{name, cron, last_run_label, next_in}[]`:**
+- **Routines** ← `routines()` (one row per routine; cron/next-run from the routine).
+- **Plugin-job crons** ← merge in the manifest-declared jobs (`vault-ingest` `0 * * * *`, `pr-triage` cron) by `jobKey` + schedule (static source: the plugin manifests).
+- **Runtime fields** (`last_run_label`, `next_in`): **per Phase A.5** — real if `/instance/scheduler-heartbeats` (or another endpoint A.5 finds) exposes plugin-job last/next run; **else `—`/`n/a`** (no fabricated timestamps). The cron string + job name always render.
 
-- [ ] Step 1: Failing route test mapping routines → the scheduled-job shape. Step 2: FAIL. Step 3: Implement + comment. Step 4: PASS. Step 5: Commit.
+- [ ] Step 1: Failing route test: paperclip branch returns routines **+** the static plugin-job crons in the scheduled-job shape; runtime fields `—` when unavailable; 503 on `{ok:false}`. Step 2: FAIL. Step 3: Implement + hide the trigger button under the flag. Step 4: PASS + typecheck. Step 5: Commit.
 
 ### Task B5: Per-model spend (OpenAICodexPanel)
 
-**Files:**
-- Modify: `apps/dashboard/app/api/cost/models/openai/route.ts` (paperclip branch ← `costByAgentModel` filtered to provider) + test
-- Verify consumer: `components/observability/OpenAICodexPanel.tsx` (`OpenAIModelUsage`).
+> **Resolved 2026-06-17 (grill, option A — reshape to real).** The current Hermes route (`app/api/cost/models/openai/route.ts`) is a **hardcoded stub** (`// TODO: wire to real OpenAI usage telemetry`, fake rows like `gpt-5-codex … age:"6m ago"`). The old `OpenAIModelUsage` shape `{name, role, calls, age, spend_usd}` is therefore **not a real contract** — `role`/`age` were invented and `calls` has no Paperclip source. So this task *reshapes* the panel to the real per-model data Paperclip has, rather than fabricating the missing fields. This is an allowed component change precisely because the prior shape was a stub.
 
-- [ ] Step 1: Failing test mapping `costByAgentModel` → `{name,role,calls,age,spend_usd}` (set `age` to a sensible placeholder if Paperclip lacks it — document). Step 2: FAIL. Step 3: Implement. Step 4: PASS. Step 5: Commit.
+**New `OpenAIModelUsage` shape** → `{ name, spend_usd, inputTokens, outputTokens, cachedInputTokens, calls? }`:
+- `name ← model`, `spend_usd ← costCents/100`, token counts ← the real `inputTokens/outputTokens/cachedInputTokens` on `costByAgentModel` (provider-filtered to OpenAI/Codex, aggregated by model).
+- **Drop `age` and `role`** (no honest source — were fabricated).
+- `calls`: include **only if Phase A.5 finds a per-model call-count source** (e.g. a `cost_events` count); otherwise omit it (do not substitute tokens-as-calls or a placeholder).
+
+**Files:**
+- Modify: `apps/dashboard/app/api/cost/models/openai/route.ts` — paperclip branch ← `costByAgentModel` (provider-filtered, aggregated) → the reshaped row; hermes branch keeps returning its stub mapped into the reshaped fields (drop `age`/`role`), unchanged in spirit until D-phase deletion.
+- Modify: `components/observability/OpenAICodexPanel.tsx` — render the reshaped fields (model · spend · tokens), remove the `{role} · {calls} calls · {age}` line; update `OpenAIModelUsage`.
+
+- [ ] Step 1: Failing test mapping provider-filtered `costByAgentModel` → the reshaped row + 503 on `{ok:false}`. Step 2: FAIL. Step 3: Implement route branch + reshape the component. Step 4: PASS + typecheck. Step 5: Commit.
 
 ---
 
