@@ -189,8 +189,22 @@ describe("PaperclipClient", () => {
   // ── activity ───────────────────────────────────────────────────────────────
 
   describe("activity", () => {
+    // Real ActivityItem shape includes runId (nullable uuid).
+    // Source: vendor/paperclip/packages/db/src/schema/activity_log.ts
     const payload = [
-      { id: "act-1", action: "issue.created", entityType: "issue", entityId: "i1", createdAt: "2024-01-01T00:00:00Z" },
+      {
+        id: "act-1",
+        companyId: COMPANY_ID,
+        actorType: "agent",
+        actorId: "a1",
+        agentId: "a1",
+        runId: "run-123",
+        action: "issue.created",
+        entityType: "issue",
+        entityId: "i1",
+        details: null,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
     ];
 
     it("calls the correct path with limit param and bearer auth", async () => {
@@ -327,8 +341,25 @@ describe("PaperclipClient", () => {
   // ── issues ─────────────────────────────────────────────────────────────────
 
   describe("issues", () => {
+    // Real Issue shape: no `assignee` field; split into assigneeAgentId + assigneeUserId.
+    // Source: vendor/paperclip/packages/shared/src/types/issue.ts
     const payload = [
-      { id: "iss-1", title: "Agent failing", status: "open", priority: "high", assignee: null, createdAt: "2024-01-01T00:00:00Z" },
+      {
+        id: "iss-1",
+        companyId: COMPANY_ID,
+        title: "Agent failing",
+        status: "in_progress",
+        priority: "high",
+        assigneeAgentId: "a1",
+        assigneeUserId: null,
+        identifier: "DEMO-1",
+        issueNumber: 1,
+        workMode: "normal",
+        successfulRunHandoff: null,
+        activeRecoveryAction: null,
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-02T00:00:00Z",
+      },
     ];
 
     it("calls the correct path with bearer auth and returns parsed data", async () => {
@@ -367,8 +398,40 @@ describe("PaperclipClient", () => {
   // ── routines ───────────────────────────────────────────────────────────────
 
   describe("routines", () => {
+    // Real RoutineListItem shape: no `name` (field is `title`), no `schedule` (cron lives in
+    // triggers[].cronExpression), no top-level `nextRunAt` (lives in triggers[].nextRunAt).
+    // Source: vendor/paperclip/packages/shared/src/types/routine.ts (RoutineListItem)
     const payload = [
-      { id: "rtn-1", name: "Daily report", schedule: "0 9 * * *", nextRunAt: "2024-01-02T09:00:00Z", status: "active" },
+      {
+        id: "rtn-1",
+        companyId: COMPANY_ID,
+        title: "Daily report",
+        status: "active",
+        priority: "normal",
+        assigneeAgentId: "a1",
+        concurrencyPolicy: "skip",
+        catchUpPolicy: "skip_missed",
+        lastTriggeredAt: null,
+        lastEnqueuedAt: null,
+        managedByPlugin: null,
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-01T00:00:00Z",
+        triggers: [
+          {
+            id: "trg-1",
+            kind: "cron",
+            label: "Daily 9am",
+            enabled: true,
+            cronExpression: "0 9 * * *",
+            timezone: "UTC",
+            nextRunAt: "2024-01-02T09:00:00Z",
+            lastFiredAt: null,
+            lastResult: null,
+          },
+        ],
+        lastRun: null,
+        activeIssue: null,
+      },
     ];
 
     it("calls the correct path with bearer auth and returns parsed data", async () => {
@@ -396,8 +459,19 @@ describe("PaperclipClient", () => {
   // ── org ────────────────────────────────────────────────────────────────────
 
   describe("org", () => {
+    // Real OrgNode shape: nested tree via toLeanOrgNode() — NOT flat with parentId.
+    // Fields `type` and `parentId` do NOT exist. Real fields: role, status, reports[].
+    // Source: vendor/paperclip/server/src/routes/agents.ts, toLeanOrgNode() at line 1430
     const payload = [
-      { id: "node-1", name: "Engineering", type: "team", parentId: null },
+      {
+        id: "node-1",
+        name: "Bob",
+        role: "ceo",
+        status: "active",
+        reports: [
+          { id: "node-2", name: "Alice", role: "ic", status: "active", reports: [] },
+        ],
+      },
     ];
 
     it("calls the correct path with bearer auth and returns parsed data", async () => {
@@ -425,8 +499,24 @@ describe("PaperclipClient", () => {
   // ── approvals ──────────────────────────────────────────────────────────────
 
   describe("approvals", () => {
+    // Real Approval shape: no `title`, no single `requestedBy`.
+    // Has: type (ApprovalType), requestedByAgentId, requestedByUserId, payload (redacted).
+    // Source: vendor/paperclip/packages/shared/src/types/approval.ts
     const payload = [
-      { id: "appr-1", title: "Deploy agent", status: "pending", requestedBy: "a1", createdAt: "2024-01-01T00:00:00Z" },
+      {
+        id: "appr-1",
+        companyId: COMPANY_ID,
+        type: "budget_override_required",
+        requestedByAgentId: "a1",
+        requestedByUserId: null,
+        status: "pending",
+        payload: "[redacted]",
+        decisionNote: null,
+        decidedByUserId: null,
+        decidedAt: null,
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-01T00:00:00Z",
+      },
     ];
 
     it("calls the correct path with bearer auth and returns parsed data", async () => {
@@ -455,6 +545,60 @@ describe("PaperclipClient", () => {
       globalThis.fetch = mockFetch(403, { error: "Forbidden" });
       const client = await getClient();
       const result = await client.approvals({});
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/403/);
+    });
+  });
+
+  // ── schedulerHeartbeats ────────────────────────────────────────────────────
+
+  describe("schedulerHeartbeats", () => {
+    // InstanceSchedulerHeartbeatAgent shape from vendor/paperclip/packages/shared/src/types/heartbeat.ts
+    // NOTE: Does NOT expose plugin-job data (no vault-ingest/pr-triage last-run or next-run).
+    const payload = [
+      {
+        id: "a1",
+        companyId: COMPANY_ID,
+        companyName: "Demo Corp",
+        companyIssuePrefix: "DEMO",
+        agentName: "Alice",
+        agentUrlKey: "alice",
+        role: "ic",
+        title: null,
+        status: "active",
+        adapterType: "acpx_local",
+        intervalSec: 300,
+        heartbeatEnabled: true,
+        schedulerActive: true,
+        lastHeartbeatAt: "2024-01-01T00:00:00Z",
+      },
+    ];
+
+    it("calls /api/instance/scheduler-heartbeats with bearer auth", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+
+      const result = await client.schedulerHeartbeats();
+
+      expect(result).toEqual({ ok: true, data: payload });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toContain("/api/instance/scheduler-heartbeats");
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("does NOT include companyId in the URL path", async () => {
+      globalThis.fetch = mockFetch(200, payload);
+      const client = await getClient();
+      await client.schedulerHeartbeats();
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).not.toContain(`/companies/${COMPANY_ID}`);
+    });
+
+    it("returns {ok:false} on non-2xx", async () => {
+      globalThis.fetch = mockFetch(403, { error: "Forbidden" });
+      const client = await getClient();
+      const result = await client.schedulerHeartbeats();
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/403/);
     });

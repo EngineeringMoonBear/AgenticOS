@@ -1,0 +1,12 @@
+{
+  "status": "ok",
+  "version": "1.42.0",
+  "deploymentMode": "authenticated",
+  "deploymentExposure": "private",
+  "authReady": true,
+  "bootstrapStatus": "ready",
+  "bootstrapInviteActive": false,
+  "features": {
+    "companyDeletionEnabled": true
+  }
+}

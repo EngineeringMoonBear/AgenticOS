@@ -1,0 +1,54 @@
+[
+  {
+    "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "companyId": "11111111-1111-1111-1111-111111111111",
+    "name": "Alice",
+    "role": "ic",
+    "title": "Senior Engineer",
+    "status": "active",
+    "adapterType": "acpx_local",
+    "budgetMonthlyCents": 100000,
+    "spentMonthlyCents": 11540,
+    "reportsTo": null,
+    "permissions": {
+      "canCreateAgents": false
+    },
+    "adapterConfig": {},
+    "runtimeConfig": {
+      "heartbeat": {
+        "enabled": true,
+        "intervalSec": 300,
+        "maxConcurrentRuns": 1
+      }
+    },
+    "lastHeartbeatAt": "2025-06-17T08:12:34.000Z",
+    "createdAt": "2025-01-01T00:00:00.000Z",
+    "updatedAt": "2025-06-17T08:12:34.000Z"
+  },
+  {
+    "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    "companyId": "11111111-1111-1111-1111-111111111111",
+    "name": "Bob",
+    "role": "ceo",
+    "title": null,
+    "status": "active",
+    "adapterType": "acpx_local",
+    "budgetMonthlyCents": 500000,
+    "spentMonthlyCents": 3100,
+    "reportsTo": null,
+    "permissions": {
+      "canCreateAgents": true
+    },
+    "adapterConfig": {},
+    "runtimeConfig": {
+      "heartbeat": {
+        "enabled": true,
+        "intervalSec": 600,
+        "maxConcurrentRuns": 3
+      }
+    },
+    "lastHeartbeatAt": "2025-06-17T09:00:01.000Z",
+    "createdAt": "2025-01-01T00:00:00.000Z",
+    "updatedAt": "2025-06-17T09:00:01.000Z"
+  }
+]

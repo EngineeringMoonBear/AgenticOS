@@ -1,0 +1,74 @@
+[
+  {
+    "id": "rrrrrrrr-rrrr-rrrr-rrrr-rrrrrrrrrrrr",
+    "companyId": "11111111-1111-1111-1111-111111111111",
+    "projectId": null,
+    "goalId": null,
+    "parentIssueId": null,
+    "title": "Daily standup report",
+    "description": "Generates a daily summary of open issues",
+    "assigneeAgentId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "priority": "normal",
+    "status": "active",
+    "concurrencyPolicy": "skip",
+    "catchUpPolicy": "skip_missed",
+    "variables": [],
+    "env": null,
+    "latestRevisionId": "revv-0001-0000-0000-000000000000",
+    "latestRevisionNumber": 1,
+    "createdByAgentId": null,
+    "createdByUserId": "user-abc",
+    "updatedByAgentId": null,
+    "updatedByUserId": null,
+    "lastTriggeredAt": "2025-06-17T09:00:00.000Z",
+    "lastEnqueuedAt": "2025-06-17T09:00:00.000Z",
+    "createdAt": "2025-01-01T00:00:00.000Z",
+    "updatedAt": "2025-06-17T09:00:00.000Z",
+    "managedByPlugin": null,
+    "triggers": [
+      {
+        "id": "tttttttt-tttt-tttt-tttt-tttttttttttt",
+        "kind": "cron",
+        "label": "Daily 9am",
+        "enabled": true,
+        "cronExpression": "0 9 * * *",
+        "timezone": "America/New_York",
+        "nextRunAt": "2025-06-18T13:00:00.000Z",
+        "lastFiredAt": "2025-06-17T13:00:00.000Z",
+        "lastResult": "success"
+      }
+    ],
+    "lastRun": {
+      "id": "runrun-00-0000-0000-000000000000",
+      "companyId": "11111111-1111-1111-1111-111111111111",
+      "routineId": "rrrrrrrr-rrrr-rrrr-rrrr-rrrrrrrrrrrr",
+      "triggerId": "tttttttt-tttt-tttt-tttt-tttttttttttt",
+      "source": "cron",
+      "status": "completed",
+      "triggeredAt": "2025-06-17T13:00:00.000Z",
+      "idempotencyKey": null,
+      "triggerPayload": null,
+      "dispatchFingerprint": null,
+      "linkedIssueId": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+      "coalescedIntoRunId": null,
+      "failureReason": null,
+      "completedAt": "2025-06-17T13:02:00.000Z",
+      "createdAt": "2025-06-17T13:00:00.000Z",
+      "updatedAt": "2025-06-17T13:02:00.000Z",
+      "linkedIssue": {
+        "id": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+        "identifier": "DEMO-1",
+        "title": "Implement user authentication",
+        "status": "done",
+        "priority": "high",
+        "updatedAt": "2025-06-17T13:02:00.000Z"
+      },
+      "trigger": {
+        "id": "tttttttt-tttt-tttt-tttt-tttttttttttt",
+        "kind": "cron",
+        "label": "Daily 9am"
+      }
+    },
+    "activeIssue": null
+  }
+]
