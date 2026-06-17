@@ -19,8 +19,20 @@ describe("OpenAICodexPanel", () => {
         JSON.stringify({
           endpoint: "api.openai.com",
           models: [
-            { name: "gpt-5-codex", role: "reasoning", calls: 12, age: "6m ago", spend_usd: 1.84 },
-            { name: "gpt-4o-mini", role: "orchestration", calls: 247, age: "28s ago", spend_usd: 0.57 },
+            {
+              name: "gpt-4o",
+              spend_usd: 8.0,
+              inputTokens: 16000,
+              cachedInputTokens: 3000,
+              outputTokens: 4500,
+            },
+            {
+              name: "gpt-4o-mini",
+              spend_usd: 1.2,
+              inputTokens: 24000,
+              cachedInputTokens: 0,
+              outputTokens: 6000,
+            },
           ],
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -31,16 +43,35 @@ describe("OpenAICodexPanel", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders model usage rows with cost", async () => {
+  it("renders model usage rows with cost and token counts", async () => {
     renderWithClient(<OpenAICodexPanel />);
     await waitFor(() => {
+      // Header
       expect(screen.getByText("OpenAI Codex · cloud")).toBeInTheDocument();
-      expect(screen.getByText("gpt-5-codex")).toBeInTheDocument();
-      expect(screen.getByText(/reasoning · 12 calls · 6m ago/)).toBeInTheDocument();
-      expect(screen.getByText("$1.84")).toBeInTheDocument();
-      expect(screen.getByText("gpt-4o-mini")).toBeInTheDocument();
-      expect(screen.getByText("$0.57")).toBeInTheDocument();
       expect(screen.getByText("api.openai.com")).toBeInTheDocument();
+
+      // Model names
+      expect(screen.getByText("gpt-4o")).toBeInTheDocument();
+      expect(screen.getByText("gpt-4o-mini")).toBeInTheDocument();
+
+      // Spend values
+      expect(screen.getByText("$8.00")).toBeInTheDocument();
+      expect(screen.getByText("$1.20")).toBeInTheDocument();
+
+      // Token summary lines rendered (at least one "in · N out" line present)
+      expect(screen.getAllByText(/in · [\d,]+ out/).length).toBeGreaterThan(0);
     });
+  });
+
+  it("does NOT render role, calls, or age fields", async () => {
+    renderWithClient(<OpenAICodexPanel />);
+    await waitFor(() => {
+      expect(screen.getByText("gpt-4o")).toBeInTheDocument();
+    });
+    // The old stub fields must not appear anywhere
+    expect(screen.queryByText(/calls/)).toBeNull();
+    expect(screen.queryByText(/reasoning/)).toBeNull();
+    expect(screen.queryByText(/orchestration/)).toBeNull();
+    expect(screen.queryByText(/ago/)).toBeNull();
   });
 });

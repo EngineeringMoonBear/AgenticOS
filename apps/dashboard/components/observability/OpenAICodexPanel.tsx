@@ -6,10 +6,10 @@ import { Row, RowList } from "@/components/ui/Row";
 
 interface OpenAIModelUsage {
   name: string;
-  role: string;
-  calls: number;
-  age: string;
   spend_usd: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
 }
 
 interface OpenAICodexData {
@@ -70,7 +70,8 @@ export function OpenAICodexPanel() {
                   className="meta"
                   style={{ fontFamily: "var(--mono)", fontSize: 10.5 }}
                 >
-                  {m.role} · {m.calls} calls · {m.age}
+                  {m.inputTokens.toLocaleString()} in · {m.outputTokens.toLocaleString()} out
+                  {m.cachedInputTokens > 0 && ` · ${m.cachedInputTokens.toLocaleString()} cached`}
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
