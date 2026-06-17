@@ -14,7 +14,26 @@ const manifest: PaperclipPluginManifestV1 = {
   // settings — workers can't read host env). NOT a secret-ref: the plugin
   // secret-resolution path is disabled in Paperclip 2026.609.0. Migrate to
   // format:"secret-ref" + secrets.read-ref once company-scoped config lands.
-  capabilities: ["http.outbound"],
+  // database.namespace.read/write: vault-ingest job persists SHA reconciliation
+  // state in a plugin DB namespace to avoid re-ingesting unchanged files.
+  // database.namespace.migrate: the job runs `CREATE TABLE IF NOT EXISTS
+  // vault_ingest_state` (idempotent DDL) on each run instead of a formal
+  // migration, which the host gates behind this capability.
+  capabilities: [
+    "jobs.schedule",
+    "http.outbound",
+    "database.namespace.read",
+    "database.namespace.write",
+    "database.namespace.migrate",
+  ],
+  jobs: [
+    {
+      jobKey: "vault-ingest",
+      displayName: "Vault Ingest",
+      description: "Hourly sync of vault markdown files into OpenViking semantic memory",
+      schedule: "0 * * * *",
+    },
+  ],
   instanceConfigSchema: {
     type: "object",
     properties: {
@@ -39,6 +58,11 @@ const manifest: PaperclipPluginManifestV1 = {
         type: "string",
         title: "User",
         default: "deploy",
+      },
+      vaultServerUrl: {
+        type: "string",
+        title: "Vault server URL",
+        default: "http://vault-server:7777",
       },
     },
     required: ["apiKey"],
