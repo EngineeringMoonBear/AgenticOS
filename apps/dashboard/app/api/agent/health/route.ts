@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
 import { getHermesClient } from "@/lib/agent";
+import { dataSource } from "@/lib/config/data-source";
 
 export const dynamic = "force-dynamic";
 
 // ---------------------------------------------------------------------------
 // Paperclip synthesis path
-// Guarded by DASHBOARD_DATA_SOURCE === "paperclip".
-// TODO (Task 1.5): replace this inline check with a shared dataSource()
-// helper once the feature-flag module is introduced.
+// Guarded by dataSource() === "paperclip" (reads DASHBOARD_DATA_SOURCE).
 // ---------------------------------------------------------------------------
 
 async function getPaperclipHealth(): Promise<Response> {
@@ -96,9 +95,7 @@ async function getPaperclipHealth(): Promise<Response> {
 // ---------------------------------------------------------------------------
 
 export async function GET(): Promise<Response> {
-  // Inline data-source guard — Task 1.5 will refactor to a shared dataSource()
-  // helper. Until then, any value other than "paperclip" falls through to Hermes.
-  if (process.env.DASHBOARD_DATA_SOURCE === "paperclip") {
+  if (dataSource() === "paperclip") {
     return getPaperclipHealth();
   }
 
