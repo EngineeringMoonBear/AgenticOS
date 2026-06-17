@@ -212,6 +212,159 @@ describe("GET /api/agent/health — Paperclip path (DASHBOARD_DATA_SOURCE=paperc
     // Client factory must NOT have been called — no config available.
     expect(mockCreatePaperclipClient).not.toHaveBeenCalled();
   });
+
+  // ── Multi-agent tests ──────────────────────────────────────────────────────
+
+  it('multi-agent: agent A stuck + agent B healthy → overall "ok" (B saves it)', async () => {
+    mockHealth.mockResolvedValue({ ok: true, data: { status: "ok" } });
+    mockAgents.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          id: "agent-A",
+          companyId: "co-test",
+          name: "Agent A",
+          status: "running",
+          role: null,
+          title: null,
+          adapterType: null,
+          budgetMonthlyCents: 5000,
+          spentMonthlyCents: 1000,
+        },
+        {
+          id: "agent-B",
+          companyId: "co-test",
+          name: "Agent B",
+          status: "running",
+          role: null,
+          title: null,
+          adapterType: null,
+          budgetMonthlyCents: 5000,
+          spentMonthlyCents: 500,
+        },
+      ],
+    });
+    // Batch of recent runs: agent-B's run comes first (most recent), agent-A's is stuck.
+    mockHeartbeatRuns.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          id: "run-B-1",
+          companyId: "co-test",
+          agentId: "agent-B",
+          status: "running",
+          invocationSource: "cron",
+          triggerDetail: null,
+          startedAt: "2026-06-17T10:01:00.000Z",
+          finishedAt: null,
+          createdAt: "2026-06-17T10:00:59.000Z",
+          livenessState: "alive",
+          livenessReason: null,
+          contextSnapshot: null,
+          resultJson: null,
+        },
+        {
+          id: "run-A-1",
+          companyId: "co-test",
+          agentId: "agent-A",
+          status: "running",
+          invocationSource: "cron",
+          triggerDetail: null,
+          startedAt: "2026-06-17T10:00:00.000Z",
+          finishedAt: null,
+          createdAt: "2026-06-17T09:59:59.000Z",
+          livenessState: "stuck",
+          livenessReason: "no heartbeat for 5 minutes",
+          contextSnapshot: null,
+          resultJson: null,
+        },
+      ],
+    });
+
+    const res = await GET();
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.status).toBe("ok");
+    // Confirm only one batch call was made (not one per agent).
+    expect(mockHeartbeatRuns).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatRuns).toHaveBeenCalledWith({ limit: 50 });
+  });
+
+  it('multi-agent: only running agent has a stuck latest run → overall "degraded"', async () => {
+    mockHealth.mockResolvedValue({ ok: true, data: { status: "ok" } });
+    mockAgents.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          id: "agent-A",
+          companyId: "co-test",
+          name: "Agent A",
+          status: "running",
+          role: null,
+          title: null,
+          adapterType: null,
+          budgetMonthlyCents: 5000,
+          spentMonthlyCents: 1000,
+        },
+        {
+          id: "agent-B",
+          companyId: "co-test",
+          name: "Agent B",
+          status: "idle",
+          role: null,
+          title: null,
+          adapterType: null,
+          budgetMonthlyCents: 5000,
+          spentMonthlyCents: 500,
+        },
+      ],
+    });
+    // Only agent-A is running, and its latest run is stuck.
+    // agent-B has a healthy run but is not in runningAgents, so it doesn't count.
+    mockHeartbeatRuns.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          id: "run-B-1",
+          companyId: "co-test",
+          agentId: "agent-B",
+          status: "completed",
+          invocationSource: "cron",
+          triggerDetail: null,
+          startedAt: "2026-06-17T10:01:00.000Z",
+          finishedAt: "2026-06-17T10:02:00.000Z",
+          createdAt: "2026-06-17T10:00:59.000Z",
+          livenessState: "alive",
+          livenessReason: null,
+          contextSnapshot: null,
+          resultJson: null,
+        },
+        {
+          id: "run-A-1",
+          companyId: "co-test",
+          agentId: "agent-A",
+          status: "running",
+          invocationSource: "cron",
+          triggerDetail: null,
+          startedAt: "2026-06-17T10:00:00.000Z",
+          finishedAt: null,
+          createdAt: "2026-06-17T09:59:59.000Z",
+          livenessState: "stuck",
+          livenessReason: "no heartbeat for 5 minutes",
+          contextSnapshot: null,
+          resultJson: null,
+        },
+      ],
+    });
+
+    const res = await GET();
+    expect(res.status).toBe(503);
+
+    const body = await res.json();
+    expect(body.status).toBe("degraded");
+    expect(body.paperclip?.stuck).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
