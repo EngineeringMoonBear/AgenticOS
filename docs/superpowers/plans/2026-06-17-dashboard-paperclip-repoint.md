@@ -48,7 +48,7 @@
 
 **Interfaces:**
 - Produces (add to `PaperclipClient`, mirroring existing method/`Result<T>` style; read the §5 spec note re: cost time-series):
-  - `costByPeriod(params: { from?: string; to?: string; bucket?: "day" }): Promise<Result<CostPeriodPoint[]>>` → `GET /companies/:id/costs/by-period?from=&to=&bucket=` — **add this method only if Phase A.5 confirms `costs/by-period` buckets server-side.** If A.5 shows it does not bucket, do **not** add `costByPeriod`; B1 burndown uses the capped per-day `costSummary` fan-out instead (see B1).
+  - ~~`costByPeriod(...)` → `costs/by-period`~~ **DROPPED — Phase A.5 confirmed `costs/by-period` does not exist (deprecated 404 stub).** Do not add it. B1 burndown uses the capped per-day `costSummary` fan-out instead. *(A.5 already reconciled the real shapes for `Issue`/`Routine`/`OrgNode`/`Approval`/`ActivityItem` in `client.ts` — note `OrgNode` is a **recursive** `{id,name,role,status,reports[]}` tree, not flat.)*
   - `issues(params: { status?: string; limit?: number }): Promise<Result<Issue[]>>` → `GET /companies/:id/issues`
   - `routines(): Promise<Result<Routine[]>>` → `GET /companies/:id/routines`
   - `org(): Promise<Result<OrgNode[]>>` → `GET /companies/:id/org`
@@ -97,13 +97,13 @@ For every Phase B/C task: **read the component + its existing `/api/...` fetch f
 **Interfaces:**
 - Consumes: `costSummary`, `costByAgentModel` (foundation), and **conditionally** `costByPeriod` (A2 — only if Phase A.5 confirms server-side bucketing; see below).
 
-**Cost-series source (resolved 2026-06-17 grill + Phase A.5):**
-- **Burndown** is conditional on A.5's bucketing check: **if** `costs/by-period?bucket=day` buckets server-side → burndown ← `costByPeriod` daily series (one call). **If not** → burndown ← **per-day `costSummary` fan-out**, window-capped to N days (cap the loop; don't fan out an unbounded range), fail-closed `503` if any day errors — and `costByPeriod` is dropped from A2 as a phantom.
+**Cost-series source (RESOLVED — Phase A.5 confirmed, see `__fixtures__/SHAPES.md`):**
+- **Burndown** — A.5 confirmed `costs/by-period` **does not exist** (it's a deprecated stub that 404s). So burndown ← **per-day `costSummary` fan-out**, window-capped to N days (cap the loop; never fan out an unbounded range), fail-closed `503` if any day errors. `costByPeriod` is a **phantom — not used** (dropped from A2).
 - **Cap / budget line** (both `BurndownResponse` target, `CostProjectionData.cap_usd`, KPI `cap_cents`) ← **`costSummary.budgetCents`** (already on the foundation client — no new endpoint). If no budget policy is configured, cap is `null`/absent → panels render spend without a cap line, **not** a fabricated cap.
 
 - [ ] Step 1: For each route, failing test asserting the paperclip branch maps Paperclip cost data → the existing response interface (`BurndownResponse`/`CostProjectionData`/KPI today shape) and 503 on `{ok:false}`.
 - [ ] Step 2: FAIL.
-- [ ] Step 3: Implement each route's paperclip branch (burndown ← per A.5: `costByPeriod` series **or** capped per-day `costSummary` fan-out; projection ← `costSummary` mtd + cap + days-remaining math; today ← today/yesterday/mtd `costSummary` ranges + `budgetCents` cap).
+- [ ] Step 3: Implement each route's paperclip branch (burndown ← capped per-day `costSummary` fan-out [A.5: no by-period endpoint]; projection ← `costSummary` mtd + cap + days-remaining math; today ← today/yesterday/mtd `costSummary` ranges + `budgetCents` cap).
 - [ ] Step 4: PASS + typecheck.
 - [ ] Step 5: Commit.
 
