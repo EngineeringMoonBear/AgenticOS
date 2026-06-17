@@ -16,10 +16,25 @@ function makeCfg() {
 }
 
 function mockFetch(status: number, body: unknown) {
+  const bodyText = typeof body === "string" ? body : JSON.stringify(body);
   return vi.fn().mockResolvedValueOnce({
     ok: status >= 200 && status < 300,
     status,
-    json: async () => body,
+    statusText: "",
+    text: async () => bodyText,
+    json: async () => {
+      if (typeof body === "string") throw new SyntaxError("Unexpected token");
+      return body;
+    },
+  });
+}
+
+function mockFetchNonJsonBody(status: number, statusText: string, bodyText: string) {
+  return vi.fn().mockResolvedValueOnce({
+    ok: false,
+    status,
+    statusText,
+    text: async () => bodyText,
   });
 }
 
@@ -112,6 +127,7 @@ describe("PaperclipClient", () => {
       const client = await getClient();
       const result = await client.costByAgentModel({});
       expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/500/);
     });
   });
 
@@ -149,6 +165,7 @@ describe("PaperclipClient", () => {
       const client = await getClient();
       const result = await client.heartbeatRuns({ limit: 10 });
       expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/401/);
     });
   });
 
@@ -244,6 +261,37 @@ describe("PaperclipClient", () => {
       const result = await client.health();
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/ECONNREFUSED/i);
+    });
+  });
+
+  // ── non-JSON error body (e.g. 502 gateway with HTML page) ─────────────────
+
+  describe("non-JSON error body", () => {
+    it("surfaces the HTTP status in error when body is non-JSON", async () => {
+      globalThis.fetch = mockFetchNonJsonBody(
+        502,
+        "Bad Gateway",
+        "<html><body>Bad Gateway</body></html>",
+      );
+      const client = await getClient();
+      const result = await client.health();
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        // Must contain the status code — must NOT be a JSON-parse error message
+        expect(result.error).toMatch(/502/);
+        expect(result.error).not.toMatch(/JSON|SyntaxError|Unexpected token/i);
+      }
+    });
+
+    it("surfaces the HTTP status in error when body is empty", async () => {
+      globalThis.fetch = mockFetchNonJsonBody(502, "Bad Gateway", "");
+      const client = await getClient();
+      const result = await client.health();
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toMatch(/502/);
+        expect(result.error).not.toMatch(/JSON|SyntaxError|Unexpected token/i);
+      }
     });
   });
 });

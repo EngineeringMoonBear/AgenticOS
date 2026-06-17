@@ -135,10 +135,27 @@ export function createPaperclipClient(cfg: PaperclipClientConfig): PaperclipClie
         headers: { Authorization: authHeader },
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
-      const json = (await res.json()) as T & { error?: string };
       if (!res.ok) {
-        return { ok: false, error: json.error ?? `HTTP ${res.status}` };
+        // Build the base error from the HTTP status so it is never masked by a
+        // body-read or JSON-parse failure.
+        const baseError = `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
+        let error = baseError;
+        try {
+          const text = await res.text();
+          if (text) {
+            try {
+              const json = JSON.parse(text) as { error?: string };
+              error = json.error ? `${baseError}: ${json.error}` : `${baseError}: ${text}`;
+            } catch {
+              error = `${baseError}: ${text}`;
+            }
+          }
+        } catch {
+          // Body read failed — keep the HTTP status error as-is.
+        }
+        return { ok: false, error };
       }
+      const json = (await res.json()) as T;
       return { ok: true, data: json };
     } catch (err) {
       return {
