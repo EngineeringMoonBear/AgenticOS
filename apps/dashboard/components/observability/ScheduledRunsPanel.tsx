@@ -57,7 +57,14 @@ function useScheduledJobs() {
   });
 }
 
-export function ScheduledRunsPanel() {
+interface ScheduledRunsPanelProps {
+  /** When false, the "trigger now" play button is hidden.
+   *  Set to false on the Paperclip path — it POSTs a Hermes-only endpoint
+   *  that does not exist on Paperclip. Default: true (Hermes path). */
+  showTriggerButton?: boolean;
+}
+
+export function ScheduledRunsPanel({ showTriggerButton = true }: ScheduledRunsPanelProps) {
   const { data, isLoading } = useScheduledJobs();
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -96,7 +103,7 @@ export function ScheduledRunsPanel() {
             <Row
               key={j.name}
               style={{
-                gridTemplateColumns: "1fr auto auto",
+                gridTemplateColumns: showTriggerButton ? "1fr auto auto" : "1fr auto",
                 gap: 10,
               }}
             >
@@ -114,14 +121,16 @@ export function ScheduledRunsPanel() {
               <span className="num" style={{ fontSize: 12 }}>
                 {j.next_in}
               </span>
-              <IconBtn
-                variant="go"
-                ariaLabel={`Trigger ${j.name} now`}
-                onClick={() => trigger(j.name)}
-                disabled={busy === j.name}
-              >
-                {PlayIcon}
-              </IconBtn>
+              {showTriggerButton && (
+                <IconBtn
+                  variant="go"
+                  ariaLabel={`Trigger ${j.name} now`}
+                  onClick={() => trigger(j.name)}
+                  disabled={busy === j.name}
+                >
+                  {PlayIcon}
+                </IconBtn>
+              )}
             </Row>
           ))}
         </RowList>

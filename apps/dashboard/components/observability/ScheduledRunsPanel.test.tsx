@@ -66,4 +66,29 @@ describe("ScheduledRunsPanel", () => {
       ).toBe(true);
     });
   });
+
+  // ── B4: showTriggerButton prop ────────────────────────────────────────────
+
+  it("shows trigger buttons by default (showTriggerButton=true)", async () => {
+    renderWithClient(<ScheduledRunsPanel />);
+    // Button is present for all jobs
+    const btn = await screen.findByLabelText("Trigger vault-ingest now");
+    expect(btn).toBeInTheDocument();
+  });
+
+  it("hides trigger buttons when showTriggerButton=false (Paperclip path)", async () => {
+    renderWithClient(<ScheduledRunsPanel showTriggerButton={false} />);
+    // Wait for data to load
+    await screen.findByText("vault-ingest");
+    // No trigger buttons should exist
+    expect(screen.queryByLabelText("Trigger vault-ingest now")).toBeNull();
+    expect(screen.queryByLabelText("Trigger cost-report now")).toBeNull();
+    expect(screen.queryByLabelText("Trigger daily-brief now")).toBeNull();
+  });
+
+  it("shows trigger buttons when showTriggerButton=true (explicit)", async () => {
+    renderWithClient(<ScheduledRunsPanel showTriggerButton={true} />);
+    await screen.findByText("vault-ingest");
+    expect(screen.getByLabelText("Trigger vault-ingest now")).toBeInTheDocument();
+  });
 });

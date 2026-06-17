@@ -29,7 +29,9 @@ export default function LiveOpsPage() {
         <QueueDepthPanel />
       </section>
       <section className="col-span-12 md:col-span-6 lg:col-span-4">
-        <ScheduledRunsPanel />
+        {/* Trigger button is hidden on the Paperclip path — the Hermes trigger
+            endpoint it targets does not exist in Paperclip. */}
+        <ScheduledRunsPanel showTriggerButton={dataSource() !== "paperclip"} />
       </section>
       <section className="col-span-12 lg:col-span-6">
         {/* Retry button is hidden on the Paperclip path — the Hermes retry
