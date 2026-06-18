@@ -165,8 +165,12 @@ describe("GET /api/tasks/stats — Paperclip path", () => {
     // 1 completed run with known duration (600s = 10min)
     const startedAt3 = new Date(now.getTime() - 12 * 60 * 1000).toISOString();
     const finishedAt3 = new Date(now.getTime() - 2 * 60 * 1000).toISOString();
-    // 1 failed run today
-    const failedAt = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
+    // 1 failed run today — anchored to the midpoint between today's UTC midnight
+    // and now, so it is deterministically "today" even when the suite runs within
+    // 30 min after UTC midnight (a fixed "now - 30min" could land on yesterday).
+    const failedAt = new Date(
+      (new Date(todayMidnight).getTime() + now.getTime()) / 2,
+    ).toISOString();
 
     mockHeartbeatRuns.mockResolvedValueOnce({
       ok: true,
