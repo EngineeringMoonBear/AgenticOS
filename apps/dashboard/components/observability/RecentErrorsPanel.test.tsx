@@ -83,4 +83,35 @@ describe("RecentErrorsPanel", () => {
       );
     });
   });
+
+  it("shows retry button by default (hermes path)", async () => {
+    mockRows = [
+      {
+        id: "abc123def4",
+        kind: "curator",
+        error: "boom",
+        started_at: new Date().toISOString(),
+      },
+    ];
+    renderWithClient(<RecentErrorsPanel />);
+    const btn = await screen.findByRole("button", { name: /retry curator/i });
+    expect(btn).toBeInTheDocument();
+  });
+
+  it("hides retry button when showRetryButton=false (paperclip path)", async () => {
+    mockRows = [
+      {
+        id: "abc123def4",
+        kind: "timer",
+        error: null,
+        started_at: new Date().toISOString(),
+      },
+    ];
+    renderWithClient(<RecentErrorsPanel showRetryButton={false} />);
+    // Wait for row to appear
+    await waitFor(() => {
+      expect(screen.getByText("timer")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /retry timer/i })).toBeNull();
+  });
 });

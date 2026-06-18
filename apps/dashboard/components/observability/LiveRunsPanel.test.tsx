@@ -78,4 +78,55 @@ describe("LiveRunsPanel", () => {
       ).toBeInTheDocument();
     });
   });
+
+  // ── B2e: cancel button visibility gating ─────────────────────────────────
+
+  it("shows cancel button by default (Hermes path: showCancelButton unset)", async () => {
+    mockRuns = [
+      {
+        id: "run-1",
+        kind: "timer",
+        started_at: "2026-06-17T10:00:00Z",
+        elapsed_seconds: 60,
+        stuck: false,
+      },
+    ];
+    renderWithClient(<LiveRunsPanel />);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /cancel run/i })).toBeInTheDocument();
+    });
+  });
+
+  it("shows cancel button when showCancelButton=true (Hermes path)", async () => {
+    mockRuns = [
+      {
+        id: "run-2",
+        kind: "assignment",
+        started_at: "2026-06-17T10:00:00Z",
+        elapsed_seconds: 60,
+        stuck: false,
+      },
+    ];
+    renderWithClient(<LiveRunsPanel showCancelButton={true} />);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /cancel run/i })).toBeInTheDocument();
+    });
+  });
+
+  it("hides cancel button when showCancelButton=false (Paperclip path)", async () => {
+    mockRuns = [
+      {
+        id: "run-3",
+        kind: "on_demand",
+        started_at: "2026-06-17T10:00:00Z",
+        elapsed_seconds: 60,
+        stuck: false,
+      },
+    ];
+    renderWithClient(<LiveRunsPanel showCancelButton={false} />);
+    await waitFor(() => {
+      expect(screen.getByText("on_demand")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /cancel run/i })).toBeNull();
+  });
 });

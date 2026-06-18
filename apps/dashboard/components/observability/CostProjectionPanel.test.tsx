@@ -45,4 +45,30 @@ describe("CostProjectionPanel", () => {
       expect(screen.getByText("Days remaining")).toBeInTheDocument();
     });
   });
+
+  it("renders spend without cap/percentage when cap_usd is 0", async () => {
+    vi.spyOn(global, "fetch").mockImplementation(async () => {
+      return new Response(
+        JSON.stringify({
+          spend_usd: 12.34,
+          cap_usd: 0,
+          mtd_spend_usd: 11.00,
+          avg_per_day_usd: 0.50,
+          days_remaining: 10,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    renderWithClient(<CostProjectionPanel />);
+    await waitFor(() => {
+      expect(screen.getByText(/\$12\.34/)).toBeInTheDocument();
+      // No "% of cap" pill or Infinity text should be rendered
+      expect(screen.queryByText(/of cap/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/infinity/i)).not.toBeInTheDocument();
+      // Detail rows still present
+      expect(screen.getByText("MTD spend")).toBeInTheDocument();
+      expect(screen.getByText("$11.00")).toBeInTheDocument();
+      expect(screen.getByText("Days remaining")).toBeInTheDocument();
+    });
+  });
 });

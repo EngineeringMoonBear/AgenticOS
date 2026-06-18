@@ -56,6 +56,11 @@ export interface HeartbeatRun {
   triggerDetail: string | null;
   startedAt: string | null;
   finishedAt: string | null;
+  /** Per-run error message written on failure (e.g. "process_lost; retrying once").
+   *  Populated on failed/timed_out runs; null on success/running.
+   *  Source: vendor/paperclip/server/src/db/schema/heartbeat_runs.ts (error text column),
+   *  projected in heartbeatRunListColumns at vendor/paperclip/server/src/services/heartbeat.ts:1116 */
+  error: string | null;
   createdAt: string;
   livenessState: string | null;
   livenessReason: string | null;

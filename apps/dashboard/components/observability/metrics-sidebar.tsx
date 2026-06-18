@@ -3,14 +3,12 @@
 import Link from "next/link";
 import { useRunFeed } from "@/lib/hooks/use-run-feed";
 import { useCron } from "@/lib/hooks/use-cron";
-import { RateLimitsPanel } from "./RateLimitsPanel";
-
 interface MetricsSidebarProps {
   filterActive: boolean;
   filteredCount?: number;
 }
 
-// Cost sparkline — tiny SVG placeholder (Phase 3 — full rate-limit sparkline via RateLimitsPanel)
+// Cost sparkline — tiny SVG placeholder (Phase 4 — full charts)
 function CostSparkline() {
   const points = [0.32, 0.61, 0.44, 0.88, 0.42, 1.2, 0.73];
   const max = Math.max(...points);
@@ -172,10 +170,6 @@ export function MetricsSidebar({ filterActive, filteredCount }: MetricsSidebarPr
         </Link>
       </section>
 
-      {/* Rate limits panel */}
-      <div className="mt-6">
-        <RateLimitsPanel />
-      </div>
     </aside>
   );
 }

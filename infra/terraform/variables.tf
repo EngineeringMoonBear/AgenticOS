@@ -96,3 +96,14 @@ variable "openviking_root_api_key" {
   type        = string
   sensitive   = true
 }
+
+variable "paperclip_company_id" {
+  description = "UUID of the GOL company row in Paperclip's companies table. Used as PAPERCLIP_COMPANY_ID on App Platform. Find via: psql into the Paperclip DB and SELECT id FROM companies WHERE name LIKE '%GOL%' OR name LIKE '%Goldberry%'. Store in 1Password under 'AgenticOS Infra / paperclip_company_id'."
+  type        = string
+}
+
+variable "paperclip_board_key" {
+  description = "Paperclip Board API key sent as Authorization: Bearer on every dashboard→Paperclip request. Store in 1Password under 'AgenticOS Infra / paperclip_board_key'. Used as PAPERCLIP_BOARD_KEY on App Platform."
+  type        = string
+  sensitive   = true
+}
