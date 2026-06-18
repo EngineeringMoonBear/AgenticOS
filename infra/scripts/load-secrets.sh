@@ -35,6 +35,13 @@ _agenticos_load_1password() {
     export TF_VAR_cloudflare_zone_id="$(op read "op://${op_vault}/${op_item}/cloudflare_zone_id" 2>/dev/null)"
     export TF_VAR_cloudflare_account_id="$(op read "op://${op_vault}/${op_item}/cloudflare_account_id" 2>/dev/null)"
 
+    # Dashboard Paperclip repoint — only needed for the App Platform dashboard
+    # apply (absent for droplet-only operations), so these are NOT in the
+    # required-six check below. Empty/missing here surfaces at `terraform apply`
+    # as a missing-variable error for the dashboard, which is the right place.
+    export TF_VAR_paperclip_company_id="$(op read "op://${op_vault}/${op_item}/paperclip_company_id" 2>/dev/null)"
+    export TF_VAR_paperclip_board_key="$(op read "op://${op_vault}/${op_item}/paperclip_board_key" 2>/dev/null)"
+
     # Sanity check: did we get values for all six?
     local missing=()
     for var in TF_VAR_do_token TF_VAR_tailscale_api_key TF_VAR_tailscale_tailnet \
