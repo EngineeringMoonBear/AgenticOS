@@ -8,7 +8,7 @@ import { resetStoreForTests } from "../lib/vault-store.js";
 
 let tmp: string;
 function cfg() {
-  return { port: 7777, vaultRoot: tmp, wikiSubdir: "wiki", syncthingUrl: undefined, syncthingApiKey: undefined };
+  return { port: 7777, vaultRoot: tmp, wikiSubdir: "wiki", syncthingUrl: undefined, syncthingApiKey: undefined, syncthingFolderId: "agenticos-vault" };
 }
 
 beforeEach(async () => {

@@ -15,7 +15,7 @@ const fixtureRoot = path.join(
 );
 
 function makeConfig(vaultRoot: string): Config {
-  return { port: 7777, vaultRoot, syncthingUrl: undefined, syncthingApiKey: undefined };
+  return { port: 7777, vaultRoot, syncthingUrl: undefined, syncthingApiKey: undefined, syncthingFolderId: "agenticos-vault" };
 }
 
 describe("GET /inbox", () => {

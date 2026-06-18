@@ -23,7 +23,7 @@ describe("GET /skills", () => {
       vaultRoot: fixtureRoot,
       wikiSubdir: "wiki",
       syncthingUrl: undefined,
-      syncthingApiKey: undefined,
+      syncthingApiKey: undefined, syncthingFolderId: "agenticos-vault",
     });
 
     const res = await app.inject({ method: "GET", url: "/skills" });
@@ -47,7 +47,7 @@ describe("GET /skills", () => {
       vaultRoot: fixtureRoot,
       wikiSubdir: "wiki",
       syncthingUrl: undefined,
-      syncthingApiKey: undefined,
+      syncthingApiKey: undefined, syncthingFolderId: "agenticos-vault",
     });
 
     const res = await app.inject({ method: "GET", url: "/skills" });
@@ -68,7 +68,7 @@ describe("GET /skills", () => {
       vaultRoot: fixtureRoot,
       wikiSubdir: "wiki",
       syncthingUrl: undefined,
-      syncthingApiKey: undefined,
+      syncthingApiKey: undefined, syncthingFolderId: "agenticos-vault",
     });
 
     const res = await app.inject({ method: "GET", url: "/skills" });
@@ -87,7 +87,7 @@ describe("GET /skills", () => {
       port: 7777,
       vaultRoot: fixtureRoot,
       syncthingUrl: undefined,
-      syncthingApiKey: undefined,
+      syncthingApiKey: undefined, syncthingFolderId: "agenticos-vault",
     });
 
     const res = await app.inject({ method: "GET", url: "/skills" });
@@ -104,7 +104,7 @@ describe("GET /skills", () => {
       vaultRoot: "/nonexistent",
       wikiSubdir: "wiki",
       syncthingUrl: undefined,
-      syncthingApiKey: undefined,
+      syncthingApiKey: undefined, syncthingFolderId: "agenticos-vault",
     });
 
     const res = await app.inject({ method: "GET", url: "/skills" });
