@@ -54,8 +54,10 @@ is acceptable, *guessed* is not.)
 Hermes-era panel showed, render `n/a`/hide it — **never a fabricated zero or
 synthesized string**. This is an *observability* surface; invented values
 displayed as measured are worse than blank. Confirmed gaps: no per-call token
-counts (aggregate only); no per-run error text (`livenessReason` is a status
-string); no Hermes "kind" taxonomy. The run **`kind`** maps to Paperclip's
+counts (aggregate only); no Hermes "kind" taxonomy. (Per-run **`error`** text
+*is* available — `heartbeat_runs.error`, projected in `heartbeatRunListColumns` —
+and is the **primary** per-run error source; `livenessReason` is only a
+status-string *fallback* when `error` is null.) The run **`kind`** maps to Paperclip's
 inline `invocationSource` (`timer`/`assignment`/`automation`/`on_demand`/
 `manual`); the provider/adapter dimension (claude/codex/opencode) stays in the
 cost-by-agent-model view, not duplicated onto runs.
@@ -69,7 +71,7 @@ cost-by-agent-model view, not duplicated onto runs.
 | CostVista, CostBurndownChart, CostProjectionPanel, KPI cost tiles | `costs/summary` (+ cap line ← `summary.budgetCents`); burndown series ← `costs/by-period?bucket=day` **iff A.5 confirms server-side bucketing, else a window-capped per-day `costs/summary` fan-out** |
 | RunsVista, LiveRunsPanel | `heartbeat-runs` mapped in-place across **four** existing routes (the runs view is not a single endpoint): feed (`/api/agent/runs`), chart events (`/api/tasks/recent-events`), stat tiles (`/api/tasks/stats`), live poll (`/api/tasks/active`). `kind ← invocationSource`. |
 | AgentStatusChip / agent health | Done in #180 (`/api/agent/health` synthesis) |
-| RecentErrorsPanel | failed `heartbeat-runs` → rows; `error` ← failure-only `livenessReason` or `null` (no fabricated message); `kind ← invocationSource` |
+| RecentErrorsPanel | failed `heartbeat-runs` → rows; `error` ← `run.error` (primary), falling back to failure-only `livenessReason`, else `null` (no fabricated message); `kind ← invocationSource` |
 | ScheduledRunsPanel | `GET /companies/:id/routines` (see §5 constraint on plugin-job crons) |
 | OpenAICodexPanel (per-model spend) | `GET /companies/:id/costs/by-agent-model` |
 

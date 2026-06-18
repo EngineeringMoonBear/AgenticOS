@@ -75,7 +75,7 @@
 - Create: `apps/dashboard/lib/paperclip/__fixtures__/SHAPES.md` (per-endpoint: confirmed fields the panels consume, plus any field the panel wants that Paperclip does **not** provide → feeds the "real-data-or-`n/a`" decision in B/C)
 
 - [ ] **Step 1:** Against the real Paperclip API (board key + company id from the 1Password item / `/tmp/pc-verify`, VPC or tunnel), `curl` each endpoint the repoint depends on: `costs/summary`, `costs/by-agent-model`, `costs/by-period?bucket=day` (**does it bucket server-side? this single answer decides B1's burndown route shape**), `heartbeat-runs`, `activity`, `agents`, `issues`, `routines`, `org`, `approvals`. Save each raw JSON to `__fixtures__/`.
-- [ ] **Step 2:** For each, record in `SHAPES.md` which panel-consumed fields are present, and flag every **absent** field a panel currently shows (per-call tokens, per-run error text, "kind", run duration, `age`, etc.). Absent → that field is `n/a`/hidden in B/C, **never a fabricated zero/synthesized string** (council: observability tools must not display invented data as measured).
+- [ ] **Step 2:** For each, record in `SHAPES.md` which panel-consumed fields are present, and flag every **absent** field a panel currently shows (per-call tokens, "kind", run duration, `age`, etc.). Absent → that field is `n/a`/hidden in B/C, **never a fabricated zero/synthesized string** (council: observability tools must not display invented data as measured).
 - [ ] **Step 3:** Promote the captured JSON into the B/C route tests as fixtures so the mocked client returns **real-shaped** data. Reconcile any client interface from A2 that guessed wrong (`CostPeriodPoint`/`Issue`/`Routine`/`OrgNode`/`Approval`).
 - [ ] **Step 4:** Commit (`chore(dashboard): capture real Paperclip response fixtures + SHAPES.md`). **Gate:** Phase B does not start until `SHAPES.md` exists and B1's cost-bucketing question is answered.
 
@@ -139,10 +139,10 @@ For every Phase B/C task: **read the component + its existing `/api/...` fetch f
 
 **Mapping decisions (consistent with B2):**
 - **`kind` ← `invocationSource`** (same as B2 — not the Hermes task-kind).
-- **`error` text:** Paperclip carries **no per-run error string** (A.5-confirmed; `livenessReason` is a *status* string like "stuck"/"waiting", not an error message). Source `error` from `livenessReason` only when it denotes a failure, else `null` → the panel shows the row without a fabricated message. **Do not synthesize an error string** (council: observability must not display invented data as measured).
+- **`error` text:** Paperclip **does** carry a per-run error string — `heartbeat_runs.error`, projected in `heartbeatRunListColumns` and populated on failure paths. Use `run.error` as the **primary** source; fall back to `livenessReason` only when `livenessState` denotes a failure **and** `run.error` is null (`livenessReason` is a *status* string like "stuck"/"waiting", not itself an error message), else `null`. **Do not synthesize an error string** (council: observability must not display invented data as measured).
 - **Retry button: hidden on the paperclip path** (see B2e) — gate its render on `dataSource()!=="paperclip"`.
 
-- [ ] Step 1: Failing route test (mock client): maps failed `heartbeat-runs` → `{id,kind,error,started_at}` rows (`kind`←invocationSource, `error`←failure-only livenessReason or `null`); 503 on failure. Step 2: FAIL. Step 3: Implement + hide the retry control under the flag. Step 4: PASS + typecheck. Step 5: Commit (+ wire panel).
+- [ ] Step 1: Failing route test (mock client): maps failed `heartbeat-runs` → `{id,kind,error,started_at}` rows (`kind`←invocationSource, `error`←`run.error` primary, then failure-only livenessReason, else `null`); 503 on failure. Step 2: FAIL. Step 3: Implement + hide the retry control under the flag. Step 4: PASS + typecheck. Step 5: Commit (+ wire panel).
 
 ### Task B4: ScheduledRunsPanel
 
