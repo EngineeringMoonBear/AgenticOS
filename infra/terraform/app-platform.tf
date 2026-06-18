@@ -132,6 +132,44 @@ resource "digitalocean_app" "dashboard" {
         value = var.domain
         scope = "RUN_TIME"
       }
+
+      # ---------------------------------------------------------------------
+      # Paperclip integration (data-source repoint).
+      #
+      # PAPERCLIP_API_URL — Paperclip server on the private VPC. App Platform
+      #   is attached to the same `digitalocean_vpc.agenticos` VPC so the
+      #   Droplet's private IP (10.116.16.2) is reachable at Layer 3.
+      #
+      # PAPERCLIP_COMPANY_ID — The UUID of the GOL company row in Paperclip's
+      #   `companies` table. Read from 1Password at apply time:
+      #     TF_VAR_paperclip_company_id=$(op read "op://Goldberry Grove - Admin/AgenticOS Infra/paperclip_company_id")
+      #
+      # PAPERCLIP_BOARD_KEY — Board API key; sent as `Authorization: Bearer`
+      #   on every Paperclip request. Same 1Password apply-time pattern as
+      #   openviking_root_api_key. Stored as a DigitalOcean secret env var.
+      #
+      # DASHBOARD_DATA_SOURCE is NOT set here — it defaults to "hermes" until
+      #   Task D3 cutover flip.
+      # ---------------------------------------------------------------------
+
+      env {
+        key   = "PAPERCLIP_API_URL"
+        value = "http://10.116.16.2:3100"
+        scope = "RUN_TIME"
+      }
+
+      env {
+        key   = "PAPERCLIP_COMPANY_ID"
+        value = var.paperclip_company_id
+        scope = "RUN_TIME"
+      }
+
+      env {
+        key   = "PAPERCLIP_BOARD_KEY"
+        value = var.paperclip_board_key
+        scope = "RUN_TIME"
+        type  = "SECRET"
+      }
     }
   }
 }
