@@ -291,6 +291,15 @@ runcmd:
       if ! grep -q '^BETTER_AUTH_SECRET=' /opt/agenticos/.env; then
         echo "BETTER_AUTH_SECRET=$(openssl rand -base64 48)" >> /opt/agenticos/.env
       fi
+      # PAPERCLIP_ALLOWED_HOSTNAMES — Paperclip's host allowlist (DNS-rebinding
+      # guard). The dashboard reaches Paperclip at the VPC IP (10.116.16.2), so
+      # that host must be allowed or every API call is rejected with
+      # "Hostname '...' is not allowed for this Paperclip instance". There is no
+      # file config in this deployment, so this env var IS the source of truth.
+      # Set ONLY when absent so a re-provision preserves any operator additions.
+      if ! grep -q '^PAPERCLIP_ALLOWED_HOSTNAMES=' /opt/agenticos/.env; then
+        echo "PAPERCLIP_ALLOWED_HOSTNAMES=10.116.16.2,localhost,127.0.0.1" >> /opt/agenticos/.env
+      fi
       # AgenticOS Postgres password — single source of truth is 1Password,
       # passed in by Terraform as the agenticos_db_password template var
       # (rendered below as a literal). Same UPSERT pattern as the OpenViking
@@ -443,6 +452,17 @@ runcmd:
   # Public IP traffic to :8000 remains blocked by the default-deny policy.
   - ufw allow in on eth1 to any port 8000 proto tcp
   - ufw allow in on tailscale0 to any port 8000 proto tcp
+
+  # --- VPC service ports reachable from App Platform (eth1 = DO VPC interface) ---
+  # The dashboard on App Platform reaches these Droplet services over the private
+  # VPC; public-IP traffic stays blocked by default-deny. Honcho :8000 above is
+  # retired and superseded by these. (Previously hand-added on the running Droplet;
+  # codified here so a rebuild reproduces the working firewall — Paperclip :3100
+  # being absent is what broke the dashboard cutover until it was opened.)
+  - ufw allow in on eth1 to any port 3100 proto tcp   # Paperclip API
+  - ufw allow in on eth1 to any port 1933 proto tcp   # OpenViking
+  - ufw allow in on eth1 to any port 7779 proto tcp   # vault-server
+  - ufw allow in on eth1 to any port 5432 proto tcp   # Postgres (AGENTICOS_DB_URL)
 
   # --- Curator timer (won't actually fire usefully until `claude /login` is done) ---
   - systemctl daemon-reload

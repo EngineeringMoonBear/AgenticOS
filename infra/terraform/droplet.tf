@@ -36,7 +36,7 @@ resource "digitalocean_droplet" "agenticos_droplet" {
   monitoring = true
   ipv6       = false
   # DO whole-droplet weekly snapshots. Redundant with our pg-backup +
-  # viking-backup + Syncthing, but covers the full disk (incl. Honcho data
+  # viking-backup + Syncthing, but covers the full disk (incl. Paperclip data
   # and Claude Code OAuth state that the app-level backups don't capture).
   backups = true
 
@@ -49,7 +49,7 @@ resource "digitalocean_droplet" "agenticos_droplet" {
       # Image refresh shouldn't replace the running Droplet.
       image,
       # user_data is ForceNew — any cloud-init template edit would trigger
-      # destroy+recreate, losing Honcho data and Claude Code OAuth.
+      # destroy+recreate, losing Paperclip data and Claude Code OAuth.
       # Cloud-init only runs at first boot anyway, so editing the template
       # for FUTURE droplets is fine; the existing Droplet ignores the drift.
       # To force a recreate after a meaningful template change, do it
