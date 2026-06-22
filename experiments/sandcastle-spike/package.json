@@ -8,7 +8,7 @@
     "spike": "tsx run.ts"
   },
   "dependencies": {
-    "@ai-hero/sandcastle": "^0.8.0",
+    "@ai-hero/sandcastle": "^0.10.0",
     "tsx": "^4.22.4",
     "zod": "^4.4.3"
   },
