@@ -24,29 +24,35 @@ output "dashboard_public_url" {
 }
 
 output "next_steps" {
-  description = "Manual follow-ups after `terraform apply` completes"
+  description = "Post-apply notes (most are one-time first-deploy setup; a routine apply needs none of them)"
   value       = <<EOT
 
 ================================================================================
-Apply complete. Next manual steps:
+Apply complete.
 
-1. SSH to the Droplet and complete Claude Code OAuth:
-     ssh -i ~/.ssh/agenticos-droplet deploy@${digitalocean_droplet.agenticos_droplet.ipv4_address}
-     claude /login
-   (follow the device-code URL in your browser, sign in with your Claude Max account)
+ROUTINE APPLY: nothing to do here. The dashboard auto-redeploys from `main` on
+App Platform; the Droplet services are managed by their own deploy workflow.
 
-2. Visit the dashboard:
-     https://${var.domain}
-   (Google SSO required — must be ${var.google_sso_email})
+FIRST-TIME SETUP ONLY (already done for an existing deployment):
 
-3. Install Tailscale on your Mac if you haven't:
-     brew install --cask tailscale && open -a Tailscale
+  1. Agent model auth. The claude_local / codex_local adapters run the local
+     `claude` / codex CLIs authenticated via your Anthropic / OpenAI
+     SUBSCRIPTION (OAuth) — not API billing. One-time, on the Droplet; the
+     OAuth state persists on the backed-up Droplet volume:
+       ssh -i ~/.ssh/agenticos-droplet deploy@${digitalocean_droplet.agenticos_droplet.ipv4_address}
+       claude /login        # follow the device-code URL, then sign in
+     (To run an agent on API billing instead, set the provider key in
+     Paperclip's Secrets — not in terraform.)
 
-4. Pair Syncthing — open the Droplet's Syncthing GUI (only reachable over Tailscale):
-     open http://agenticos-droplet:8384         (uses Tailscale MagicDNS)
-   Or find the Tailscale IP first:
-     tailscale status | grep agenticos-droplet  (then open http://<that-ip>:8384)
+  2. Dashboard (Google SSO — must be ${var.google_sso_email}):
+       https://${var.domain}
 
+  3. Tailscale on your Mac (needed to reach VPC-only services — Paperclip on
+     :3100, the Syncthing GUI): brew install --cask tailscale && open -a Tailscale
+
+  4. Pair Syncthing (Droplet GUI, reachable only over Tailscale):
+       open http://agenticos-droplet:8384
+       # or: tailscale status | grep agenticos-droplet  → open http://<ip>:8384
 ================================================================================
 EOT
 }
