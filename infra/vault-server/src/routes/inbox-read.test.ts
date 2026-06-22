@@ -7,7 +7,7 @@ import { registerInboxReadRoute } from "./inbox-read.js";
 import { resetStoreForTests } from "../lib/vault-store.js";
 
 let tmp: string;
-const cfg = () => ({ port: 7777, vaultRoot: tmp, wikiSubdir: "wiki", syncthingUrl: undefined, syncthingApiKey: undefined });
+const cfg = () => ({ port: 7777, vaultRoot: tmp, wikiSubdir: "wiki", syncthingUrl: undefined, syncthingApiKey: undefined, syncthingFolderId: "agenticos-vault" });
 
 beforeEach(async () => {
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), "vs-inboxread-"));

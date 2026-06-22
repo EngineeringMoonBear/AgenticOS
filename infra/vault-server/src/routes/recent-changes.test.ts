@@ -7,6 +7,7 @@ const configWithSyncthing = {
   vaultRoot: "/tmp",
   syncthingUrl: "http://st:8384",
   syncthingApiKey: "key",
+  syncthingFolderId: "agenticos-vault",
 };
 
 describe("GET /recent-changes", () => {
@@ -18,8 +19,9 @@ describe("GET /recent-changes", () => {
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify([
-            { id: 1, type: "ItemFinished", time: "2026-05-30T01:00:00Z", data: { folder: "vault", item: "a.md", action: "update" } },
-            { id: 2, type: "FolderSummary", time: "2026-05-30T01:00:01Z", data: {} }, // filtered out
+            { id: 1, type: "ItemFinished", time: "2026-05-30T01:00:00Z", data: { folder: "agenticos-vault", item: "a.md", action: "update" } },
+            { id: 2, type: "FolderSummary", time: "2026-05-30T01:00:01Z", data: {} }, // filtered out (wrong type)
+            { id: 3, type: "ItemFinished", time: "2026-05-30T01:00:02Z", data: { folder: "other-folder", item: "z.md", action: "update" } }, // filtered out (wrong folder)
           ]),
           { status: 200 },
         ),
