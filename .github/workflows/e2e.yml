@@ -36,7 +36,7 @@ jobs:
     outputs:
       has_pw: ${{ steps.check.outputs.has_pw }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: check
         # hashFiles() can only be called inside a step, not in a job-level if:
         # Skip not just when config is missing, but when no .spec/.test files
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
       - uses: actions/setup-node@v6
         with:
