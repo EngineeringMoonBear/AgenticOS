@@ -18,7 +18,7 @@ const config: Config = {
   port: 7777,
   vaultRoot: fixtureRoot,
   syncthingUrl: undefined,
-  syncthingApiKey: undefined,
+  syncthingApiKey: undefined, syncthingFolderId: "agenticos-vault",
 };
 
 describe("GET /stats", () => {

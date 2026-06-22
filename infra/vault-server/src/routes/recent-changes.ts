@@ -32,16 +32,16 @@ export function registerRecentChangesRoute(
 
     const changes: Change[] = events
       .filter((ev) => ev.type === "ItemFinished")
-      .map((ev) => mapEvent(ev))
+      .map((ev) => mapEvent(ev, config.syncthingFolderId))
       .filter((c): c is Change => c !== null);
 
     return { available: true, changes };
   });
 }
 
-function mapEvent(ev: SyncthingEvent): Change | null {
+function mapEvent(ev: SyncthingEvent, folderId: string): Change | null {
   const data = ev.data as { folder?: string; item?: string; action?: string };
-  if (!data.folder || data.folder !== "vault") return null;
+  if (!data.folder || data.folder !== folderId) return null;
   if (!data.item) return null;
   let kind: Change["kind"] = "updated";
   if (data.action === "update") kind = "updated";
