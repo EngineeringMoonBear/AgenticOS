@@ -24,7 +24,7 @@ describe("GET /tree", () => {
       port: 7777,
       vaultRoot: fixtureRoot,
       syncthingUrl: undefined,
-      syncthingApiKey: undefined,
+      syncthingApiKey: undefined, syncthingFolderId: "agenticos-vault",
     });
 
     const res = await app.inject({ method: "GET", url: "/tree" });

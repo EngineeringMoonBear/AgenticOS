@@ -19,6 +19,12 @@ export interface Config {
   syncthingUrl: string | undefined;
   /** Optional Syncthing REST API key. */
   syncthingApiKey: string | undefined;
+  /**
+   * Syncthing folder ID for the paired vault — must match the folder ID Syncthing
+   * shares with the Mac (default "agenticos-vault"). recent-changes filters the
+   * event stream to this folder; a mismatch silently yields zero changes.
+   */
+  syncthingFolderId: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -34,5 +40,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     wikiSubdir: env.WIKI_SUBDIR ?? "wiki",
     syncthingUrl: env.SYNCTHING_URL || undefined,
     syncthingApiKey: env.SYNCTHING_API_KEY || undefined,
+    syncthingFolderId: env.SYNCTHING_FOLDER_ID ?? "agenticos-vault",
   };
 }
