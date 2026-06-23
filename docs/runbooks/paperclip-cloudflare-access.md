@@ -1,6 +1,6 @@
 # Runbook — Paperclip board UI behind Cloudflare Access
 
-Publishes Paperclip's board UI at **https://paperclip.gatheringatthegrove.com**,
+Publishes Paperclip's board UI at `https://paperclip.gatheringatthegrove.com`,
 gated by Cloudflare Access (Google SSO), and retires the ad-hoc SSH tunnel
 (`ssh -N -L 3100:10.116.16.2:3100 …`) previously used to reach `:3100`.
 
