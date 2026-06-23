@@ -107,3 +107,30 @@ variable "paperclip_board_key" {
   type        = string
   sensitive   = true
 }
+
+variable "paperclip_domain" {
+  description = "Public hostname for Paperclip's board UI, fronted by Cloudflare Access + a cloudflared tunnel (see cloudflare-tunnel.tf). Kept distinct from var.domain (the dashboard) so the two apps have independent Access apps/policies."
+  type        = string
+  default     = "paperclip.gatheringatthegrove.com"
+}
+
+variable "paperclip_tunnel_secret" {
+  description = <<-EOT
+    Base64-encoded (32–256 byte) secret for the Paperclip cloudflared tunnel.
+    1Password is the single source of truth — generate once and store it, then
+    pass it in at apply time so Terraform consumes (never generates) it:
+
+      op item create --category=password --title='paperclip_tunnel_secret' \
+        --vault='Goldberry Grove - Admin' \
+        password="$(openssl rand -base64 32)"
+      export TF_VAR_paperclip_tunnel_secret=$(op read \
+        "op://Goldberry Grove - Admin/AgenticOS Infra/paperclip_tunnel_secret")
+
+    Mirrors the op-read→TF_VAR pattern used by agenticos_db_password and
+    openviking_root_api_key. The derived run token (a stable function of this
+    secret + the tunnel ID) is exposed as the `paperclip_tunnel_token` output;
+    that token is what the cloudflared compose service consumes via .env.
+  EOT
+  type        = string
+  sensitive   = true
+}

@@ -442,6 +442,17 @@ services:
       # VPC port mapping and Docker service-name DNS.
       PAPERCLIP_DEPLOYMENT_MODE: authenticated
       PAPERCLIP_DEPLOYMENT_EXPOSURE: private
+      # Public hostname the board UI is served behind (Cloudflare Access +
+      # cloudflared tunnel; see infra/terraform/cloudflare-tunnel.tf). better-auth
+      # reads this as its canonical base URL so cookie domain, CSRF trustedOrigins,
+      # and redirects are correct behind the proxy — without it, baseUrlMode stays
+      # "auto" and login loops behind the reverse proxy. Also auto-allowlists the
+      # hostname (config.ts publicUrlHostname), so it doesn't need a separate
+      # PAPERCLIP_ALLOWED_HOSTNAMES entry. Static + non-secret, so it lives here
+      # (environment: overrides env_file:) rather than in .env. EXPOSURE stays
+      # `private`: the listening socket never faces the internet — only the tunnel
+      # reaches it — so the public-exposure startup guard does not apply.
+      PAPERCLIP_PUBLIC_URL: https://paperclip.gatheringatthegrove.com
       PAPERCLIP_HOME: /paperclip
       SERVE_UI: "true"
       # Session/JWT signing secret for authenticated mode (high-entropy; from
@@ -486,6 +497,31 @@ services:
       timeout: 5s
       retries: 10
       start_period: 90s
+
+  # cloudflared — outbound-only connector that publishes paperclip-server's board
+  # UI at paperclip.gatheringatthegrove.com behind Cloudflare Access (Google SSO).
+  # The named tunnel, its ingress rules, the Access app/policy, and the DNS record
+  # are all Terraform-managed (infra/terraform/cloudflare-tunnel.tf); this service
+  # just runs the connector with the run token.
+  #
+  # No published ports: the tunnel dials OUT to Cloudflare's edge over 443, so
+  # nothing new is exposed inbound. Because it shares this compose network, its
+  # origin is the internal Docker DNS name paperclip-server:3100 (set as the
+  # ingress service in Terraform) — it does not depend on the host VPC port map
+  # or ufw. PAPERCLIP_TUNNEL_TOKEN comes from /opt/agenticos/.env (1Password →
+  # secret-sync); see docs/runbooks/paperclip-cloudflare-access.md.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared-paperclip
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${PAPERCLIP_TUNNEL_TOKEN:-}
+    env_file:
+      - /opt/agenticos/.env
+    depends_on:
+      paperclip-server:
+        condition: service_healthy
 
 volumes:
   agenticos-db-data:
