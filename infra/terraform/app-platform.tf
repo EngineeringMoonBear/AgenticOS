@@ -10,10 +10,10 @@ resource "digitalocean_app" "dashboard" {
     name   = "agenticos-dashboard"
     region = var.do_region
 
-    # Attach to the VPC where the Droplet lives so the App's HONCHO_URL
-    # (pointing at the Droplet's VPC-private IP) is reachable. Without
-    # VPC attachment, App Platform reaches Honcho only via the public IP
-    # which is firewalled.
+    # Attach to the VPC where the Droplet lives so the App can reach the
+    # Droplet's VPC-private services (Paperclip :3100, OpenViking :1933,
+    # Postgres :5432) at their private IPs. Without VPC attachment, those
+    # are reachable only via the firewalled public IP.
     vpc {
       id = digitalocean_vpc.agenticos.id
     }
@@ -92,7 +92,7 @@ resource "digitalocean_app" "dashboard" {
       env {
         # Tenant header sent on every Viking call (X-OpenViking-Account)
         # via the dashboard's lib/api/viking.ts shim. Matches the value
-        # used by Hermes' OpenViking plugin in the Droplet's compose file.
+        # used by the OpenViking plugin in the Droplet's compose file.
         key   = "OPENVIKING_ACCOUNT"
         value = "agenticos"
         scope = "RUN_TIME"
@@ -148,8 +148,9 @@ resource "digitalocean_app" "dashboard" {
       #   on every Paperclip request. Same 1Password apply-time pattern as
       #   openviking_root_api_key. Stored as a DigitalOcean secret env var.
       #
-      # DASHBOARD_DATA_SOURCE is NOT set here — it defaults to "hermes" until
-      #   Task D3 cutover flip.
+      # DASHBOARD_DATA_SOURCE = "paperclip" is the cutover flip (D3): every
+      #   dashboard route reads Paperclip instead of Hermes. ROLLBACK: set this
+      #   to "hermes" (or delete the block) and re-apply — instant revert.
       # ---------------------------------------------------------------------
 
       env {
@@ -169,6 +170,13 @@ resource "digitalocean_app" "dashboard" {
         value = var.paperclip_board_key
         scope = "RUN_TIME"
         type  = "SECRET"
+      }
+
+      # Cutover flip (D3). Roll back by setting "hermes" or deleting this block.
+      env {
+        key   = "DASHBOARD_DATA_SOURCE"
+        value = "paperclip"
+        scope = "RUN_TIME"
       }
     }
   }
