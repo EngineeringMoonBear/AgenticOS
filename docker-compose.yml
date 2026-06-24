@@ -497,6 +497,10 @@ services:
       - ./packages/vault-plugin:/paperclip/plugins/vault-plugin:ro
       - ./packages/openviking-plugin:/paperclip/plugins/openviking-plugin:ro
       - ./packages/github-plugin:/paperclip/plugins/github-plugin:ro
+      # Shared agent house-rules (internal API endpoint + local Obsidian vault).
+      # Reference it from each agent's adapterConfig.instructionsFilePath =
+      # /paperclip/agent-house-rules.md so it's prepended to every run.
+      - ./docs/agent-house-rules.md:/paperclip/agent-house-rules.md:ro
     env_file:
       - /opt/agenticos/.env
     depends_on:
