@@ -476,6 +476,15 @@ services:
       # this block. See docs/runbooks/paperclip-agent-backends.md.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # Pin claude_local's credential/config dir onto the persistent
+      # paperclip-data volume (/paperclip), at one path that BOTH the
+      # server-spawned agent processes AND `docker compose exec … claude /login`
+      # resolve to. Without it, claude finds its config via the home dir, which
+      # (a) differs between a root `exec` shell and the gosu-node runtime, and
+      # (b) can land off-volume (e.g. /home/node/.claude) and vanish on recreate
+      # — exactly why a login "succeeded" but agents still saw "login required".
+      # With it pinned, log in ONCE (as node) and it persists across restarts.
+      CLAUDE_CONFIG_DIR: /paperclip/.claude
       # NOTE: plugin config (GitHub token, OpenViking key/endpoint, vault URL)
       # is NOT passed via env. Paperclip sandboxes plugin workers away from the
       # host process.env, so the previous OPENVIKING_*/VAULT_SERVER_URL/GITHUB_*
