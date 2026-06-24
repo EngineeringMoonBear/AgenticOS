@@ -21,9 +21,14 @@
 // before expiry, so back-to-back git calls don't re-mint.
 
 import { createSign } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+// GitHub owners (orgs/users) are 1–39 chars of [A-Za-z0-9-]. Validating against
+// this before the value touches a URL or a file path closes path-traversal
+// (e.g. "../") and request-tampering — the value originates from git stdin/argv.
+const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 
 const APP_ID = process.env.GITHUB_APP_ID;
 const KEY_B64 = process.env.GITHUB_APP_PRIVATE_KEY_B64;
@@ -69,15 +74,15 @@ async function api(path, token, opts = {}) {
 }
 
 async function installationToken(owner) {
+  if (!OWNER_RE.test(owner)) throw new Error(`invalid GitHub owner: '${owner}'`);
   const cacheFile = join(CACHE_DIR, `${owner.toLowerCase()}.json`);
-  if (existsSync(cacheFile)) {
-    try {
-      const c = JSON.parse(readFileSync(cacheFile, "utf8"));
-      if (c.token && c.expires_at && Date.parse(c.expires_at) - Date.now() > 5 * 60 * 1000) {
-        return c.token;
-      }
-    } catch { /* fall through and re-mint */ }
-  }
+  // Read-then-catch (no existsSync pre-check) avoids a check-then-use race.
+  try {
+    const c = JSON.parse(readFileSync(cacheFile, "utf8"));
+    if (c.token && c.expires_at && Date.parse(c.expires_at) - Date.now() > 5 * 60 * 1000) {
+      return c.token;
+    }
+  } catch { /* missing/stale/corrupt cache — re-mint below */ }
   const jwt = appJwt();
   // The App may be installed on an org OR a user account — try both.
   let inst;
