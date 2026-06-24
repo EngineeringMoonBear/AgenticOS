@@ -22,6 +22,7 @@ on:
       - 'packages/vault-plugin/**'
       - 'packages/openviking-plugin/**'
       - 'packages/github-plugin/**'
+      - 'scripts/agent-git/**'
       - 'docker-compose.yml'
       - '.github/workflows/deploy-droplet.yml'
   workflow_dispatch:
