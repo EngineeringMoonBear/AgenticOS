@@ -35,6 +35,14 @@ _agenticos_load_1password() {
     export TF_VAR_cloudflare_zone_id="$(op read "op://${op_vault}/${op_item}/cloudflare_zone_id" 2>/dev/null)"
     export TF_VAR_cloudflare_account_id="$(op read "op://${op_vault}/${op_item}/cloudflare_account_id" 2>/dev/null)"
 
+    # Core service secrets consumed by app-platform.tf (dashboard env) AND
+    # droplet.tf (cloud-init templatefile). Required by any full `terraform
+    # apply`; previously these were only available via the ~/.config/agenticos/
+    # infra.env fallback, so a 1Password-only apply failed with
+    # "No value for required variable" on them. Export them here like the rest.
+    export TF_VAR_agenticos_db_password="$(op read "op://${op_vault}/${op_item}/agenticos_db_password" 2>/dev/null)"
+    export TF_VAR_openviking_root_api_key="$(op read "op://${op_vault}/${op_item}/openviking_root_api_key" 2>/dev/null)"
+
     # Dashboard Paperclip repoint — only needed for the App Platform dashboard
     # apply (absent for droplet-only operations), so these are NOT in the
     # required-six check below. Empty/missing here surfaces at `terraform apply`
