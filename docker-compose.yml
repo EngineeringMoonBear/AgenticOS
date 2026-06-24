@@ -491,6 +491,11 @@ services:
       # vars here were dead. Plugins read their config via ctx.config; values
       # are pushed from 1Password by scripts/sync-paperclip-secrets.sh.
       TZ: America/New_York
+      # GitHub App auth for agents. App ID is not secret; the private key arrives
+      # base64'd as GITHUB_APP_PRIVATE_KEY_B64 via env_file (/opt/agenticos/.env).
+      # The git credential helper (scripts/agent-git) mints short-lived, per-org
+      # installation tokens from these so git/gh work across every installed org.
+      GITHUB_APP_ID: "4134853"
     volumes:
       - paperclip-data:/paperclip
       - /opt/vault:/opt/vault:ro
@@ -501,6 +506,10 @@ services:
       # Reference it from each agent's adapterConfig.instructionsFilePath =
       # /paperclip/agent-house-rules.md so it's prepended to every run.
       - ./docs/agent-house-rules.md:/paperclip/agent-house-rules.md:ro
+      # GitHub App credential helper + git identity (mounted to the node user's
+      # $HOME/.gitconfig). Routes github.com auth through the App.
+      - ./scripts/agent-git:/paperclip/agent-git:ro
+      - ./scripts/agent-git/gitconfig:/paperclip/.gitconfig:ro
     env_file:
       - /opt/agenticos/.env
     depends_on:

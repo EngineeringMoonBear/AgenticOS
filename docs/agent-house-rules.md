@@ -34,3 +34,28 @@ steps and failed requests.
 
 - Claude agents run on the **Claude Max subscription** (`claude_local`, OAuth) —
   there is no Anthropic API key in this environment, and that is intentional.
+
+## GitHub — push + PR via the AgenticOS Developer App
+
+You authenticate to GitHub through a **GitHub App** (installation tokens), not a
+personal token. It spans every org the App is installed on (EngineeringMoonBear,
+Goldberry-Playground, …).
+
+- **`git` just works.** `git clone`, `fetch`, and `push` over `https://github.com/…`
+  are authed automatically by a credential helper that mints a short-lived token
+  for that repo's owner. No setup, no token handling.
+- **Always branch + PR — never push to `main`.** Open a PR for review.
+- **For `gh` or raw GitHub API calls**, mint a token for the repo's owner first:
+  ```bash
+  TOKEN=$(node /paperclip/agent-git/github-app-token.mjs token <owner>)
+  # then, e.g.:
+  GH_TOKEN="$TOKEN" gh pr create --base main --head <branch> --title "…" --body "…"
+  # or via the API directly:
+  curl -sS -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
+    https://api.github.com/repos/<owner>/<repo>/pulls -d '{"title":"…","head":"<branch>","base":"main","body":"…"}'
+  ```
+  `<owner>` is the org/user in the repo path (e.g. `goldberry-playground`,
+  `EngineeringMoonBear`). Tokens last ~1h and are cached, so re-running is cheap.
+- **Scope:** the App grants Contents + Pull requests (+ Workflows). No admin, no
+  secrets. If a push 404s/403s, the App likely isn't installed on that owner, or
+  that repo wasn't selected in the installation — say so rather than retrying.
