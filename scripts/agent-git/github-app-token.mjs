@@ -42,8 +42,22 @@ function configured() {
   return Boolean(APP_ID && KEY_B64);
 }
 
+// 1Password (and some env-file round-trips) can collapse a PEM's line breaks,
+// leaving BEGIN/END and the base64 body on a single line — which Node's crypto
+// rejects with "DECODER routines::unsupported". Rebuild the canonical PEM
+// (markers on their own lines, body wrapped at 64 cols) so the key parses
+// regardless of how its newlines survived storage. The key MATERIAL is intact;
+// only the framing is restored.
+function normalizePem(s) {
+  const m = s.match(/-----BEGIN ([A-Z0-9 ]+)-----([\s\S]*?)-----END \1-----/);
+  if (!m) return s; // not a PEM we recognize — let crypto try it as-is
+  const label = m[1].trim();
+  const body = m[2].replace(/\s+/g, "");
+  return `-----BEGIN ${label}-----\n${body.match(/.{1,64}/g).join("\n")}\n-----END ${label}-----\n`;
+}
+
 function appJwt() {
-  const pem = Buffer.from(KEY_B64, "base64").toString("utf8");
+  const pem = normalizePem(Buffer.from(KEY_B64, "base64").toString("utf8"));
   const now = Math.floor(Date.now() / 1000);
   const b64url = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
   // iat backdated 60s for clock skew; exp must be ≤10m per GitHub.
