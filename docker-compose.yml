@@ -459,9 +459,21 @@ services:
       # .env / 1Password). Stable across reprovisions, else sessions + agent
       # JWTs are invalidated on every restart.
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
-      # LLM keys are consumed by paperclip-server CORE (agent runs), not by the
-      # plugins — kept. (They're in the SDK's env-passthrough allowlist.)
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # LLM API keys for agent runs. OPENAI/DEEPSEEK stay (codex_local + any
+      # deepseek agents authenticate via API key).
+      #
+      # ANTHROPIC is intentionally NOT passed: claude_local runs on the Claude
+      # Max SUBSCRIPTION via OAuth (`claude /login` inside the container; creds
+      # persist in $HOME/.claude = /paperclip/.claude on the paperclip-data
+      # volume). An ANTHROPIC_API_KEY present in the container env OVERRIDES that
+      # OAuth and silently switches Claude agents to pay-per-token API billing
+      # (the adapter probe warns "ANTHROPIC_API_KEY is set"). For per-agent API
+      # billing instead, set the key in Paperclip Secrets — not here.
+      #
+      # IMPORTANT: removing it here is necessary but not sufficient — env_file:
+      # below loads /opt/agenticos/.env, which must ALSO have no
+      # ANTHROPIC_API_KEY line, or the key is injected directly and bypasses
+      # this block. See docs/runbooks/paperclip-agent-backends.md.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       # NOTE: plugin config (GitHub token, OpenViking key/endpoint, vault URL)
