@@ -42,6 +42,15 @@ _agenticos_load_1password() {
     export TF_VAR_paperclip_company_id="$(op read "op://${op_vault}/${op_item}/paperclip_company_id" 2>/dev/null)"
     export TF_VAR_paperclip_board_key="$(op read "op://${op_vault}/${op_item}/paperclip_board_key" 2>/dev/null)"
 
+    # Paperclip-behind-Cloudflare-Access tunnel secret (cloudflare-tunnel.tf).
+    # Required by the full apply but not by droplet-only ops, so — like the two
+    # dashboard vars above — it's intentionally outside the required-six check;
+    # if absent it surfaces as a missing-variable error at `terraform apply`.
+    # 1Password is the single source of truth: generate once with
+    #   op item edit 'AgenticOS Infra' --vault '<vault>' \
+    #     "paperclip_tunnel_secret[password]=$(openssl rand -base64 32)"
+    export TF_VAR_paperclip_tunnel_secret="$(op read "op://${op_vault}/${op_item}/paperclip_tunnel_secret" 2>/dev/null)"
+
     # Sanity check: did we get values for all six?
     local missing=()
     for var in TF_VAR_do_token TF_VAR_tailscale_api_key TF_VAR_tailscale_tailnet \

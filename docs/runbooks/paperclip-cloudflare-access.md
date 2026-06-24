@@ -48,12 +48,13 @@ op item edit "AgenticOS Infra" --vault "Goldberry Grove - Admin" \
 ### 2. `terraform apply` — create the Cloudflare side
 
 Prereq: the Google IdP already exists in Zero Trust (the dashboard uses it; see
-`cloudflare-access.tf`). From `infra/terraform/`:
+`cloudflare-access.tf`), and step 1 has stored `paperclip_tunnel_secret` in
+1Password. `infra/scripts/load-secrets.sh` now exports
+`TF_VAR_paperclip_tunnel_secret` alongside the other infra vars, so:
 
 ```bash
-export TF_VAR_paperclip_tunnel_secret=$(op read \
-  "op://Goldberry Grove - Admin/AgenticOS Infra/paperclip_tunnel_secret")
-# ...alongside the other TF_VARs the stack already needs (see your apply wrapper).
+source infra/scripts/load-secrets.sh   # exports all TF_VAR_* incl. the tunnel secret
+cd infra/terraform
 terraform plan    # expect: 1 tunnel, 1 tunnel_config, 1 access_application, 1 access_policy, 1 record
 terraform apply
 ```
