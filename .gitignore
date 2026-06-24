@@ -7,6 +7,15 @@ node_modules/
 .next/
 .turbo/
 dist/
+# EXCEPTION: the three Paperclip plugins' built dist/ IS committed. The Droplet
+# deploy ships the tree via `git archive` (committed files only) and bind-mounts
+# the plugins as prebuilt artifacts (they are NOT built on the Droplet), so the
+# manifest + worker bundles must be in git or Paperclip can't activate them
+# ("no longer exposes a Paperclip manifest"). Rebuild after editing plugin src:
+#   pnpm --filter @agenticos/<name>-plugin run build
+!packages/vault-plugin/dist/
+!packages/openviking-plugin/dist/
+!packages/github-plugin/dist/
 build/
 out/
 .env

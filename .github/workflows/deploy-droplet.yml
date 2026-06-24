@@ -19,6 +19,9 @@ on:
     paths:
       - 'infra/vault-server/**'
       - 'packages/vault-core/**'
+      - 'packages/vault-plugin/**'
+      - 'packages/openviking-plugin/**'
+      - 'packages/github-plugin/**'
       - 'docker-compose.yml'
       - '.github/workflows/deploy-droplet.yml'
   workflow_dispatch:
@@ -34,7 +37,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy vault-server
+    name: Deploy Droplet services
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -63,19 +66,27 @@ jobs:
             ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" \
               'tar xzf - -C /opt/agenticos && echo "synced $(git --version >/dev/null 2>&1; echo ok)"'
 
-      - name: Rebuild + restart vault-server
+      - name: Rebuild vault-server + reload plugins on paperclip-server
         env:
           HOST: ${{ secrets.DROPLET_HOST }}
           USER: ${{ secrets.DROPLET_USER }}
         run: |
           # `deploy` is in the docker group — no sudo (sudo would block on a
           # password prompt and hang the job).
+          #
+          # paperclip-server bind-mounts the plugins as prebuilt dist/. A bare
+          # restart keeps the old mount inode and can miss freshly-shipped dist,
+          # so force-recreate it to re-resolve the mounts and re-run the
+          # plugin-loader (otherwise plugins fail to activate with "no longer
+          # exposes a Paperclip manifest"). OAuth/login state survives — it's on
+          # the paperclip-data volume, not the container layer.
           ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" \
             'set -euo pipefail
              cd /opt/agenticos
              docker compose build vault-server
              docker compose up -d vault-server
-             docker compose ps vault-server'
+             docker compose up -d --force-recreate paperclip-server
+             docker compose ps vault-server paperclip-server'
 
       - name: Health check
         env:
