@@ -24,17 +24,23 @@ every adapter equally. Any persona on any backend gets the same memory.
 By default `claude` uses `ANTHROPIC_API_KEY` if present (pay-per-token), which
 overrides subscription OAuth. To run Claude agents on your Max plan:
 
-`HOME=/paperclip` in the container, and `/paperclip` is the persistent
-`paperclip-data` volume — so a one-time login survives restarts. No volume work.
+The server runs as the **`node`** user (entrypoint does `exec gosu node`), and
+`CLAUDE_CONFIG_DIR=/paperclip/.claude` pins claude's creds onto the persistent
+`paperclip-data` volume. Two rules that follow from this — both matter:
+- **Log in as `node`** (`-u node`), not root. A root `exec` login writes creds
+  root-owned and/or off-volume; the node-run agent then can't read them and
+  reports "login required" even though login "succeeded".
+- Recreate (not `docker restart`) after any compose change so `CLAUDE_CONFIG_DIR`
+  is actually in the container env.
 
-1. **Log in inside the container** (interactive; do this while the key is still
-   present — login writes OAuth creds regardless):
+1. **Log in inside the container as `node`** (interactive; fine to do while the
+   key is still present — login writes OAuth creds regardless):
    ```bash
    ssh deploy@<droplet>
    cd /opt/agenticos
-   docker compose exec -it paperclip-server claude /login
+   docker compose exec -u node -it paperclip-server claude /login
    # follow the device-code URL, sign in with the Max account
-   # creds land in /paperclip/.claude/.credentials.json (persisted)
+   # creds land in $CLAUDE_CONFIG_DIR = /paperclip/.claude (node-owned, on the volume)
    ```
 2. **Remove `ANTHROPIC_API_KEY` from `/opt/agenticos/.env`** (env_file injects it
    directly, bypassing docker-compose.yml). Idempotent, preserves perms:
@@ -52,9 +58,13 @@ overrides subscription OAuth. To run Claude agents on your Max plan:
    ```bash
    docker compose up -d paperclip-server
    ```
-4. **Verify:** create/run a `claude_local` agent — the probe warning
-   ("ANTHROPIC_API_KEY is set … API-key auth") should be gone, and
-   `docker compose exec paperclip-server claude` reports login via claude.ai.
+4. **Verify** (run claude as `node`, the same user the agent uses):
+   ```bash
+   docker compose exec -u node paperclip-server claude -p "reply OK"
+   ```
+   A reply (no "login required") confirms it. Then create/run a `claude_local`
+   agent — the probe warning ("ANTHROPIC_API_KEY is set … API-key auth") and the
+   "login is required" warning should both be gone.
 
 **Rollback / opt-in API billing:** don't put the key back in `.env`. Instead set
 `ANTHROPIC_API_KEY` in **Paperclip Secrets** for the specific agent that should
