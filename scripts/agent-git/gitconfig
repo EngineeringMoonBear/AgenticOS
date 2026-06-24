@@ -1,0 +1,19 @@
+# Mounted to /paperclip/.gitconfig (= $HOME/.gitconfig for the `node` user that
+# runs agents). Routes all github.com auth through the GitHub App credential
+# helper so `git` clone/fetch/push work across every installed org with no
+# long-lived token. See scripts/agent-git/github-app-token.mjs and
+# docs/agent-house-rules.md.
+[user]
+	name = AgenticOS Developer
+	email = agenticos-developer[bot]@users.noreply.github.com
+[credential "https://github.com"]
+	# `!node …` runs the script as a shell command; git appends the operation
+	# (get/store/erase). useHttpPath gives the helper `path=owner/repo` so it can
+	# pick the right installation per owner.
+	helper = "!node /paperclip/agent-git/github-app-token.mjs"
+	useHttpPath = true
+[init]
+	defaultBranch = main
+[safe]
+	# Agents clone into varied working dirs; avoid "dubious ownership" stops.
+	directory = *
