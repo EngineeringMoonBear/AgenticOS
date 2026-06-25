@@ -68,6 +68,27 @@ export interface HeartbeatRun {
   resultJson: Record<string, unknown> | null;
 }
 
+/**
+ * Single heartbeat run event row.
+ * Source: vendor/paperclip/packages/db/src/schema/heartbeat_run_events.ts
+ * The events route (vendor/paperclip/server/src/routes/agents.ts:3465) returns
+ * an array of these with `payload` redacted via redactEventPayload().
+ */
+export interface HeartbeatRunEvent {
+  id: number;
+  companyId: string;
+  runId: string;
+  agentId: string;
+  seq: number;
+  eventType: string;
+  stream: string | null;
+  level: string | null;
+  color: string | null;
+  message: string | null;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+}
+
 export interface ActivityItem {
   id: string;
   companyId: string;
@@ -320,6 +341,10 @@ export interface PaperclipClient {
   costSummary(params: DateRangeParams): Promise<Result<CostSummary>>;
   costByAgentModel(params: DateRangeParams): Promise<Result<CostByAgentModelRow[]>>;
   heartbeatRuns(params: HeartbeatRunsParams): Promise<Result<HeartbeatRun[]>>;
+  /** Fetch a single heartbeat run by id. Returns an Err with an `HTTP 404` error when not found. */
+  heartbeatRun(runId: string): Promise<Result<HeartbeatRun>>;
+  /** Fetch the ordered event stream for a single heartbeat run. */
+  heartbeatRunEvents(runId: string): Promise<Result<HeartbeatRunEvent[]>>;
   activity(params: LimitParams): Promise<Result<ActivityItem[]>>;
   agents(): Promise<Result<Agent[]>>;
   health(): Promise<Result<HealthStatus>>;
@@ -402,6 +427,18 @@ export function createPaperclipClient(cfg: PaperclipClientConfig): PaperclipClie
         agentId,
       });
       return fetchJson<HeartbeatRun[]>(url);
+    },
+
+    heartbeatRun(runId: string) {
+      return fetchJson<HeartbeatRun>(
+        `${companyBase}/heartbeat-runs/${encodeURIComponent(runId)}`,
+      );
+    },
+
+    heartbeatRunEvents(runId: string) {
+      return fetchJson<HeartbeatRunEvent[]>(
+        `${companyBase}/heartbeat-runs/${encodeURIComponent(runId)}/events`,
+      );
     },
 
     activity({ limit }: LimitParams) {

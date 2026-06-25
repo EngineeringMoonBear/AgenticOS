@@ -186,6 +186,76 @@ describe("PaperclipClient", () => {
     });
   });
 
+  // ── heartbeatRun (single) ────────────────────────────────────────────────────
+
+  describe("heartbeatRun", () => {
+    const run = { id: "run-9", status: "running", agentId: "a1", createdAt: "2024-01-01T00:00:00Z" };
+
+    it("calls the single-run path with the encoded run id and bearer auth", async () => {
+      globalThis.fetch = mockFetch(200, run);
+      const client = await getClient();
+
+      const result = await client.heartbeatRun("run with/slash");
+
+      expect(result).toEqual({ ok: true, data: run });
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(
+        `${BASE_URL}/api/companies/${COMPANY_ID}/heartbeat-runs/${encodeURIComponent("run with/slash")}`,
+      );
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${BOARD_KEY}`);
+    });
+
+    it("returns {ok:false} with an HTTP 404 error on not-found", async () => {
+      globalThis.fetch = mockFetch(404, { error: "Heartbeat run not found" });
+      const client = await getClient();
+      const result = await client.heartbeatRun("missing");
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/404/);
+    });
+  });
+
+  // ── heartbeatRunEvents ───────────────────────────────────────────────────────
+
+  describe("heartbeatRunEvents", () => {
+    const events = [
+      {
+        id: 1,
+        companyId: COMPANY_ID,
+        runId: "run-9",
+        agentId: "a1",
+        seq: 1,
+        eventType: "lifecycle",
+        stream: null,
+        level: "info",
+        color: null,
+        message: "started",
+        payload: { foo: "bar" },
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+    ];
+
+    it("calls the events path with the encoded run id", async () => {
+      globalThis.fetch = mockFetch(200, events);
+      const client = await getClient();
+
+      const result = await client.heartbeatRunEvents("run-9");
+
+      expect(result).toEqual({ ok: true, data: events });
+      const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(
+        `${BASE_URL}/api/companies/${COMPANY_ID}/heartbeat-runs/run-9/events`,
+      );
+    });
+
+    it("returns {ok:false} with an HTTP 404 error on not-found", async () => {
+      globalThis.fetch = mockFetch(404, { error: "Heartbeat run not found" });
+      const client = await getClient();
+      const result = await client.heartbeatRunEvents("missing");
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/404/);
+    });
+  });
+
   // ── activity ───────────────────────────────────────────────────────────────
 
   describe("activity", () => {
