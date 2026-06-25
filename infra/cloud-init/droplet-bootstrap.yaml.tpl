@@ -234,7 +234,7 @@ runcmd:
   # builds its image from this clone at /opt/paperclip.
   - sudo -u deploy git clone --branch agenticos-v0.1.0 --depth 1 https://github.com/EngineeringMoonBear/Paperclip-AgenticOS.git /opt/paperclip
 
-  # --- AgenticOS docker-compose (telemetry DB + Ollama + OpenViking + Hermes).
+  # --- AgenticOS docker-compose (telemetry DB + Ollama + OpenViking + Paperclip).
   #
   # The openviking-config directory in the repo holds ov.conf, which the
   # OpenViking container bind-mounts read-only at /app/.openviking/ov.conf.
@@ -251,26 +251,18 @@ runcmd:
         cp -a /opt/agenticos/repo/openviking-config/. /opt/agenticos/openviking-config/
         chown -R deploy:deploy /opt/agenticos/openviking-config
       fi
-      # Hermes config — bind-mounted read-only at /opt/data/config.yaml inside
-      # the hermes-agent container. Copying to a stable /opt/agenticos/ path
-      # decouples the bind-mount source from the repo clone location.
-      if [ -d /opt/agenticos/repo/hermes-config ]; then
-        mkdir -p /opt/agenticos/hermes-config
-        cp -a /opt/agenticos/repo/hermes-config/. /opt/agenticos/hermes-config/
-        chown -R deploy:deploy /opt/agenticos/hermes-config
-      fi
-      # Symlink packages/ so the docker-compose build contexts for hermes-agent
-      # and inbox-watcher (./packages/agenticos-hermes/) resolve relative to
-      # /opt/agenticos/ without copying the entire workspace.
+      # Symlink packages/ so the docker-compose build contexts for the Paperclip
+      # plugins (./packages/<plugin>/) resolve relative to /opt/agenticos/
+      # without copying the entire workspace.
       #
       # CRITICAL: `ln -sfn SRC DEST` does NOT replace an existing *directory* at
       # DEST — the -f flag only clobbers a file or an existing symlink, never a
       # real dir. If a stale real /opt/agenticos/packages already exists (left by
       # an earlier provision, a manual copy, or a failed prior link), `ln -sfn`
       # silently creates packages/packages INSIDE it and leaves the stale tree in
-      # place — so every hermes/inbox-watcher build then COPYs a frozen snapshot
-      # and ships stale code while `git pull` only updates repo/packages. Guard
-      # against that: remove any non-symlink at DEST first, then (re)link.
+      # place — so every build then COPYs a frozen snapshot and ships stale code
+      # while `git pull` only updates repo/packages. Guard against that: remove
+      # any non-symlink at DEST first, then (re)link.
       if [ -e /opt/agenticos/packages ] && [ ! -L /opt/agenticos/packages ]; then
         rm -rf /opt/agenticos/packages
       fi
@@ -395,10 +387,9 @@ runcmd:
         echo "created paperclip database"
       fi
 
-      # --build so the locally-tagged overlay image (agenticos/hermes-agent:local)
-      # is built from infra/docker/hermes-agent/Dockerfile on every fresh
-      # deploy. Idempotent: if the image already exists at the same content
-      # hash, Docker reuses it.
+      # --build so the locally-tagged images (agenticos/vault-server:local,
+      # paperclip-server) are built on every fresh deploy. Idempotent: if an
+      # image already exists at the same content hash, Docker reuses it.
       cd /opt/agenticos && sudo -u deploy docker compose -f /opt/agenticos/docker-compose.yml --env-file /opt/agenticos/.env up -d --build
     else
       echo "WARN: docker-compose.yml missing from repo; skipping db bring-up" >&2
@@ -411,18 +402,6 @@ runcmd:
   # agenticos-db is alive; the script also waits up to 60s for pg_isready.
   - chmod +x /opt/agenticos/repo/infra/cloud-init/scripts/run-migrations.sh
   - /opt/agenticos/repo/infra/cloud-init/scripts/run-migrations.sh
-
-  # --- Register AgenticOS cron jobs in Hermes ---
-  # Writes daily-brief + cost-report entries into the shared cron jobs.json
-  # via `hermes cron create`. Runs INSIDE the hermes-agent container (which
-  # is already healthy by the time compose-up returns). Idempotent — the
-  # script checks `cron list` for each job name before creating.
-  - |
-    if docker inspect hermes-agent >/dev/null 2>&1; then
-      docker cp /opt/agenticos/repo/infra/scripts/register-cron-jobs.sh hermes-agent:/tmp/register-cron-jobs.sh
-      docker exec hermes-agent /tmp/register-cron-jobs.sh || \
-        echo "WARN: cron-job registration failed; rerun manually with docker exec hermes-agent /tmp/register-cron-jobs.sh" >&2
-    fi
 
   # --- Ollama model pre-pull ---
   # Pre-pulls Qwen 2.5 3B (general SLM) and nomic-embed-text (embeddings for

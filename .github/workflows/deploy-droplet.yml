@@ -7,11 +7,9 @@ name: Deploy Droplet
 #
 # Deploy mechanism mirrors the proven manual reconcile: ship the committed tree
 # with `git archive | ssh tar` (extract is additive, so Droplet-only files like
-# .env and hermes-config/ are preserved), then rebuild + restart only the
-# changed service. /opt/agenticos is an rsync/tarball snapshot, NOT a git
-# checkout — so we do not `git pull` on the Droplet.
-#
-# Future: extend the path filter to hermes-* services when Hermes lands.
+# .env are preserved), then rebuild + restart only the changed service.
+# /opt/agenticos is an rsync/tarball snapshot, NOT a git checkout — so we do not
+# `git pull` on the Droplet.
 
 on:
   push:
@@ -62,8 +60,8 @@ jobs:
           USER: ${{ secrets.DROPLET_USER }}
         run: |
           # Additive tar extract: overwrites tracked files, never deletes
-          # Droplet-only files (.env, hermes-config/). Untracked WIP can't leak
-          # because git archive emits only the committed tree.
+          # Droplet-only files (.env). Untracked WIP can't leak because git
+          # archive emits only the committed tree.
           git archive --format=tar HEAD | gzip | \
             ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" \
               'tar xzf - -C /opt/agenticos && echo synced'

@@ -27,7 +27,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       has_package_json: ${{ steps.check.outputs.has_package_json }}
-      has_hermes_pkg: ${{ steps.check.outputs.has_hermes_pkg }}
     steps:
       - uses: actions/checkout@v7
       - id: check
@@ -37,12 +36,6 @@ jobs:
           else
             echo "has_package_json=false" >> "$GITHUB_OUTPUT"
             echo "::notice::No package.json yet — Node CI jobs will skip until Task 1 merges."
-          fi
-          if [ -f packages/agenticos-hermes/pyproject.toml ]; then
-            echo "has_hermes_pkg=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_hermes_pkg=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No Python package yet — pytest will skip until Spec 1 Task 9 merges."
           fi
 
   lint:
@@ -108,24 +101,3 @@ jobs:
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm -w build
-
-  pytest:
-    name: Pytest (agenticos-hermes)
-    needs: setup
-    if: needs.setup.outputs.has_hermes_pkg == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      - name: Install hermes plugin package + dev deps
-        working-directory: packages/agenticos-hermes
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e '.[dev]'
-      - name: Run pytest
-        working-directory: packages/agenticos-hermes
-        run: pytest -v
