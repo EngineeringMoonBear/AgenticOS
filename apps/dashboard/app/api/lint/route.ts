@@ -16,6 +16,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const kind: LintKind | undefined =
     kindParam && isValidKind(kindParam) ? kindParam : undefined;
 
+  // In remote mode (App Platform), the vault store is RemoteVaultClient, whose
+  // lint() is an intentional notSupported() stub — there is no vault-server
+  // /lint endpoint yet. Calling it would throw and return a 500 on every poll.
+  // Degrade gracefully to an empty result instead of spamming errors. The
+  // `unavailable` flag lets the UI distinguish "no issues" from "not computed".
+  // (Selection mirrors store-singleton.ts, which picks RemoteVaultClient when
+  // VAULT_SERVER_URL is set.)
+  if (process.env.VAULT_SERVER_URL) {
+    return NextResponse.json({ issues: [], unavailable: true });
+  }
+
   try {
     const store = await getVaultStore();
     const allIssues = await store.lint();

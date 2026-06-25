@@ -9,17 +9,20 @@ import { useQuery } from "@tanstack/react-query";
  * others still show live data. The query itself never rejects (Promise.allSettled),
  * so a single down service never blanks the whole banner.
  *
- *   - todaySpend      → /api/cost/today  (summary.today_cents, yesterday_cents, cap, mtd)
+ *   - runsToday       → /api/agent/runs  (runs started since UTC midnight; metered $ summed)
  *   - activeRuns      → /api/tasks/queue-depth (queued+running, delta vs in-flight 1h ago)
  *   - vaultFiles      → /api/vault/stats  (vault-server page index count)
  *   - memoriesIndexed → /api/viking/scopes (OpenViking /api/v1/stats/memories)
+ *
+ * Why "runs today" and not "today's spend": agents run on the Claude Max
+ * subscription (flat-rate OAuth), which emits no per-token cost — spend reads
+ * ~$0 regardless of activity. Run count is the meaningful activity signal;
+ * `spendUsd` still surfaces any metered (API-billed) cost when it is non-zero.
  */
 export interface KpiData {
-  todaySpend: {
-    cents: number;
-    deltaPct: number | null; // null when yesterday had no spend (no meaningful %)
-    capCents: number;
-    mtdCents: number;
+  runsToday: {
+    count: number;
+    spendUsd: number; // metered cost today — 0 on a flat-rate subscription
   } | null;
   activeRuns: {
     count: number;
@@ -33,13 +36,8 @@ export interface KpiData {
   } | null;
 }
 
-interface CostTodayResponse {
-  summary: {
-    today_cents: number;
-    yesterday_cents: number;
-    cap_cents: number;
-    mtd_cents: number;
-  };
+interface AgentRunsResponse {
+  runs: Array<{ startedAt: string | null; costUsd: number }>;
 }
 
 interface QueueDepthResponse {
@@ -63,13 +61,25 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-function toSpend(data: CostTodayResponse): KpiData["todaySpend"] {
-  const { today_cents, yesterday_cents, cap_cents, mtd_cents } = data.summary;
-  const deltaPct =
-    yesterday_cents > 0
-      ? Math.round(((today_cents - yesterday_cents) / yesterday_cents) * 100)
-      : null;
-  return { cents: today_cents, deltaPct, capCents: cap_cents, mtdCents: mtd_cents };
+function toRunsToday(data: AgentRunsResponse): KpiData["runsToday"] {
+  // Count runs started since UTC midnight today. The endpoint returns the most
+  // recent runs (capped at limit=200), which covers a normal day's activity.
+  const now = new Date();
+  const todayMidnightUtc = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+  let count = 0;
+  let spendUsd = 0;
+  for (const run of data.runs) {
+    if (!run.startedAt) continue;
+    const t = new Date(run.startedAt).getTime();
+    if (Number.isNaN(t) || t < todayMidnightUtc) continue;
+    count += 1;
+    spendUsd += run.costUsd ?? 0;
+  }
+  return { count, spendUsd };
 }
 
 function toRuns(data: QueueDepthResponse): KpiData["activeRuns"] {
@@ -92,14 +102,15 @@ export function useKpiData() {
     staleTime: 30_000,
     refetchInterval: 30_000,
     queryFn: async (): Promise<KpiData> => {
-      const [spend, runs, vault, memories] = await Promise.allSettled([
-        fetchJson<CostTodayResponse>("/api/cost/today"),
+      const [runsToday, runs, vault, memories] = await Promise.allSettled([
+        fetchJson<AgentRunsResponse>("/api/agent/runs?limit=200"),
         fetchJson<QueueDepthResponse>("/api/tasks/queue-depth"),
         fetchJson<VaultStatsResponse>("/api/vault/stats"),
         fetchJson<VikingScopesResponse>("/api/viking/scopes"),
       ]);
       return {
-        todaySpend: spend.status === "fulfilled" ? toSpend(spend.value) : null,
+        runsToday:
+          runsToday.status === "fulfilled" ? toRunsToday(runsToday.value) : null,
         activeRuns: runs.status === "fulfilled" ? toRuns(runs.value) : null,
         vaultFiles:
           vault.status === "fulfilled" ? { count: vault.value.pageCount } : null,
