@@ -11,7 +11,7 @@
 #     reconfig and the disk footprint is negligible.
 #
 # Native host services (NOT in this compose file, see cloud-init):
-#   - Codex CLI — invoked as subprocess by a Hermes skill (Task 13)
+#   - Codex CLI — invoked as subprocess by Paperclip agents
 #   - Claude Code — kept installed for fallback, not in default routing
 
 services:
@@ -29,7 +29,7 @@ services:
       - agenticos-db-data:/var/lib/postgresql/data
     # Bind on the agenticos VPC interface (10.116.16.2) so the dashboard on
     # DigitalOcean App Platform can reach Postgres over the private VPC.
-    # Droplet-local consumers (Hermes, inbox-watcher) reach it via the
+    # Droplet-local consumers (paperclip-server) reach it via the
     # docker-compose network hostname `agenticos-db:5432`, not this host
     # mapping. The VPC is private (10.116.16.0/20) and UFW gates :5432 to that
     # range, so this is not a public exposure. (Was 127.0.0.1 under the v1
@@ -47,9 +47,10 @@ services:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
-    # Bind to localhost only — Hermes (another compose service in Spec 1) will
-    # reach it on the docker-compose network at `http://ollama:11434`. UFW
-    # belt-and-suspenders blocks public traffic regardless.
+    # Bind to localhost only — other compose services (OpenViking,
+    # paperclip-server) reach it on the docker-compose network at
+    # `http://ollama:11434`. UFW belt-and-suspenders blocks public traffic
+    # regardless.
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
@@ -90,8 +91,8 @@ services:
     container_name: openviking
     restart: unless-stopped
     # Bind on the agenticos VPC interface (10.116.16.2) so App Platform's
-    # dashboard can reach Viking over the private VPC. Hermes reaches it via
-    # the compose-network hostname `openviking:1933`. UFW gates :1933 to
+    # dashboard can reach Viking over the private VPC. paperclip-server reaches
+    # it via the compose-network hostname `openviking:1933`. UFW gates :1933 to
     # 10.116.16.0/20. (Was 127.0.0.1 pre-App-Platform pivot.)
     ports:
       - "10.116.16.2:1933:1933"
@@ -113,221 +114,13 @@ services:
       retries: 10
       start_period: 60s
 
-  # Hermes Agent — headless orchestrator. The container's entrypoint normally
-  # exec's `hermes` (interactive chat), which is useless in a daemonized
-  # docker-compose service. We override `command:` to run the web dashboard
-  # instead — that's the HTTP surface (FastAPI app in hermes_cli/web_server.py)
-  # that exposes /api/status, /api/cron/jobs, /api/skills, /api/sessions, …
-  # so the Hermes process IS the long-lived foreground service.
-  #
-  # --host 0.0.0.0 + --insecure: dashboard refuses non-loopback binds without
-  # --insecure because it exposes API-key management endpoints. The Docker
-  # port mapping below (127.0.0.1:7777:7777) keeps the actual host listener
-  # on loopback, and UFW double-checks that. Inside the container, 0.0.0.0
-  # is needed so the docker-compose network can reach it.
-  #
-  # --no-open: there's no browser inside the container, so the auto-open
-  # heuristic would just log a warning. --skip-build: web_dist/ is already
-  # pre-built into the image (verified: /opt/hermes/hermes_cli/web_dist/
-  # contains index.html + assets/), so npm is not required at runtime.
-  #
-  # Config bootstrap: the entrypoint copies cli-config.yaml.example into
-  # $HERMES_HOME/config.yaml ONLY IF the file is missing. We bind-mount our
-  # config.yaml read-only over that path so our settings take effect from
-  # the very first container start, with no copy step needed. Mounting under
-  # /opt/agenticos/ on the host (populated by cloud-init from this repo's
-  # hermes-config/ directory) keeps the path stable across repo re-clones.
-  #
-  # OpenViking memory provider: the openviking plugin in Hermes reads
-  # OPENVIKING_ENDPOINT and OPENVIKING_API_KEY from the process env. We set
-  # the endpoint to the sibling compose-network hostname; the API key is
-  # already in /opt/agenticos/.env (loaded via env_file:) as
-  # OPENVIKING_ROOT_API_KEY, so we re-export it as OPENVIKING_API_KEY to
-  # match the plugin's expected variable name.
-  hermes-agent:
-    # Locally-built overlay image: nousresearch/hermes-agent:main + our
-    # agenticos-hermes package pip-installed into its venv so hook plugins
-    # (cost-recorder etc.) can `import agenticos_hermes`. See
-    # packages/agenticos-hermes/wrappers/hermes-agent/Dockerfile for the
-    # build steps and rationale. Image tag is LOCAL ONLY — never pushed to
-    # any public registry.
-    #
-    # Context matches inbox-watcher's (./packages/agenticos-hermes) so the
-    # /opt/agenticos/packages → /opt/agenticos/repo/packages symlink doesn't
-    # cross the build-context boundary (BuildKit forbids that).
-    build:
-      context: ./packages/agenticos-hermes
-      dockerfile: wrappers/hermes-agent/Dockerfile
-    image: agenticos/hermes-agent:local
-    container_name: hermes-agent
-    restart: unless-stopped
-    command:
-      - dashboard
-      - --host
-      - "0.0.0.0"
-      - --port
-      - "7777"
-      - --no-open
-      - --insecure
-      - --skip-build
-    ports:
-      - "127.0.0.1:7777:7777"
-    volumes:
-      - hermes-data:/opt/data
-      - /opt/vault:/opt/vault
-      - /opt/agenticos/hermes-config/config.yaml:/opt/data/config.yaml:ro
-      # Phase 1.1 cost-recorder hook plugin — bind-mounted read-only so the
-      # plugin code (packages/agenticos-hermes/plugins/cost-recorder/) is
-      # discovered by Hermes's plugin loader at /opt/hermes/plugins/. See
-      # PR #66 for the plugin contract (post_llm_call + on_session_end).
-      - ./packages/agenticos-hermes/plugins/cost-recorder:/opt/hermes/plugins/cost-recorder:ro
-      # Phase 1.4 cron-script wrappers — Hermes resolves --script paths under
-      # $HERMES_HOME/scripts/ (= /opt/data/scripts/). Mounted here AND in
-      # the gateway sidecar below so both containers see the same scripts.
-      - ./packages/agenticos-hermes/wrappers/cron-scripts:/opt/data/scripts:ro
-      # NOTE: we deliberately do NOT bind-mount /opt/agenticos/.env into the
-      # container. The entrypoint passes the file through python-dotenv as
-      # the `hermes` user (UID 10000), which can't read the host-side file
-      # (owned by deploy UID 1000, chmod 600). `env_file:` below already
-      # injects the same key/value pairs into the process env, which is what
-      # Hermes actually consumes — duplicating via bind-mount adds nothing.
-    environment:
-      HERMES_HOME: /opt/data
-      # Postgres DSN — the cost-telemetry skill (Task 11+) will read this to
-      # write `calls` rows. Hermes itself doesn't connect to PG yet; this is
-      # just the canonical env-var name so skills inherit it without further
-      # plumbing.
-      AGENTICOS_DB_URL: postgresql://agenticos:${AGENTICOS_DB_PASSWORD}@agenticos-db:5432/agenticos
-      # OpenViking memory provider plugin config — see
-      # plugins/memory/openviking/__init__.py inside the image for the contract.
-      OPENVIKING_ENDPOINT: http://openviking:1933
-      OPENVIKING_API_KEY: ${OPENVIKING_ROOT_API_KEY}
-      OPENVIKING_ACCOUNT: agenticos
-      OPENVIKING_USER: deploy
-      OPENVIKING_AGENT: hermes
-      # Cron expressions in jobs.json are interpreted in this TZ. Spec 1 §13
-      # locked America/New_York. Keep the same value on hermes-gateway below
-      # — they share the jobs.json file via the hermes-data volume.
-      TZ: America/New_York
-    env_file:
-      - /opt/agenticos/.env
-    depends_on:
-      agenticos-db:
-        condition: service_healthy
-      openviking:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
-    healthcheck:
-      # Use Python (always present in the image) for the healthcheck because
-      # the slim Debian base does NOT ship curl. urlopen is enough for a
-      # liveness probe; we don't need to parse the JSON body.
-      test:
-        - CMD
-        - python3
-        - -c
-        - "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:7777/api/status', timeout=5); sys.exit(0)"
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      # Hermes ships Playwright + a full venv, so cold-start (entrypoint
-      # bootstrap, gosu drop, dashboard FastAPI startup) takes ~20-40 s.
-      start_period: 90s
-
-  # ---------------------------------------------------------------------------
-  # hermes-gateway — Hermes's cron scheduler tick daemon. The dashboard
-  # subcommand (running in hermes-agent above) serves the REST API but does
-  # NOT tick the scheduler. The gateway subcommand does, ticking jobs.json
-  # every 60s. We run both: the dashboard for human/dashboard access, the
-  # gateway for actually firing cron jobs.
-  #
-  # They share /opt/data (the hermes-data volume) so they see the same
-  # jobs.json + cron logs. The gateway also needs the cost-recorder plugin
-  # bind-mount because cron tasks make LLM calls that the hook should record.
-  #
-  # Image is the same overlay built for hermes-agent (agenticos/hermes-agent:local)
-  # so our agenticos_hermes Python package is present for cron-task subprocesses.
-  # ---------------------------------------------------------------------------
-  hermes-gateway:
-    image: agenticos/hermes-agent:local
-    container_name: hermes-gateway
-    restart: unless-stopped
-    # `gateway run` is the foreground variant (recommended for Docker). It
-    # ticks the scheduler every 60s. --accept-hooks silences the interactive
-    # approval prompt that gateway shows for unseen shell hooks; we're
-    # running in a non-TTY container so the prompt would hang anyway.
-    command:
-      - gateway
-      - run
-      - --accept-hooks
-    volumes:
-      # Same volumes as hermes-agent so cron's jobs.json + plugin code +
-      # cost-recorder + script wrappers are all consistent across containers.
-      - hermes-data:/opt/data
-      - /opt/vault:/opt/vault
-      - /opt/agenticos/hermes-config/config.yaml:/opt/data/config.yaml:ro
-      - ./packages/agenticos-hermes/plugins/cost-recorder:/opt/hermes/plugins/cost-recorder:ro
-      - ./packages/agenticos-hermes/wrappers/cron-scripts:/opt/data/scripts:ro
-    environment:
-      HERMES_HOME: /opt/data
-      AGENTICOS_DB_URL: postgresql://agenticos:${AGENTICOS_DB_PASSWORD}@agenticos-db:5432/agenticos
-      OPENVIKING_ENDPOINT: http://openviking:1933
-      OPENVIKING_API_KEY: ${OPENVIKING_ROOT_API_KEY}
-      OPENVIKING_ACCOUNT: agenticos
-      OPENVIKING_USER: deploy
-      OPENVIKING_AGENT: hermes
-      TZ: America/New_York
-    env_file:
-      - /opt/agenticos/.env
-    depends_on:
-      hermes-agent:
-        condition: service_healthy
-    healthcheck:
-      # Gateway has no HTTP surface; use a process-presence check via pgrep
-      # inside the container. Hermes gateway runs as a Python process whose
-      # cmdline contains "gateway run" — sufficient signal that the tick
-      # loop is alive.
-      test: ["CMD-SHELL", "pgrep -f 'hermes.*gateway.*run' > /dev/null"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
-
-  # ---------------------------------------------------------------------------
-  # inbox-watcher — standalone daemon (NOT a Hermes plugin) that watches
-  # /opt/vault/inbox/ for stable .md files and shells out to the
-  # `agenticos_hermes.tasks.inbox_triage` module. See
-  # packages/agenticos-hermes/daemons/inbox-watcher/ for the implementation.
-  # ---------------------------------------------------------------------------
-  inbox-watcher:
-    build:
-      context: ./packages/agenticos-hermes
-      dockerfile: daemons/inbox-watcher/Dockerfile
-    container_name: inbox-watcher
-    restart: unless-stopped
-    volumes:
-      - /opt/vault:/opt/vault
-    environment:
-      AGENTICOS_DB_URL: postgresql://agenticos:${AGENTICOS_DB_PASSWORD}@agenticos-db:5432/agenticos
-      OLLAMA_ENDPOINT: http://ollama:11434
-      OPENVIKING_ENDPOINT: http://openviking:1933
-      OPENVIKING_ROOT_API_KEY: ${OPENVIKING_ROOT_API_KEY}
-    env_file:
-      - /opt/agenticos/.env
-    depends_on:
-      agenticos-db:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
-
   # ---------------------------------------------------------------------------
   # vault-server — exposes the human Obsidian vault (/opt/vault, Syncthing-
   # paired from the Mac) over HTTP to the App Platform dashboard. The Memory
   # tab reads THIS, not OpenViking (OpenViking is the agent's separate context
   # brain). Built from infra/vault-server/ (esbuild-bundled, single server.cjs).
   #
-  # Bound on the VPC interface 10.116.16.2:7779 (host) -> 7777 (container). Port
-  # 7779 chosen because hermes-agent already owns 7777 on loopback. The
+  # Bound on the VPC interface 10.116.16.2:7779 (host) -> 7777 (container). The
   # dashboard reaches this via VAULT_SERVER_URL=http://10.116.16.2:7779.
   # ---------------------------------------------------------------------------
   vault-server:
@@ -561,5 +354,4 @@ volumes:
   agenticos-db-data:
   ollama-models:
   openviking-data:
-  hermes-data:
   paperclip-data:

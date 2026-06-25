@@ -1,8 +1,8 @@
 name: E2E
 
 # Playwright browser tests for the dashboard app. Triggered only when files
-# under `apps/dashboard/**` (or shared packages / lockfile) change, so doc PRs
-# and Hermes-only PRs don't burn ~5 minutes on irrelevant browser tests.
+# under `apps/dashboard/**` (or shared packages / lockfile) change, so doc-only
+# and infra-only PRs don't burn ~5 minutes on irrelevant browser tests.
 # Self-skips until a `playwright.config.*` exists in the dashboard app.
 
 on:

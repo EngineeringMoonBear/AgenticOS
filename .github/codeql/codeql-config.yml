@@ -20,7 +20,8 @@ query-filters:
   # routes (skills, stats, tree, inbox, page-write).
   #
   # vault-server is internal / VPC-only: it listens on the Docker network and
-  # is reachable solely by Hermes and the plugins, behind the host firewall.
+  # is reachable solely by paperclip-server and the plugins, behind the host
+  # firewall.
   # It is never exposed to the public internet, so there is no untrusted
   # ingress to rate-limit — the rule is a false positive for this service's
   # architecture, not a missing control.
