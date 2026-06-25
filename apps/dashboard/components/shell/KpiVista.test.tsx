@@ -19,7 +19,7 @@ describe("KpiVista", () => {
 
   it("renders the four KPI labels", () => {
     renderWithQuery(<KpiVista />);
-    expect(screen.getByText(/today's spend/i)).toBeTruthy();
+    expect(screen.getByText(/runs today/i)).toBeTruthy();
     expect(screen.getByText(/active runs/i)).toBeTruthy();
     expect(screen.getByText(/vault files/i)).toBeTruthy();
     expect(screen.getByText(/memories indexed/i)).toBeTruthy();
