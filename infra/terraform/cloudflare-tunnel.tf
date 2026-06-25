@@ -100,11 +100,11 @@ resource "cloudflare_zero_trust_access_policy" "allow_josh_paperclip" {
 # Run token for the cloudflared connector. A deterministic function of the tunnel
 # secret + tunnel ID (so it's stable across applies). 1Password stays the source
 # of truth for the *secret*; this token is downstream and write-once. After the
-# first apply, capture it and store it so the Droplet's .env can be rebuilt:
+# first apply, capture it into the SHARED 'AgenticOS Infra' item (the one
+# load-secrets.sh reads — do NOT create a separate item, or it won't load):
 #
-#   terraform output -raw paperclip_tunnel_token | op item create \
-#     --category=password --title='paperclip_tunnel_token' \
-#     --vault='Goldberry Grove - Admin' password=-
+#   terraform output -raw paperclip_tunnel_token | op item edit 'AgenticOS Infra' \
+#     --vault='Goldberry Grove - Admin' 'paperclip_tunnel_token[password]=-'
 #
 # Then on the Droplet, PAPERCLIP_TUNNEL_TOKEN in /opt/agenticos/.env is what the
 # cloudflared compose service reads. See docs/runbooks/paperclip-cloudflare-access.md.

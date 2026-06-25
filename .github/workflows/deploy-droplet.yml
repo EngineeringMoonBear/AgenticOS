@@ -23,6 +23,7 @@ on:
       - 'packages/openviking-plugin/**'
       - 'packages/github-plugin/**'
       - 'scripts/agent-git/**'
+      - 'docs/agent-house-rules.md'
       - 'docker-compose.yml'
       - '.github/workflows/deploy-droplet.yml'
   workflow_dispatch:
@@ -65,7 +66,7 @@ jobs:
           # because git archive emits only the committed tree.
           git archive --format=tar HEAD | gzip | \
             ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" \
-              'tar xzf - -C /opt/agenticos && echo "synced $(git --version >/dev/null 2>&1; echo ok)"'
+              'tar xzf - -C /opt/agenticos && echo synced'
 
       - name: Rebuild vault-server + reload plugins on paperclip-server
         env:
@@ -87,7 +88,12 @@ jobs:
              docker compose build vault-server
              docker compose up -d vault-server
              docker compose up -d --force-recreate paperclip-server
-             docker compose ps vault-server paperclip-server'
+             # cloudflared too, so a shipped change to the tunnel service (or its
+             # first rollout) is actually applied — `up -d` recreates only if its
+             # config changed. The connector dials out, so this never interrupts
+             # inbound traffic.
+             docker compose up -d cloudflared
+             docker compose ps vault-server paperclip-server cloudflared'
 
       - name: Health check
         env:
