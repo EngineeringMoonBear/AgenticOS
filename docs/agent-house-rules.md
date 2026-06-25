@@ -45,17 +45,20 @@ Goldberry-Playground, …).
   are authed automatically by a credential helper that mints a short-lived token
   for that repo's owner. No setup, no token handling.
 - **Always branch + PR — never push to `main`.** Open a PR for review.
-- **For `gh` or raw GitHub API calls**, mint a token for the repo's owner first:
+- **For `gh` or raw GitHub API calls**, mint a token for the **specific repo**
+  first (pass `owner/repo`, not just `owner`, so the token is scoped to that one
+  repo — least privilege):
   ```bash
-  TOKEN=$(node /paperclip/agent-git/github-app-token.mjs token <owner>)
+  TOKEN=$(node /paperclip/agent-git/github-app-token.mjs token <owner>/<repo>)
   # then, e.g.:
   GH_TOKEN="$TOKEN" gh pr create --base main --head <branch> --title "…" --body "…"
   # or via the API directly:
   curl -sS -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
     https://api.github.com/repos/<owner>/<repo>/pulls -d '{"title":"…","head":"<branch>","base":"main","body":"…"}'
   ```
-  `<owner>` is the org/user in the repo path (e.g. `goldberry-playground`,
-  `EngineeringMoonBear`). Tokens last ~1h and are cached, so re-running is cheap.
+  `<owner>` is the org/user in the repo path (e.g. `Goldberry-Playground`,
+  `EngineeringMoonBear`). Only use the bare `token <owner>` form for org-wide
+  operations. Tokens last ~1h and are cached, so re-running is cheap.
 - **Scope:** the App grants Contents + Pull requests (+ Workflows). No admin, no
   secrets. If a push 404s/403s, the App likely isn't installed on that owner, or
   that repo wasn't selected in the installation — say so rather than retrying.
