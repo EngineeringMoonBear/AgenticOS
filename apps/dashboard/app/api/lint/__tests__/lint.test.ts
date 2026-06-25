@@ -29,6 +29,9 @@ async function writeMd(
 
 describe("GET /api/lint", () => {
   beforeEach(async () => {
+    // Local-store path: ensure remote mode is off so getVaultStore() picks the
+    // InMemoryVaultStore that reads tmpDir.
+    delete process.env.VAULT_SERVER_URL;
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "lint-test-"));
     await fs.mkdir(path.join(tmpDir, "wiki"), { recursive: true });
     await fs.mkdir(path.join(tmpDir, "inbox"), { recursive: true });
@@ -134,5 +137,25 @@ describe("GET /api/lint", () => {
       (body.issues as { kind: string }[]).map((i) => i.kind)
     );
     expect(kinds.size).toBeGreaterThan(1);
+  });
+
+  it("degrades to empty issues in remote mode (VAULT_SERVER_URL set)", async () => {
+    // In remote mode the vault store is RemoteVaultClient, whose lint() is a
+    // notSupported() stub. The route must short-circuit to an empty result
+    // instead of throwing a 500 on every poll.
+    process.env.VAULT_SERVER_URL = "http://vault-server:7777";
+    try {
+      const { GET } = await import("@/app/api/lint/route");
+      const url = new URL("http://localhost/api/lint");
+      const req = Object.assign(new Request(url.href), { nextUrl: url });
+      const res = await GET(req as Parameters<typeof GET>[0]);
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.issues).toEqual([]);
+      expect(body.unavailable).toBe(true);
+    } finally {
+      delete process.env.VAULT_SERVER_URL;
+    }
   });
 });
