@@ -107,11 +107,15 @@ async function mintLocal(owner, repo) {
     if (c.token && c.expires_at && Date.parse(c.expires_at) - Date.now() > 5 * 60 * 1000) return c.token;
   } catch { /* missing/stale — re-mint */ }
   const jwt = appJwt();
+  // owner is already OWNER_RE-validated (no '/', '.', '@', ':'), but encode it
+  // anyway so the value provably cannot alter the request URL — `owner` reaches
+  // here from an HTTP request param in `serve` mode (CodeQL: request forgery).
+  const o = encodeURIComponent(owner);
   let inst;
   try {
-    inst = await api(`/orgs/${owner}/installation`, jwt);
+    inst = await api(`/orgs/${o}/installation`, jwt);
   } catch (e) {
-    if (e.status === 404) inst = await api(`/users/${owner}/installation`, jwt);
+    if (e.status === 404) inst = await api(`/users/${o}/installation`, jwt);
     else throw e;
   }
   const opts = repo
