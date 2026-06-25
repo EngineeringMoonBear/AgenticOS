@@ -15,8 +15,8 @@ The architecture is intentionally a composition of best-in-class components rath
 AgenticOS runs a **two-brain memory model** — a human brain and an agent brain, kept deliberately separate:
 
 - **Human memory (the vault)** — an Obsidian-format vault on disk (`wiki/`, `+inbox/`, `+sources/`). Markdown files, wiki links, taxonomies. The vault is canonical human knowledge; Obsidian on the Mac is a read/write view of it via Syncthing — the Droplet never runs Obsidian itself. On the Droplet the vault lives at `/opt/vault` and is served by **vault-server** (Fastify, VPC `10.116.16.2:7779 → 7777`); the dashboard's **Memory tab** is a vault-driven three-pane browser reading it through `/api/vault/*`. This is the only memory surfaced in the Memory tab.
-- **Agent memory / observability (OpenViking)** — [OpenViking](https://github.com/volcengine/OpenViking) (open-source context database by Volcengine / ByteDance) with filesystem-paradigm URIs (`viking://resources/…`, `viking://user/memories`, `viking://agent/skills`), L0/L1/L2 tiered loading, hybrid directory + semantic retrieval, and automatic memory extraction into 6 categories on session commit. OpenViking is one of the [memory providers Hermes ships with](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory-providers) — set `memory.provider: openviking` in `config.yaml` and the agent's memory tools (`viking_remember`, `viking_recall`, `find`, `abstract`, …) are wired natively. Viking runs on the Droplet (VPC `:1933`) alongside Hermes and uses local Ollama for its own embedding + summarization pipelines. **OpenViking is the agent's working memory — it belongs to observability, not the Memory tab, and is not the vault.**
-- **Agent runtime** — [Hermes Agent](https://github.com/NousResearch/hermes-agent) (headless orchestrator) running on a two-provider configuration: **main reasoning** on `provider: openai-codex` (OAuth via ChatGPT account, flat subscription cost — what we run today) with `gpt-5-codex` for heavy work and `gpt-4o-mini` for Hermes-internal routing; **auxiliary tasks** (embeddings, vision, compression) routed via Hermes' `auxiliary.*.provider` config to a `provider: custom` endpoint pointed at local Ollama (`nomic-embed-text` + `qwen2.5:3b`). Hermes supports [40+ model providers](https://hermes-agent.nousresearch.com/docs/integrations/providers) — switching the main model to Claude (`anthropic`), Gemini (`gemini`), OpenRouter (`openrouter`), or any of the others is a config change in `model.provider`, not a code change.
+- **Agent memory / observability (OpenViking)** — [OpenViking](https://github.com/volcengine/OpenViking) (open-source context database by Volcengine / ByteDance) with filesystem-paradigm URIs (`viking://resources/…`, `viking://user/memories`, `viking://agent/skills`), L0/L1/L2 tiered loading, hybrid directory + semantic retrieval, and automatic memory extraction into 6 categories on session commit. OpenViking is exposed to Paperclip agents via the **openviking-plugin** (`@agenticos/openviking-plugin`), which wires the memory tools (`viking_remember`, `viking_recall`, `find`, `abstract`, …) natively. Viking runs on the Droplet (VPC `:1933`) and uses local Ollama for its own embedding + summarization pipelines. **OpenViking is the agent's working memory — it belongs to observability, not the Memory tab, and is not the vault.**
+- **Agent runtime** — [Paperclip](https://github.com/paperclipai/paperclip) (MIT, open-source multi-agent runtime) is the **conductor**: heartbeat scheduling, issue→agent assignment, an adapter registry for multi-model switching, org charts, budget policies, approvals, and a plugin SDK. Agents run through **pluggable adapters** — `claude_local` (Claude, on the Max subscription), `codex_local` (OpenAI Codex), `opencode_local` (OpenCode, incl. local Ollama models via `ollama:11434`), and `gemini_local`. [**Hermes Agent**](https://github.com/NousResearch/hermes-agent) remains available as **one such adapter option** (`hermes_local`) — an agent backend Paperclip can dispatch to for personas that suit it, **not** the orchestrator. (Earlier versions of AgenticOS used Hermes as the runtime itself; ADR 0006 moved orchestration to Paperclip — see `docs/adr/`.)
 - **Vault tools** — an MCP-to-vault server (in this repo, `apps/dashboard/lib/mcp-vault/`) exposing the vault to any MCP-capable agent.
 - **Dashboard** — Next.js 16 + shadcn/ui, deployed on DigitalOcean App Platform with auto-deploy on `push to main`.
 - **Auth** — Cloudflare Access (Google SSO) in front of the public dashboard URL.
@@ -40,17 +40,20 @@ AgenticOS runs a **two-brain memory model** — a human brain and an agent brain
                 └────────────┬─────────────────┘
                              │ DO VPC private network
                              ▼
-                ┌────────────────────────────────────────┐
-                │  DO Droplet                            │
-                │  - Hermes Agent (cron + orchestrator)  │
-                │    → OpenAI Codex API (reasoning)      │
-                │  - OpenViking :1933 (agent memory)     │
-                │  - Ollama (embeddings + lightweight)   │
-                │  - Postgres :5432 (tasks + cost ledger)│
-                │  - vault-server :7779 (human vault API)│
-                │  - Vault filesystem (/opt/vault)       │
-                │  - Tailscale + Syncthing daemons       │
-                └──────────────────────┬─────────────────┘
+                ┌─────────────────────────────────────────────┐
+                │  DO Droplet                                 │
+                │  - paperclip-server (runtime + heartbeat +  │
+                │    adapters: claude_local / codex_local /   │
+                │    opencode_local / gemini_local; hermes_   │
+                │    local available as an option)            │
+                │  - cloudflared (tunnel → paperclip board UI)│
+                │  - OpenViking :1933 (agent memory)          │
+                │  - Ollama (embeddings + local models)       │
+                │  - Postgres :5432 (Paperclip tables)        │
+                │  - vault-server :7779 (human vault API)     │
+                │  - Vault filesystem (/opt/vault)            │
+                │  - Tailscale + Syncthing daemons            │
+                └──────────────────────┬──────────────────────┘
                                        │ Tailscale mesh
                           ┌────────────┴────────────┐
                           ▼                         ▼
@@ -99,7 +102,7 @@ docs/
 └── phase-{4,5,6}-design-brief.md  # forward-looking briefs (to be re-scoped per v2+)
 ```
 
-`packages/hermes-client/` exists in the current main branch and will be deleted during v1 implementation — see the foundation v2 spec for the migration plan.
+`packages/hermes-client/` is a legacy TypeScript client for the now-retired Hermes API — vestigial since the move to Paperclip, pending removal once confirmed unreferenced.
 
 ## Documentation
 
@@ -108,7 +111,7 @@ Start with the **[docs index](docs/README.md)** for a status table of every spec
 - **Current authoritative specs**:
   - [`docs/superpowers/specs/2026-05-29-memory-vault-server-corrective-design.md`](docs/superpowers/specs/2026-05-29-memory-vault-server-corrective-design.md) — vault-server + vault-driven Memory tab
   - [`docs/superpowers/specs/2026-06-01-inbox-write-surface-design.md`](docs/superpowers/specs/2026-06-01-inbox-write-surface-design.md) — inbox promote/discard write model
-- **Runtime**: [`docs/plans/spec1-orchestrator.md`](docs/plans/spec1-orchestrator.md) — Hermes (Docker) + OpenViking + Codex cost
+- **Runtime**: Paperclip is the agent runtime (see [ADR 0006](docs/adr/0006-hermes-to-paperclip-runtime.md)); the earlier [`docs/plans/spec1-orchestrator.md`](docs/plans/spec1-orchestrator.md) (Hermes-based) is superseded
 - **ADR 0003**: [Scheduler ownership](docs/adr/0003-scheduler-ownership.md) — affirmed (executor changed)
 - **ADR 0004**: [Hermes → Letta pivot](docs/archive/0004-pivot-hermes-to-letta.md) — superseded; archived as decision trail
 - **ADR 0005**: [Letta → composed stack](docs/adr/0005-letta-to-composed-stack.md) — current; supersedes 0004
@@ -125,20 +128,19 @@ Once v1 is implemented, you'll need:
 - A Mac with Obsidian for vault editing
 - A custom domain for the dashboard
 
-**Cost envelope today: ~$49/mo total.** Main reasoning runs on `provider: openai-codex` (OAuth via ChatGPT Pro — flat ~$20/mo, no per-token charges). Local Ollama (`provider: custom` on the Droplet) handles all embeddings + OpenViking's background pipelines (TreeBuilder, Compressor, IntentAnalyzer) — verified during Phase 1 against `nomic-embed-text` + `qwen2.5:3b` on the 4 GB RAM Droplet — at zero marginal cost. The dashboard's Cost tab tracks any per-token spend if you swap into a metered provider later.
+**Cost envelope: subscription-first.** The primary `claude_local` agents run on a **Claude Max subscription** (OAuth — flat, no per-token billing); `codex_local` is API-billed when used; `opencode_local` runs **Ollama** locally at zero marginal cost. Local Ollama also handles all embeddings + OpenViking's background pipelines (TreeBuilder, Compressor, IntentAnalyzer) against `nomic-embed-text` + `qwen2.5:3b` on the Droplet. The dashboard's Cost tab tracks any per-token spend.
 
-**Hermes supports 40+ providers** via `model.provider` config. Cheap subset for this project's likely-future swaps:
+**Model routing is per-agent in Paperclip** — each agent selects an adapter; budget thresholds and rate-limit cascades are Paperclip policies, not a single global config. Backends in use:
 
-| Provider value | Auth | Cost model | When you'd switch |
+| Adapter | Backend | Auth | Notes |
 |---|---|---|---|
-| `openai-codex` *(current)* | ChatGPT account OAuth | ~$20/mo flat | Today's default — best $/token at our usage |
-| `anthropic` | Claude Code Max OAuth or API key | ~$100/mo Max tier OR per-token API | Want Claude's reasoning at scale |
-| `openrouter` | `OPENROUTER_API_KEY` | Per-token across 100+ models | Want fast A/B between models without re-auth |
-| `openai-api` | `OPENAI_API_KEY` | Per-token | Need a model not on Codex (e.g. fine-tuned) |
-| `gemini` / `google-gemini-cli` | API key / OAuth | Generous free tier | Experimenting with Gemini |
-| `custom` (Ollama Cloud, vLLM, llama.cpp) | Optional | Self-hosted / free | Self-hosted model parity |
+| `claude_local` *(primary)* | Claude (`claude` CLI) | Claude **Max subscription** (OAuth) | No API key in the container; creds persist on the `paperclip-data` volume |
+| `codex_local` | OpenAI Codex (`codex` CLI) | `OPENAI_API_KEY` | API-billed |
+| `opencode_local` | OpenCode → **Ollama** | local, free | `model: ollama/…`, `OLLAMA_HOST=http://ollama:11434` |
+| `gemini_local` | Google Gemini CLI | API key / OAuth | available |
+| `hermes_local` | Hermes Agent | — | **optional** adapter; not provisioned by default |
 
-Each is a `model.provider` change in `/opt/agenticos/hermes-config/config.yaml` plus a credential and restart. No code in this repo needs to move.
+Switching an agent's backend is a per-agent adapter change in Paperclip — no code in this repo needs to move. Agent auth, the internal API endpoint, and the GitHub App credential flow are documented in [`docs/agent-house-rules.md`](docs/agent-house-rules.md) and [`docs/runbooks/paperclip-agent-backends.md`](docs/runbooks/paperclip-agent-backends.md).
 
 ## Development
 

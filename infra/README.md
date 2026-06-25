@@ -1,10 +1,10 @@
 # AgenticOS Infrastructure (Terraform + cloud-init)
 
 This directory provisions the AgenticOS Foundation v2 MVP infrastructure end-to-end.
-After a successful `terraform apply`, one manual step remains:
-SSH to the Droplet and complete the Codex OAuth flow so Hermes can reach
-ChatGPT for agent reasoning. (Hermes supports 40+ LLM providers; we currently use
-`provider: openai-codex` for its flat subscription cost model.)
+After a successful `terraform apply`, one manual step remains: SSH to the Droplet and
+authenticate Paperclip's agent backends (the primary `claude_local` adapter logs in to a
+Claude Max subscription; Codex/Ollama are optional) — see
+"[The remaining manual step](#the-remaining-manual-step--agent-backend-auth)" below.
 
 ## What gets provisioned
 
@@ -24,11 +24,11 @@ ChatGPT for agent reasoning. (Hermes supports 40+ LLM providers; we currently us
   - Docker Engine + Compose
   - Tailscale (joined with auth key, no browser interaction)
   - Syncthing (user-service for `deploy`, GUI exposed only on `tailscale0`)
-  - Node 22, pnpm 9.15.4, OpenAI Codex CLI (Hermes' `openai-codex` provider can import the CLI's OAuth credentials from `~/.codex/auth.json` if present)
+  - Node 22, pnpm 9.15.4, OpenAI Codex CLI (the `codex_local` adapter can import the CLI's OAuth credentials from `~/.codex/auth.json` if present)
   - Filesystem layout: `/opt/agenticos/repo`, `/opt/vault`, `/opt/backups`, `/etc/agenticos`
   - Repo cloned to `/opt/agenticos/repo`
-  - AgenticOS docker-compose stack started if `docker-compose.yml` exists in the repo. Services: Postgres (`agenticos-db`, cost telemetry), Ollama (embeddings), OpenViking (`:1933`, agent memory), vault-server (`:7779 → 7777`, human Obsidian vault API), Hermes Agent + hermes-gateway (orchestration + cron tick), and inbox-watcher. The VPC-bound services (Postgres `:5432`, OpenViking `:1933`, vault-server `:7779`) are gated by UFW to `10.116.16.0/20` — see "UFW rules for VPC-bound services" below.
-  - Cron jobs registered via `hermes cron create` (daily-brief, cost-report)
+  - AgenticOS docker-compose stack started if `docker-compose.yml` exists in the repo. Services: Postgres (`agenticos-db`), Ollama, OpenViking (`:1933`, agent memory), vault-server (`:7779 → 7777`, human Obsidian vault API), **paperclip-server** (the Paperclip agent runtime + heartbeat scheduler + adapters), and **cloudflared** (tunnel publishing the Paperclip board UI behind Cloudflare Access). The VPC-bound services (Postgres `:5432`, OpenViking `:1933`, vault-server `:7779`) are gated by UFW to `10.116.16.0/20` — see "UFW rules for VPC-bound services" below.
+  - Scheduled work (PR-triage, vault-ingest, digests) runs as **Paperclip routines** via the heartbeat scheduler — not host cron.
 
 ## Deploys
 
@@ -39,7 +39,7 @@ Two independent surfaces, two deploy paths:
   It triggers on push to `main` when `infra/vault-server/**`, `packages/vault-core/**`,
   or the root `docker-compose.yml` change. The workflow SSHes to the Droplet with a
   dedicated deploy key (`DROPLET_SSH_KEY` secret), ships the committed tree via
-  `git archive | ssh tar` (additive — preserves Droplet-only `.env` and `hermes-config/`),
+  `git archive | ssh tar` (additive — preserves Droplet-only files like `.env`),
   rebuilds + restarts the changed service, and runs a `/health` check against the VPC
   endpoint `10.116.16.2:7779`. Manual run: `gh workflow run deploy-droplet.yml`.
 
@@ -239,67 +239,53 @@ ssh -i ~/.ssh/agenticos-droplet root@$(terraform output -raw droplet_public_ip) 
 
 When you see `AgenticOS Droplet bootstrap complete.`, you're done with the automation.
 
-## The remaining manual step — Codex OAuth
+## The remaining manual step — agent backend auth
 
-The Droplet boots with the docker-compose stack running, but Hermes needs auth credentials
-for whatever LLM provider you've configured. Terraform deliberately doesn't put credentials
-into state. We default to `provider: openai-codex` — OAuth via ChatGPT account, ~$20/mo flat
-subscription — because it has the best $/token at this project's usage shape.
+The Droplet boots with the docker-compose stack running, but Paperclip's local agent
+adapters need their CLI sessions authenticated. Terraform deliberately keeps these
+credentials out of state. Full detail: [`docs/runbooks/paperclip-agent-backends.md`](../docs/runbooks/paperclip-agent-backends.md).
 
-### Codex OAuth — current default
+### Claude (`claude_local`, primary) — Max subscription, no API key
 
 ```bash
 ssh -i ~/.ssh/agenticos-droplet deploy@$(terraform output -raw droplet_public_ip)
+cd /opt/agenticos
 
-# Confirm hermes-config/config.yaml has model.provider: openai-codex
-sudo grep -A2 'model:' /opt/agenticos/hermes-config/config.yaml
-
-# Run interactive auth — opens a device-code URL you paste into your browser
-docker exec -it hermes-agent /opt/hermes/.venv/bin/hermes model
-
-# In the menu, select "Codex" and follow the browser OAuth prompt to sign in
-# with your ChatGPT Pro/Plus account.
-# Hermes stores resulting credentials at ~/.hermes/auth.json. If the Codex CLI
-# is already auth'd (~/.codex/auth.json exists on the Droplet), Hermes imports
-# from there automatically — you may not need the interactive step at all.
-
-# Restart so the gateway picks up the new auth
-cd /opt/agenticos && docker compose restart hermes-agent hermes-gateway
-
-# Smoke test — should print a completion
-docker exec hermes-agent /opt/hermes/.venv/bin/hermes \
-  --print "Reply with exactly the word 'ready'."
+# Log in as the node user (the uid agents run as); creds persist on the
+# paperclip-data volume via CLAUDE_CONFIG_DIR, so this is one-time.
+docker compose exec -u node -it paperclip-server claude /login
+# follow the device-code URL, sign in with your Claude Max account
 ```
 
-ChatGPT Pro/Plus subscription required. No API key, no per-token billing.
+There must be **no `ANTHROPIC_API_KEY`** in `/opt/agenticos/.env` — it would override the
+subscription OAuth and silently switch Claude agents to per-token API billing. (For
+deliberate per-agent API billing, set the key in Paperclip Secrets, not the env.)
 
-### Alternative — `provider: openai-api` + API key (per-token)
+### Codex (`codex_local`) — ChatGPT OAuth or API key
 
-If you need a model the Codex provider doesn't expose (custom fine-tune, etc.), or you'd
-rather pay per-token than via subscription:
+Uses the OpenAI Codex CLI: either OAuth via a ChatGPT Pro/Plus account, or `OPENAI_API_KEY`
+in `/opt/agenticos/.env` (1Password → `AgenticOS Infra` → `openai_api_key`). Cloud-init
+imports `~/.codex/auth.json` if present.
+
+### Ollama (`opencode_local`) — local, free
 
 ```bash
-# Append the API key to the env file the compose stack reads
-echo 'OPENAI_API_KEY=sk-proj-...' | sudo tee -a /opt/agenticos/.env
-
-# Switch provider in config
-sudo sed -i 's/provider: "openai-codex"/provider: "openai-api"/' \
-  /opt/agenticos/hermes-config/config.yaml
-
-# Restart so the new env + provider take effect
-cd /opt/agenticos && docker compose restart hermes-agent hermes-gateway
+docker compose exec ollama ollama pull qwen2.5-coder:7b   # or your pick
 ```
 
-Key lives in 1Password under `AgenticOS Infra` → `openai_api_key` (project-scoped `sk-proj-...`).
-Dashboard's Cost tab will track daily / monthly per-token burn.
+Then create an `opencode_local` agent with `model: ollama/<model>` and
+`env: { OLLAMA_HOST: http://ollama:11434 }`.
 
-### Switching to another provider entirely
+### GitHub — agents push / open PRs via the "AgenticOS Developer" GitHub App
 
-Hermes supports 40+ providers — Anthropic (Claude), Gemini, OpenRouter, Grok, DeepSeek, AWS
-Bedrock, Azure AI Foundry, local Ollama Cloud, and many more. Each is a `model.provider`
-change in `/opt/agenticos/hermes-config/config.yaml` plus the appropriate credential and a
-restart. See the [Hermes providers reference](https://hermes-agent.nousresearch.com/docs/integrations/providers)
-for the full list.
+Per-org, repo-scoped installation tokens are minted by a git credential helper from the App
+private key (`GITHUB_APP_PRIVATE_KEY_B64` in `/opt/agenticos/.env`). See
+[`docs/agent-house-rules.md`](../docs/agent-house-rules.md) and `scripts/agent-git/`.
+
+> **Hermes (`hermes_local`)** is a registered but **optional** adapter — not provisioned by
+> default (no `hermes` CLI is installed). Use it only if you deliberately add the Hermes
+> runtime for a specific persona; it is an agent backend Paperclip can dispatch to, not the
+> orchestrator.
 
 ## Verify
 
@@ -317,7 +303,7 @@ open https://agenticos.gatheringatthegrove.com
 
 1. **Cloudflare Google IdP setup** — prereq §4 above. OAuth credentials require interactive consent.
 2. **Tailscale tagOwners ACL** — prereq §5 above. The Tailscale provider doesn't manage ACLs.
-3. **Codex OAuth (or API-key fallback)** — kept out of Terraform state on purpose (subscription auth tokens and API secrets are long-running risks if persisted there). Run `hermes model` interactively post-bootstrap, or seed `OPENAI_API_KEY` into `/opt/agenticos/.env` if you've chosen the per-token path. See "The remaining manual step" above.
+3. **Agent backend auth** — kept out of Terraform state on purpose (subscription auth tokens and API secrets are long-running risks if persisted there). Log in the `claude_local` adapter to Claude Max (`docker compose exec -u node -it paperclip-server claude /login`), and optionally seed `OPENAI_API_KEY` into `/opt/agenticos/.env` for `codex_local`. See "The remaining manual step" above.
 4. **Syncthing pairing on Mac** — needs interactive device-ID exchange.
 5. **UFW rules for VPC-bound services** — the docker-compose stack binds
    Postgres (5432), OpenViking (1933), and vault-server (7779) on the
