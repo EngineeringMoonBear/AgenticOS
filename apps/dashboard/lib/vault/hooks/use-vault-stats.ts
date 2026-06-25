@@ -15,6 +15,11 @@ export function useVaultStats() {
   return useQuery<VaultStats, Error>({
     queryKey: ["vault", "stats"],
     queryFn: fetchVaultStats,
-    refetchInterval: 1000,
+    // The "Synced Ns ago" counter is ticked client-side (MemorySyncIndicator's
+    // own 1s setInterval), so this server poll only needs to pick up an actual
+    // index rebuild (a new `builtAt`). 15s catches that well before the 30s
+    // staleness threshold while cutting load ~15× vs. the previous 1s poll.
+    // Manual refresh stays instant — useVaultRevalidate invalidates ["vault"].
+    refetchInterval: 15_000,
   });
 }
