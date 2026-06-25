@@ -284,11 +284,12 @@ services:
       # vars here were dead. Plugins read their config via ctx.config; values
       # are pushed from 1Password by scripts/sync-paperclip-secrets.sh.
       TZ: America/New_York
-      # GitHub App auth for agents. App ID is not secret; the private key arrives
-      # base64'd as GITHUB_APP_PRIVATE_KEY_B64 via env_file (/opt/agenticos/.env).
-      # The git credential helper (scripts/agent-git) mints short-lived, per-org
-      # installation tokens from these so git/gh work across every installed org.
-      GITHUB_APP_ID: "4134853"
+      # GitHub App auth — via the gh-token-broker sidecar. The App private key
+      # lives ONLY in the broker (loaded from a separate chmod-600 secret file),
+      # NOT in this container's env — so agent subprocesses that inherit it can't
+      # exfiltrate the key. The git credential helper (scripts/agent-git) asks the
+      # broker over the compose network for short-lived, repo-scoped tokens.
+      GH_TOKEN_BROKER_URL: http://gh-token-broker:9099
     volumes:
       - paperclip-data:/paperclip
       - /opt/vault:/opt/vault:ro
@@ -313,6 +314,8 @@ services:
       openviking:
         condition: service_healthy
       vault-server:
+        condition: service_healthy
+      gh-token-broker:
         condition: service_healthy
     healthcheck:
       test:
@@ -349,6 +352,34 @@ services:
     depends_on:
       paperclip-server:
         condition: service_healthy
+
+  # gh-token-broker — holds the GitHub App private key and mints short-lived,
+  # repo-scoped installation tokens over the internal compose network. It is the
+  # ONLY container with the key: it loads GITHUB_APP_PRIVATE_KEY_B64 from a
+  # separate chmod-600 secret file (NOT /opt/agenticos/.env), so paperclip-server
+  # and its agent subprocesses never see the key — they ask this broker for
+  # scoped tokens via the credential helper (GH_TOKEN_BROKER_URL). Runs the same
+  # scripts/agent-git/github-app-token.mjs in `serve` mode. No published ports.
+  gh-token-broker:
+    image: node:22-slim
+    container_name: gh-token-broker
+    restart: unless-stopped
+    command: ["node", "/app/github-app-token.mjs", "serve"]
+    environment:
+      GITHUB_APP_ID: "4134853"
+      PORT: "9099"
+    env_file:
+      # Broker-only secret: GITHUB_APP_PRIVATE_KEY_B64. Created on the Droplet
+      # (chmod 600) and REMOVED from /opt/agenticos/.env — see the runbook.
+      - /opt/agenticos/secrets/gh-app.env
+    volumes:
+      - ./scripts/agent-git:/app:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9099/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
 volumes:
   agenticos-db-data:

@@ -91,3 +91,45 @@ on the compose network) and is reached through `opencode_local`:
 
 ⚠️ Local Ollama models are far weaker than Claude/Codex — use for cheap,
 background, or simple agents, not your main driver.
+
+---
+
+## GitHub App token broker (key isolation)
+
+Agents authenticate to GitHub via a **GitHub App** ("AgenticOS Developer"), but
+the App **private key never sits in `paperclip-server`'s env** — if it did, an
+agent subprocess could `printenv` and exfiltrate the root credential. Instead:
+
+- **`gh-token-broker`** (compose service) is the only container with the key. It
+  loads `GITHUB_APP_PRIVATE_KEY_B64` from `/opt/agenticos/secrets/gh-app.env`
+  (chmod 600) and runs `github-app-token.mjs serve` — an internal HTTP endpoint
+  that mints **repo-scoped** installation tokens. No published ports.
+- **`paperclip-server`** has only `GH_TOKEN_BROKER_URL=http://gh-token-broker:9099`.
+  The git credential helper asks the broker for a token per repo; agents can
+  request scoped tokens (their job) but cannot get the key.
+
+### One-time migration (move the key out of the shared `.env`)
+
+On the Droplet, after this change is deployed:
+
+```bash
+cd /opt/agenticos
+umask 077
+mkdir -p secrets
+# move the key from the shared .env into the broker-only secret file
+grep '^GITHUB_APP_PRIVATE_KEY_B64=' .env > secrets/gh-app.env
+chmod 600 secrets/gh-app.env
+# remove it from the shared .env so paperclip-server no longer inherits it
+grep -v '^GITHUB_APP_PRIVATE_KEY_B64=' .env > .env.tmp && chmod 600 .env.tmp && mv .env.tmp .env
+echo "broker secret lines: $(grep -c '^GITHUB_APP_PRIVATE_KEY_B64=' secrets/gh-app.env) | .env key removed: $(grep -c '^GITHUB_APP_PRIVATE_KEY_B64=' .env)"   # want: 1 | 0
+# bring up the broker, then recreate paperclip-server (now keyless)
+docker compose up -d gh-token-broker
+docker compose up -d --force-recreate paperclip-server
+# verify: agents still mint (through the broker)
+docker compose exec -u node paperclip-server node /paperclip/agent-git/github-app-token.mjs token EngineeringMoonBear/AgenticOS   # → ghs_…
+docker compose exec -u node paperclip-server sh -c 'printenv GITHUB_APP_PRIVATE_KEY_B64 >/dev/null && echo LEAK || echo "key absent ✓"'
+```
+
+The credential helper auto-detects `GH_TOKEN_BROKER_URL`, so `git`/`gh` usage is
+unchanged. (If `GH_TOKEN_BROKER_URL` is unset, the helper falls back to minting
+locally — the pre-broker behaviour.)
