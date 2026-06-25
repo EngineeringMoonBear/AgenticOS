@@ -4,7 +4,7 @@ import { useKpiData } from "@/lib/hooks/use-kpi-data";
 
 /**
  * Persistent KPI vista banner — the "dusk navigator's console" that sits
- * above every tab. Four readings (today's spend, active runs, vault files,
+ * above every tab. Four readings (runs today, active runs, vault files,
  * memories indexed) framed by gold horizon rules, with an EKG sweep
  * pulsing in the background and a live-data indicator in the corner.
  *
@@ -14,18 +14,8 @@ import { useKpiData } from "@/lib/hooks/use-kpi-data";
  * the others keep showing live data.
  */
 
-function formatDollars(cents: number): string {
-  return (cents / 100).toFixed(2);
-}
-
 function formatCount(n: number): string {
   return n.toLocaleString("en-US");
-}
-
-function formatDeltaPct(pct: number): string {
-  // Typographic minus for negatives, to match the mockup ("−18%").
-  if (pct < 0) return `−${Math.abs(pct)}%`;
-  return `+${pct}%`;
 }
 
 function formatDeltaCount(n: number): string {
@@ -44,7 +34,7 @@ function liveTimestamp(): string {
 export function KpiVista() {
   const { data } = useKpiData();
 
-  const spend = data?.todaySpend ?? null;
+  const runsToday = data?.runsToday ?? null;
   const runs = data?.activeRuns ?? null;
   const vault = data?.vaultFiles ?? null;
   const memories = data?.memoriesIndexed ?? null;
@@ -62,19 +52,13 @@ export function KpiVista() {
 
       <div className="kpi-grid">
         <div className="kpi">
-          <div className="value">
-            <span className="unit">$</span>
-            {spend ? formatDollars(spend.cents) : "—"}
-            {spend && spend.deltaPct !== null && (
-              <span className={`delta ${spend.deltaPct < 0 ? "down" : "up"}`}>
-                {formatDeltaPct(spend.deltaPct)}
-              </span>
-            )}
-          </div>
-          <div className="label">today&apos;s spend</div>
+          <div className="value">{runsToday ? formatCount(runsToday.count) : "—"}</div>
+          <div className="label">runs today</div>
           <div className="sublabel">
-            {spend
-              ? `MTD $${formatDollars(spend.mtdCents)} / $${formatDollars(spend.capCents)}`
+            {runsToday
+              ? runsToday.spendUsd > 0
+                ? `$${runsToday.spendUsd.toFixed(2)} metered`
+                : "subscription · no metered cost"
               : " "}
           </div>
         </div>
