@@ -45,6 +45,10 @@ Goldberry-Playground, …).
   are authed automatically by a credential helper that mints a short-lived token
   for that repo's owner. No setup, no token handling.
 - **Always branch + PR — never push to `main`.** Open a PR for review.
+- **Open PRs as drafts** (`gh pr create --draft …`, or `draft: true` on the API).
+  A human reviews and marks the PR "ready for review" before it merges — you
+  propose the fix; you do not ship it. Put your reasoning (what's wrong, why this
+  fix) in the PR body so the diff can be reviewed in context.
 - **For `gh` or raw GitHub API calls**, mint a token for the **specific repo**
   first (pass `owner/repo`, not just `owner`, so the token is scoped to that one
   repo — least privilege):
