@@ -15,5 +15,15 @@
 [init]
 	defaultBranch = main
 [safe]
-	# Agents clone into varied working dirs; avoid "dubious ownership" stops.
-	directory = *
+	# Agents work in node-owned worktrees under PAPERCLIP_HOME — same uid, so
+	# git's dubious-ownership check never fires for their own clones regardless of
+	# this setting. Scope trust to that root instead of a blanket '*', so a repo
+	# owned by a DIFFERENT uid (not one of the agent's own clones) is NOT
+	# auto-trusted.
+	directory = /paperclip
+[core]
+	# Agents operate on untrusted external repos — never run repo-provided git
+	# hooks. A hostile repo could ship a post-checkout / pre-commit / fsmonitor
+	# hook that executes during a routine `git` call with the agent's write token
+	# attached. Agent workflows don't depend on repo hooks.
+	hooksPath = /dev/null
