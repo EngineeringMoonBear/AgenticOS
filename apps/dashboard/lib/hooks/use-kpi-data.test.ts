@@ -28,16 +28,20 @@ function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: qc }, children);
 }
 
+const TODAY_ISO = new Date().toISOString();
+const YESTERDAY_ISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
 const HEALTHY = {
-  "/api/cost/today": {
+  "/api/agent/runs": {
     ok: true,
     json: {
-      summary: {
-        today_cents: 241,
-        yesterday_cents: 294,
-        cap_cents: 20000,
-        mtd_cents: 4618,
-      },
+      runs: [
+        { startedAt: TODAY_ISO, costUsd: 0 },
+        { startedAt: TODAY_ISO, costUsd: 0 },
+        { startedAt: TODAY_ISO, costUsd: 0 },
+        // A run from yesterday must not count toward "today".
+        { startedAt: YESTERDAY_ISO, costUsd: 5 },
+      ],
     },
   },
   "/api/tasks/queue-depth": {
@@ -66,11 +70,9 @@ describe("useKpiData", () => {
     await waitFor(() => expect(result.current.data).toBeDefined());
 
     const d = result.current.data!;
-    expect(d.todaySpend).toEqual({
-      cents: 241,
-      deltaPct: -18, // (241-294)/294 = -18%
-      capCents: 20000,
-      mtdCents: 4618,
+    expect(d.runsToday).toEqual({
+      count: 3, // three runs started today; yesterday's run excluded
+      spendUsd: 0, // flat-rate subscription → no metered cost
     });
     expect(d.activeRuns).toEqual({
       count: 3, // 2 + 1
@@ -99,26 +101,30 @@ describe("useKpiData", () => {
     const d = result.current.data!;
     expect(d.memoriesIndexed).toBeNull(); // failed source → null
     expect(d.vaultFiles).toEqual({ count: 100 }); // others intact
-    expect(d.todaySpend).not.toBeNull();
+    expect(d.runsToday).not.toBeNull();
     expect(d.activeRuns).not.toBeNull();
   });
 
-  it("omits the spend delta when yesterday had no spend (avoids divide-by-zero)", async () => {
+  it("counts only runs started today and surfaces metered cost when non-zero", async () => {
     vi.stubGlobal(
       "fetch",
       stubFetch({
         ...HEALTHY,
-        "/api/cost/today": {
+        "/api/agent/runs": {
           ok: true,
           json: {
-            summary: { today_cents: 500, yesterday_cents: 0, cap_cents: 20000, mtd_cents: 500 },
+            runs: [
+              { startedAt: TODAY_ISO, costUsd: 1.5 },
+              { startedAt: TODAY_ISO, costUsd: 2.5 },
+              { startedAt: YESTERDAY_ISO, costUsd: 9 }, // excluded
+            ],
           },
         },
       }),
     );
     const { result } = renderHook(() => useKpiData(), { wrapper });
     await waitFor(() => expect(result.current.data).toBeDefined());
-    expect(result.current.data!.todaySpend!.deltaPct).toBeNull();
+    expect(result.current.data!.runsToday).toEqual({ count: 2, spendUsd: 4 });
   });
 
   it("reports reachable-but-empty Viking as a real zero, not a failure", async () => {
