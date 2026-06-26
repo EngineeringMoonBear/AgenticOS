@@ -228,11 +228,13 @@ runcmd:
   # --- Clone repo ---
   - sudo -u deploy git clone https://github.com/${github_repo}.git /opt/agenticos/repo
 
-  # --- Clone Paperclip fork (pinned to agenticos-v0.1.0) ---
+  # --- Clone Paperclip fork (pinned to agenticos-v0.1.1) ---
   # Canonical fork repo name is Paperclip-AgenticOS (GitHub redirects the bare
   # `paperclip` name, but pin the real one). paperclip-server's compose service
   # builds its image from this clone at /opt/paperclip.
-  - sudo -u deploy git clone --branch agenticos-v0.1.0 --depth 1 https://github.com/EngineeringMoonBear/Paperclip-AgenticOS.git /opt/paperclip
+  # v0.1.1 hardens sanitizeRuntimeServiceBaseEnv to strip server-only host
+  # secrets from spawned agent env (PR EngineeringMoonBear/Paperclip-AgenticOS#2).
+  - sudo -u deploy git clone --branch agenticos-v0.1.1 --depth 1 https://github.com/EngineeringMoonBear/Paperclip-AgenticOS.git /opt/paperclip
 
   # --- AgenticOS docker-compose (telemetry DB + Ollama + OpenViking + Paperclip).
   #
