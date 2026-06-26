@@ -252,23 +252,26 @@ services:
       # .env / 1Password). Stable across reprovisions, else sessions + agent
       # JWTs are invalidated on every restart.
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
-      # LLM API keys for agent runs. OPENAI/DEEPSEEK stay (codex_local + any
-      # deepseek agents authenticate via API key).
+      # LLM API keys are intentionally NOT passed in the shared container env.
+      # Every agent runs as a subprocess of this server and would inherit them
+      # (and env_file below dumps all of /opt/agenticos/.env in regardless), so a
+      # prompt-injected agent could exfiltrate any key here. Grant LLM keys
+      # PER-AGENT via Paperclip Secrets instead — they resolve into only that
+      # agent's adapterEnv, merged after the sanitized base env. See
+      # docs/runbooks/paperclip-agent-backends.md (Agent environment isolation).
       #
-      # ANTHROPIC is intentionally NOT passed: claude_local runs on the Claude
-      # Max SUBSCRIPTION via OAuth (`claude /login` inside the container; creds
-      # persist in $HOME/.claude = /paperclip/.claude on the paperclip-data
-      # volume). An ANTHROPIC_API_KEY present in the container env OVERRIDES that
-      # OAuth and silently switches Claude agents to pay-per-token API billing
-      # (the adapter probe warns "ANTHROPIC_API_KEY is set"). For per-agent API
-      # billing instead, set the key in Paperclip Secrets — not here.
+      #   - ANTHROPIC: claude_local runs on the Claude Max SUBSCRIPTION (OAuth via
+      #     `claude /login`; creds persist on the paperclip-data volume at
+      #     /paperclip/.claude). An ANTHROPIC_API_KEY in env would override OAuth
+      #     and silently switch Claude agents to pay-per-token billing.
+      #   - OPENAI / DEEPSEEK: codex_local / deepseek agents get their key
+      #     per-agent (was previously global here — moved out for least privilege).
       #
-      # IMPORTANT: removing it here is necessary but not sufficient — env_file:
-      # below loads /opt/agenticos/.env, which must ALSO have no
-      # ANTHROPIC_API_KEY line, or the key is injected directly and bypasses
-      # this block. See docs/runbooks/paperclip-agent-backends.md.
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # IMPORTANT: keeping them out of this block is necessary but not sufficient —
+      # env_file below loads /opt/agenticos/.env, which must ALSO have no
+      # ANTHROPIC_API_KEY / OPENAI_API_KEY / DEEPSEEK_API_KEY lines, or they are
+      # injected directly and bypass this block. See the runbook for the safe
+      # ordering (grant per-agent BEFORE removing from .env).
       # Pin claude_local's credential/config dir onto the persistent
       # paperclip-data volume (/paperclip), at one path that BOTH the
       # server-spawned agent processes AND `docker compose exec … claude /login`

@@ -8,7 +8,7 @@ The container ships four CLIs (`vendor/paperclip/Dockerfile`): `claude`,
 | Adapter | Runtime CLI | Auth / cost | Notes |
 | --- | --- | --- | --- |
 | `claude_local` | `claude` | **Claude Max subscription (OAuth)** | Primary driver. Strong reasoning — best for technical *and* executive (CEO/CFO) personas. Memory is via plugins, not the adapter. |
-| `codex_local` | `codex` | OpenAI **API key** | `OPENAI_API_KEY` in env. |
+| `codex_local` | `codex` | OpenAI **API key** | `OPENAI_API_KEY` — grant **per-agent** (Paperclip Secrets), not the shared env. See [Agent environment isolation](#agent-environment-isolation-secret-blast-radius). |
 | `opencode_local` | `opencode` | depends on `model` | Route to **Ollama** for free local inference (see below). |
 | `gemini_local` | `gemini` | Google API | Available; not in the primary plan. |
 | `hermes_local` | `hermes` (Python) | — | **Vestigial.** Registered in the fork but the `hermes` CLI is NOT installed (Hermes retired, ADR 0006). Selectable in the UI but fails at runtime: `Hermes CLI "hermes" not found`. Don't use it. |
@@ -133,3 +133,71 @@ docker compose exec -u node paperclip-server sh -c 'printenv GITHUB_APP_PRIVATE_
 The credential helper auto-detects `GH_TOKEN_BROKER_URL`, so `git`/`gh` usage is
 unchanged. (If `GH_TOKEN_BROKER_URL` is unset, the helper falls back to minting
 locally — the pre-broker behaviour.)
+
+---
+
+## Agent environment isolation (secret blast radius)
+
+Each agent runs as a **subprocess of `paperclip-server`**, so by default it
+inherits the server's whole environment — and `paperclip-server` loads the
+shared `/opt/agenticos/.env` **wholesale** via `env_file`. A prompt-injected
+agent can `printenv`, so anything in that env is exfiltratable. Two layers keep
+the blast radius small:
+
+### 1. The runtime sanitizer (`sanitizeRuntimeServiceBaseEnv`)
+
+Paperclip builds every adapter/runtime subprocess env as
+`{ ...sanitize(process.env), ...adapterEnv, ...perAgentSecrets }` — per-agent
+secrets merge **after** the sanitized base. As of fork tag **`agenticos-v0.1.1`**
+(PR [Paperclip-AgenticOS#2](https://github.com/EngineeringMoonBear/Paperclip-AgenticOS/pull/2))
+the sanitizer strips, from the base env handed to agents:
+
+- `PAPERCLIP_*` and `DATABASE_URL` (original behaviour)
+- `BETTER_AUTH_SECRET`, `AGENTICOS_DB_PASSWORD`, `SYNCTHING_API_KEY`
+- anything ending in `_SECRET` or `_PASSWORD`
+
+These are **server-only** — the server process holds them, agents never need
+them. The server's own env still has them (that's expected); only the **child**
+env is scrubbed.
+
+> It does **not** strip LLM `*_API_KEY` vars — adapters that authenticate by key
+> (codex→`OPENAI_API_KEY`, deepseek→`DEEPSEEK_API_KEY`) would break. Manage those
+> per-agent instead (below).
+
+### 2. LLM API keys — grant per-agent, never in the shared `.env`
+
+`OPENAI_API_KEY` / `DEEPSEEK_API_KEY` must **not** live in `/opt/agenticos/.env`
+(the `env_file` dump would hand them to *every* agent, including ones that never
+use that backend — same trap as `ANTHROPIC_API_KEY`). Instead grant them as
+**per-agent Paperclip Secrets**, which Paperclip resolves into that one agent's
+`adapterEnv` (merged after the sanitized base).
+
+**Safe ordering — do NOT remove the key from `.env` before granting it
+per-agent, or any live codex/deepseek agent loses auth mid-run:**
+
+```bash
+# 1. For EACH codex_local / deepseek agent, set the key in Paperclip Secrets and
+#    reference it from the agent's env config (OPENAI_API_KEY / DEEPSEEK_API_KEY).
+#    (Paperclip UI → agent → Secrets/Env, or the secrets API.) If you run NO such
+#    agents today, skip to step 2 — there's nothing to break.
+
+# 2. Remove the keys from the shared env so they stop inheriting into every agent:
+cd /opt/agenticos
+umask 077
+grep -vE '^(OPENAI_API_KEY|DEEPSEEK_API_KEY)=' .env > .env.tmp && chmod 600 .env.tmp && mv .env.tmp .env
+grep -cE '^(OPENAI_API_KEY|DEEPSEEK_API_KEY)=' .env   # expect 0
+
+# 3. Recreate so the container re-reads env_file (no image rebuild needed):
+docker compose up -d --force-recreate paperclip-server
+```
+
+`docker-compose.yml` no longer lists these in `environment:` either, so both
+paths are clear (mirrors the `ANTHROPIC_API_KEY` treatment above).
+
+### Verifying a spawned agent's env is clean
+
+Check the **child** env, not the server's. Run any agent with a prompt like
+*"run `env | cut -d= -f1 | sort` and report the output"*, then confirm
+`BETTER_AUTH_SECRET`, `AGENTICOS_DB_PASSWORD`, `SYNCTHING_API_KEY` (and, once
+moved per-agent, `OPENAI_API_KEY` on agents not granted it) are **absent**. That
+prints variable *names* only — never values, safe to paste back.
