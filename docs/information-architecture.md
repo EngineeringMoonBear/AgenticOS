@@ -92,8 +92,8 @@ delta or sublabel; the banner never blanks):
 
 | Tile | Source | Delta / sublabel |
 |---|---|---|
-| today's spend | `/api/cost/today` → `summary.today_cents` | `−X%` vs `yesterday_cents` (omitted when yesterday = 0); sublabel `MTD / cap` |
-| active runs | `/api/tasks/queue-depth` → Σ queued+running | `+N` vs in-flight 1h ago (`ended_at` window); sublabel = running kinds |
+| runs today | `/api/agent/runs?limit=200` → Σ runs started since UTC midnight | sublabel `subscription · no metered cost` (agents run on the flat-rate Claude Max plan → no per-token spend; surfaces `$X metered` only when non-zero) |
+| active runs | `/api/tasks/queue-depth` → Σ queued+running (Paperclip heartbeat runs) | `+N` vs in-flight 1h ago (`finishedAt` window); sublabel = running kinds |
 | vault files | `/api/vault/stats` → vault-server page index `pageCount` | "wiki pages indexed" |
 | memories indexed | `/api/viking/scopes` → OpenViking `/api/v1/stats/memories` | scope categories; reachable-but-empty renders a real 0 |
 
