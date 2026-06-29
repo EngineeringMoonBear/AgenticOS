@@ -6,11 +6,20 @@ assigned to the Dev Agent, which investigates and opens a **draft PR**. A regula
 GitHub issue is opened in parallel for human audit.
 
 ```
-smoke test fails (odoocker workflow)
+stack-smoke-test fails on push to main (odoocker .github/workflows/ci.yml)
   ├─ POST → Paperclip routine webhook (HMAC-signed, through Cloudflare Access)
   │     └─ routine → work item assigned to Dev Agent → draft PR back to the repo
   └─ gh issue create (label qa-broken)   # human audit trail only
 ```
+
+**The real smoke test** is the `stack-smoke-test` job in
+`Goldberry-Playground/odoocker-goldberrygrove` `.github/workflows/ci.yml`: it
+boots Postgres + Odoo via docker-compose and fails if Odoo never serves
+`/web/login` within 10 min. `ci.yml` runs on **push and PR to `main`**, but the
+agent should fire **only on push-to-main failures** — a regression that already
+merged and broke the deployable backend. Firing on every PR iteration would be
+noise (the author is already on it). There is **no** `FAILED_URLS` list or
+`release-manifest.yaml`; the payload below carries the commit + run URL instead.
 
 ## The Cloudflare Access wrinkle (why this runbook exists)
 
@@ -43,8 +52,8 @@ session (board UI) or with your own Access creds.
 
 ```
 POST /api/companies/{goldberry-grove-company-id}/routines
-  { "title": "QA smoke failure — {{run_url}}",
-    "description": "Investigate failing URLs {{failed_urls}} vs manifest {{manifest_sha}}.\n{{manifest}}\nRun: {{run_url}}",
+  { "title": "QA smoke failure on main — {{commit}}",
+    "description": "{{summary}}\nCommit: {{commit}}\nRun: {{run_url}}\nInvestigate why the Odoo backend stack fails to come online, then open a draft PR.",
     "assigneeAgentId": "<dev-agent-id>", "priority": "high", "status": "active",
     "concurrencyPolicy": "coalesce_if_active", "catchUpPolicy": "skip_missed" }
 
@@ -68,42 +77,55 @@ host + the same path:
 | `CF_ACCESS_CLIENT_ID` | `qa_smoke_access_client_id` output |
 | `CF_ACCESS_CLIENT_SECRET` | `qa_smoke_access_client_secret` output |
 
-### 4. The odoocker workflow step (in the odoocker repo, not here)
+### 4. The odoocker workflow step (in odoocker-goldberrygrove, not here)
+
+Add this as the **last step of the `stack-smoke-test` job** in
+`.github/workflows/ci.yml`, right **before** the `Tear down` step. The job also
+needs `permissions: { contents: read, issues: write }` (the workflow default is
+`contents: read` only, so `gh issue create` would 403 without the bump), and the
+`qa-broken` label must exist in the repo.
 
 ```yaml
-- name: On failure, fire Paperclip routine + open GH issue
-  if: failure()
+- name: On smoke failure (main only), fire Paperclip Dev Agent + open GH issue
+  if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
   env:
     WEBHOOK_URL: ${{ secrets.PAPERCLIP_QA_TRIAGE_WEBHOOK }}
     HMAC_SECRET: ${{ secrets.PAPERCLIP_QA_TRIAGE_SECRET }}
     CF_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
     CF_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
     GH_TOKEN: ${{ github.token }}
+    RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
   run: |
-    PAYLOAD=$(jq -nc \
-      --arg manifest_sha "$(sha256sum infra/release-manifest.yaml | cut -c1-12)" \
-      --arg failed_urls "$FAILED_URLS" \
-      --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-      --arg manifest "$(cat infra/release-manifest.yaml)" \
-      '{kind:"qa_smoke_failure", manifest_sha:$manifest_sha, failed_urls:$failed_urls, run_url:$run_url, manifest:$manifest}')
-
-    SIG=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$HMAC_SECRET" -hex | sed 's/^.*= //')
-
-    curl -fsS -X POST "$WEBHOOK_URL" \
-      -H "Content-Type: application/json" \
-      -H "X-Hub-Signature-256: sha256=$SIG" \
-      -H "CF-Access-Client-Id: $CF_ID" \
-      -H "CF-Access-Client-Secret: $CF_SECRET" \
-      --data "$PAYLOAD"
-
+    # No-op until the Paperclip webhook is configured (secrets unset) — keeps a
+    # pre-activation main regression from failing the job on a missing secret.
+    if [ -z "$WEBHOOK_URL" ] || [ -z "$HMAC_SECRET" ]; then
+      echo "Paperclip QA webhook not configured (secrets unset) — skipping agent trigger."
+    else
+      PAYLOAD=$(jq -nc \
+        --arg repo "$GITHUB_REPOSITORY" \
+        --arg commit "$GITHUB_SHA" \
+        --arg run_url "$RUN_URL" \
+        --arg summary "Backend stack smoke test failed on main — Odoo did not come online." \
+        '{kind:"qa_smoke_failure", repo:$repo, commit:$commit, run_url:$run_url, summary:$summary}')
+      # HMAC over the EXACT bytes sent (jq -c keeps it compact + stable).
+      SIG=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$HMAC_SECRET" -hex | sed 's/^.*= //')
+      curl -fsS -X POST "$WEBHOOK_URL" \
+        -H "Content-Type: application/json" \
+        -H "X-Hub-Signature-256: sha256=$SIG" \
+        -H "CF-Access-Client-Id: $CF_ID" \
+        -H "CF-Access-Client-Secret: $CF_SECRET" \
+        --data "$PAYLOAD"
+    fi
     gh issue create --label qa-broken \
-      --title "QA smoke failed: run #$GITHUB_RUN_ID" \
-      --body "Smoke failed. Failing URLs: $FAILED_URLS · Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID · Dev Agent notified via Paperclip."
+      --title "QA smoke failed on main: run #${GITHUB_RUN_ID}" \
+      --body "Backend stack smoke test failed on \`main\` (Odoo did not come online). Run: ${RUN_URL} · Dev Agent notified via Paperclip (if configured)."
 ```
 
 The two **`CF-Access-*` headers** are what make the POST traverse Cloudflare
 Access. `X-Hub-Signature-256` is HMAC over the **raw body** (must match the bytes
-sent) so Paperclip's `github_hmac` check passes.
+sent) so Paperclip's `github_hmac` check passes. The `[ -z "$WEBHOOK_URL" ]`
+guard makes the step safe to merge **before** the secrets exist — it no-ops
+until activation, so it can land independently of the Terraform/routine steps.
 
 ## Prerequisites / gotchas
 
