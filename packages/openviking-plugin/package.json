@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@paperclipai/plugin-sdk": "2026.618.0"
+    "@paperclipai/plugin-sdk": "2026.626.0"
   },
   "devDependencies": {
     "@agenticos/tsconfig": "workspace:*",
