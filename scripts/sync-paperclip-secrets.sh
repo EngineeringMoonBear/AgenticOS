@@ -76,7 +76,10 @@ echo "$existing" | jq -r '(.plugins // .)[] | select(.pluginKey|startswith("agen
   | while read -r id; do
       [ -n "$id" ] && api DELETE "/api/plugins/${id}" >/dev/null && echo "    deleted ${id}"
     done
-for name in vault-plugin openviking-plugin github-plugin; do
+# github-sync-plugin is installed here but configured separately (it needs a
+# write-scoped token + the synced project id); see docs/runbooks/github-issue-sync.md.
+# Until configured it stays INACTIVE (the worker refuses to subscribe unscoped).
+for name in vault-plugin openviking-plugin github-plugin github-sync-plugin; do
   status="$(api POST /api/plugins/install \
     "{\"packageName\":\"/paperclip/plugins/${name}\",\"isLocalPath\":true}" \
     | jq -r '.status')"
