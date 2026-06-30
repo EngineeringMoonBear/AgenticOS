@@ -2,7 +2,6 @@ import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import type { PluginContext, PluginEvent } from "@paperclipai/plugin-sdk";
 import { GitHubClient } from "./github-client.js";
 import { makeBrokerTokenProvider, staticTokenProvider } from "./broker.js";
-import { ensureMappingTable } from "./mapping.js";
 import {
   handleIssueCreated,
   handleIssueUpdated,
@@ -79,8 +78,8 @@ const plugin = definePlugin({
   async setup(ctx) {
     ctx.logger.info("GitHub Sync plugin starting");
 
-    // Idempotent DDL on start so the mapping table exists before the first event.
-    await ensureMappingTable(ctx.db);
+    // The github_sync_mapping table is created by migrations/001_init.sql, applied
+    // by the host before worker init — runtime DDL is not permitted by ctx.db.
 
     const cfg = readConfig(await ctx.config.get());
     if (cfg.bridges.length === 0) {

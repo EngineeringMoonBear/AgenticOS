@@ -10130,16 +10130,8 @@ function staticTokenProvider(token) {
 
 // src/mapping.ts
 var MAPPING_TABLE = "github_sync_mapping";
-async function ensureMappingTable(db) {
-  await db.execute(
-    `CREATE TABLE IF NOT EXISTS ${MAPPING_TABLE} (
-       paperclip_issue_id TEXT PRIMARY KEY,
-       github_repo TEXT NOT NULL,
-       github_issue_number INTEGER NOT NULL,
-       last_synced_at TEXT NOT NULL,
-       origin TEXT NOT NULL
-     )`
-  );
+function qualifiedTable(db) {
+  return `${db.namespace}.${MAPPING_TABLE}`;
 }
 function toRow(raw) {
   return {
@@ -10153,7 +10145,7 @@ function toRow(raw) {
 async function getByPaperclipId(db, paperclipIssueId) {
   const rows = await db.query(
     `SELECT paperclip_issue_id, github_repo, github_issue_number, last_synced_at, origin
-       FROM ${MAPPING_TABLE} WHERE paperclip_issue_id = $1`,
+       FROM ${qualifiedTable(db)} WHERE paperclip_issue_id = $1`,
     [paperclipIssueId]
   );
   const first = rows[0];
@@ -10161,14 +10153,14 @@ async function getByPaperclipId(db, paperclipIssueId) {
 }
 async function upsert(db, row) {
   await db.execute(
-    `INSERT INTO ${MAPPING_TABLE}
+    `INSERT INTO ${qualifiedTable(db)}
        (paperclip_issue_id, github_repo, github_issue_number, last_synced_at, origin)
      VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT(paperclip_issue_id) DO UPDATE SET
-       github_repo = excluded.github_repo,
-       github_issue_number = excluded.github_issue_number,
-       last_synced_at = excluded.last_synced_at,
-       origin = excluded.origin`,
+     ON CONFLICT (paperclip_issue_id) DO UPDATE SET
+       github_repo = $2,
+       github_issue_number = $3,
+       last_synced_at = $4,
+       origin = $5`,
     [
       row.paperclipIssueId,
       row.githubRepo,
@@ -10330,7 +10322,6 @@ function makeHandler(ctx, deps, handle, eventName) {
 var plugin = definePlugin({
   async setup(ctx) {
     ctx.logger.info("GitHub Sync plugin starting");
-    await ensureMappingTable(ctx.db);
     const cfg = readConfig(await ctx.config.get());
     if (cfg.bridges.length === 0) {
       ctx.logger.warn(
