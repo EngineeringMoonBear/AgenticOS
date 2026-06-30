@@ -80,6 +80,41 @@ describe("GitHubClient.updateIssue", () => {
   });
 });
 
+describe("GitHubClient with a getToken provider (broker mode)", () => {
+  it("resolves a per-repo token and sends it as the bearer", async () => {
+    const fetchMock = mockFetch({
+      number: 1,
+      title: "T",
+      body: "B",
+      state: "open",
+      html_url: "https://github.com/o/r/issues/1",
+      labels: [],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getToken = vi.fn(async (repo: string) => `tok-for-${repo}`);
+    const client = new GitHubClient({ org: "o", getToken });
+    await client.createIssue("r", { title: "T", body: "B" });
+
+    expect(getToken).toHaveBeenCalledWith("r");
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok-for-r");
+  });
+
+  it("returns an error Result if the token provider throws", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const client = new GitHubClient({
+      org: "o",
+      getToken: async () => {
+        throw new Error("token broker -> 404");
+      },
+    });
+    const result = await client.getIssue("r", 1);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("token broker -> 404");
+  });
+});
+
 describe("GitHubClient.getIssue", () => {
   it("GETs the issue by number", async () => {
     const fetchMock = mockFetch({

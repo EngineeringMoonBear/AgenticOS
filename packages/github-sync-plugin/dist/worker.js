@@ -9987,17 +9987,33 @@ function startWorkerRpcHost(options) {
 var API_BASE = "https://api.github.com";
 var DEFAULT_TIMEOUT_MS = 8e3;
 var GitHubClient = class {
-  token;
+  getToken;
   org;
   timeoutMs;
   baseUrl;
   constructor(config) {
-    this.token = config.token;
+    if (config.getToken) {
+      this.getToken = config.getToken;
+    } else if (config.token != null) {
+      const t = config.token;
+      this.getToken = async () => t;
+    } else {
+      throw new Error("GitHubClient requires either `token` or `getToken`");
+    }
     this.org = config.org;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.baseUrl = (config.baseUrl ?? API_BASE).replace(/\/$/, "");
   }
-  async request(method, pathAndQuery, body) {
+  async request(method, repo, pathAndQuery, body) {
+    let token;
+    try {
+      token = await this.getToken(repo);
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "token unavailable"
+      };
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -10005,7 +10021,7 @@ var GitHubClient = class {
         method,
         signal: controller.signal,
         headers: {
-          Authorization: `Bearer ${this.token}`,
+          Authorization: `Bearer ${token}`,
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": "2022-11-28",
           ...body !== void 0 ? { "Content-Type": "application/json" } : {}
@@ -10040,6 +10056,7 @@ var GitHubClient = class {
   async createIssue(repo, input) {
     const res = await this.request(
       "POST",
+      repo,
       `/repos/${this.org}/${repo}/issues`,
       {
         title: input.title,
@@ -10059,6 +10076,7 @@ var GitHubClient = class {
     if (input.labels !== void 0) patch.labels = input.labels;
     const res = await this.request(
       "PATCH",
+      repo,
       `/repos/${this.org}/${repo}/issues/${num}`,
       patch
     );
@@ -10069,12 +10087,46 @@ var GitHubClient = class {
   async getIssue(repo, num) {
     const res = await this.request(
       "GET",
+      repo,
       `/repos/${this.org}/${repo}/issues/${num}`
     );
     if (!res.ok) return res;
     return { ok: true, data: this.parseIssue(res.data) };
   }
 };
+
+// src/broker.ts
+function makeBrokerTokenProvider(brokerUrl, owner, opts = {}) {
+  const ttlMs = opts.ttlMs ?? 50 * 60 * 1e3;
+  const timeoutMs = opts.timeoutMs ?? 5e3;
+  const now = opts.now ?? (() => Date.now());
+  const doFetch = opts.fetchImpl ?? fetch;
+  const base = brokerUrl.replace(/\/$/, "");
+  const cache = /* @__PURE__ */ new Map();
+  return async (repo) => {
+    const key = `${owner}/${repo}`.toLowerCase();
+    const hit = cache.get(key);
+    if (hit && hit.expiresAt > now()) return hit.token;
+    const url = new URL(`${base}/token`);
+    url.searchParams.set("owner", owner);
+    url.searchParams.set("repo", repo);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await doFetch(url.toString(), { signal: controller.signal });
+      if (!res.ok) throw new Error(`token broker -> ${res.status}`);
+      const body = await res.json();
+      if (!body.token) throw new Error("token broker returned no token");
+      cache.set(key, { token: body.token, expiresAt: now() + ttlMs });
+      return body.token;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+function staticTokenProvider(token) {
+  return async () => token;
+}
 
 // src/mapping.ts
 var MAPPING_TABLE = "github_sync_mapping";
@@ -10242,84 +10294,92 @@ async function handleIssueUpdated(deps, input) {
 
 // src/worker.ts
 function readConfig(raw) {
+  const rawBridges = Array.isArray(raw.bridges) ? raw.bridges : [];
+  const bridges = rawBridges.map((b) => {
+    const o = b ?? {};
+    return {
+      githubOrg: String(o.githubOrg ?? "EngineeringMoonBear"),
+      githubRepo: String(o.githubRepo ?? ""),
+      paperclipProjectId: String(o.paperclipProjectId ?? ""),
+      syncLabelPaperclip: String(o.syncLabelPaperclip ?? "synced-from-paperclip"),
+      syncMarkerGithub: String(o.syncMarkerGithub ?? "synced-from-github")
+    };
+  }).filter((b) => b.githubRepo && b.paperclipProjectId);
   return {
-    githubToken: String(raw.githubToken ?? ""),
-    githubOrg: String(raw.githubOrg ?? "EngineeringMoonBear"),
-    githubRepo: String(raw.githubRepo ?? ""),
-    paperclipProjectId: String(raw.paperclipProjectId ?? ""),
-    syncLabelPaperclip: String(raw.syncLabelPaperclip ?? "synced-from-paperclip"),
-    syncMarkerGithub: String(raw.syncMarkerGithub ?? "synced-from-github")
+    bridges,
+    tokenBrokerUrl: raw.tokenBrokerUrl ? String(raw.tokenBrokerUrl) : void 0,
+    githubToken: raw.githubToken ? String(raw.githubToken) : void 0
   };
 }
-async function buildDeps(ctx) {
-  const cfg = readConfig(await ctx.config.get());
-  if (!cfg.githubToken) {
-    throw new Error("GitHub token not configured \u2014 set it in the plugin settings");
-  }
-  if (!cfg.githubRepo) {
-    throw new Error("GitHub repo not configured \u2014 set it in the plugin settings");
-  }
-  const github = new GitHubClient({
-    token: cfg.githubToken,
-    org: cfg.githubOrg,
-    timeoutMs: 8e3
-  });
-  return {
-    db: ctx.db,
-    github,
-    config: cfg,
-    logger: ctx.logger,
-    getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId)
+function makeHandler(ctx, deps, handle, eventName) {
+  return async (event) => {
+    try {
+      if (!event.entityId) {
+        ctx.logger.warn(`${eventName} event missing entityId; skipping`);
+        return;
+      }
+      await handle(deps, { issueId: event.entityId, companyId: event.companyId });
+    } catch (err) {
+      ctx.logger.error(`${eventName} handler failed`, {
+        issueId: event.entityId,
+        error: err instanceof Error ? err.message : String(err)
+      });
+    }
   };
 }
 var plugin = definePlugin({
   async setup(ctx) {
     ctx.logger.info("GitHub Sync plugin starting");
     await ensureMappingTable(ctx.db);
-    const projectId = readConfig(await ctx.config.get()).paperclipProjectId;
-    if (!projectId) {
+    const cfg = readConfig(await ctx.config.get());
+    if (cfg.bridges.length === 0) {
       ctx.logger.warn(
-        "paperclipProjectId not configured \u2014 GitHub Sync is INACTIVE (refusing to mirror company-wide). Set it in plugin settings."
+        "no bridges configured \u2014 GitHub Sync is INACTIVE. Set config.bridges = [{ githubOrg, githubRepo, paperclipProjectId }]. The plugin refuses to mirror company-wide."
       );
       return;
     }
-    const projectFilter = { projectId };
-    ctx.events.on("issue.created", projectFilter, async (event) => {
-      try {
-        if (!event.entityId) {
-          ctx.logger.warn("issue.created event missing entityId; skipping");
-          return;
-        }
-        const deps = await buildDeps(ctx);
-        await handleIssueCreated(deps, {
-          issueId: event.entityId,
-          companyId: event.companyId
-        });
-      } catch (err) {
-        ctx.logger.error("issue.created handler failed", {
-          issueId: event.entityId,
-          error: err instanceof Error ? err.message : String(err)
-        });
+    const brokerUrl = cfg.tokenBrokerUrl || process.env.GH_TOKEN_BROKER_URL || "";
+    for (const bridge of cfg.bridges) {
+      let getToken;
+      if (brokerUrl) {
+        getToken = makeBrokerTokenProvider(brokerUrl, bridge.githubOrg);
+      } else if (cfg.githubToken) {
+        getToken = staticTokenProvider(cfg.githubToken);
+      } else {
+        ctx.logger.warn(
+          `bridge ${bridge.githubOrg}/${bridge.githubRepo} has no auth (no GH_TOKEN_BROKER_URL / tokenBrokerUrl and no githubToken) \u2014 skipping`
+        );
+        continue;
       }
-    });
-    ctx.events.on("issue.updated", projectFilter, async (event) => {
-      try {
-        if (!event.entityId) {
-          ctx.logger.warn("issue.updated event missing entityId; skipping");
-          return;
-        }
-        const deps = await buildDeps(ctx);
-        await handleIssueUpdated(deps, {
-          issueId: event.entityId,
-          companyId: event.companyId
-        });
-      } catch (err) {
-        ctx.logger.error("issue.updated handler failed", {
-          issueId: event.entityId,
-          error: err instanceof Error ? err.message : String(err)
-        });
-      }
-    });
+      const github = new GitHubClient({ org: bridge.githubOrg, getToken });
+      const deps = {
+        db: ctx.db,
+        github,
+        config: {
+          githubRepo: bridge.githubRepo,
+          syncLabelPaperclip: bridge.syncLabelPaperclip,
+          syncMarkerGithub: bridge.syncMarkerGithub
+        },
+        logger: ctx.logger,
+        getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId)
+      };
+      const projectFilter = { projectId: bridge.paperclipProjectId };
+      ctx.events.on(
+        "issue.created",
+        projectFilter,
+        makeHandler(ctx, deps, handleIssueCreated, "issue.created")
+      );
+      ctx.events.on(
+        "issue.updated",
+        projectFilter,
+        makeHandler(ctx, deps, handleIssueUpdated, "issue.updated")
+      );
+      ctx.logger.info("bridge active", {
+        repo: `${bridge.githubOrg}/${bridge.githubRepo}`,
+        projectId: bridge.paperclipProjectId,
+        auth: brokerUrl ? "gh-token-broker" : "static token"
+      });
+    }
   },
   async onHealth() {
     return { status: "ok" };

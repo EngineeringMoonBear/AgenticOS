@@ -1,10 +1,15 @@
+import type { TokenProvider } from "./broker.js";
+
 type Ok<T> = { ok: true; data: T };
 type Err = { ok: false; error: string };
 export type Result<T> = Ok<T> | Err;
 
 export interface GitHubClientConfig {
-  token: string;
   org: string;
+  /** Static bearer token. Provide this OR `getToken`. */
+  token?: string;
+  /** Per-repo token provider (e.g. the gh-token-broker). Takes precedence over `token`. */
+  getToken?: TokenProvider;
   timeoutMs?: number;
   baseUrl?: string;
 }
@@ -39,13 +44,20 @@ const DEFAULT_TIMEOUT_MS = 8000;
  * `Result<T>` discriminated-union contract and 8s request timeout.
  */
 export class GitHubClient {
-  private readonly token: string;
+  private readonly getToken: TokenProvider;
   private readonly org: string;
   private readonly timeoutMs: number;
   private readonly baseUrl: string;
 
   constructor(config: GitHubClientConfig) {
-    this.token = config.token;
+    if (config.getToken) {
+      this.getToken = config.getToken;
+    } else if (config.token != null) {
+      const t = config.token;
+      this.getToken = async () => t;
+    } else {
+      throw new Error("GitHubClient requires either `token` or `getToken`");
+    }
     this.org = config.org;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.baseUrl = (config.baseUrl ?? API_BASE).replace(/\/$/, "");
@@ -53,9 +65,19 @@ export class GitHubClient {
 
   private async request<T>(
     method: "GET" | "POST" | "PATCH",
+    repo: string,
     pathAndQuery: string,
     body?: unknown,
   ): Promise<Result<T>> {
+    let token: string;
+    try {
+      token = await this.getToken(repo);
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "token unavailable",
+      };
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -63,7 +85,7 @@ export class GitHubClient {
         method,
         signal: controller.signal,
         headers: {
-          Authorization: `Bearer ${this.token}`,
+          Authorization: `Bearer ${token}`,
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": "2022-11-28",
           ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
@@ -102,6 +124,7 @@ export class GitHubClient {
   async createIssue(repo: string, input: CreateIssueInput): Promise<Result<GitHubIssue>> {
     const res = await this.request<Record<string, any>>(
       "POST",
+      repo,
       `/repos/${this.org}/${repo}/issues`,
       {
         title: input.title,
@@ -127,6 +150,7 @@ export class GitHubClient {
 
     const res = await this.request<Record<string, any>>(
       "PATCH",
+      repo,
       `/repos/${this.org}/${repo}/issues/${num}`,
       patch,
     );
@@ -138,6 +162,7 @@ export class GitHubClient {
   async getIssue(repo: string, num: number): Promise<Result<GitHubIssue>> {
     const res = await this.request<Record<string, any>>(
       "GET",
+      repo,
       `/repos/${this.org}/${repo}/issues/${num}`,
     );
     if (!res.ok) return res;
