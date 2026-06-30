@@ -2,7 +2,7 @@
 var manifest = {
   id: "agenticos.openviking-plugin",
   apiVersion: 1,
-  version: "0.1.0",
+  version: "0.2.0",
   displayName: "OpenViking Memory",
   description: "Agent semantic memory \u2014 remember, recall, find, and abstract",
   author: "AgenticOS",
@@ -14,9 +14,10 @@ var manifest = {
   // format:"secret-ref" + secrets.read-ref once company-scoped config lands.
   // database.namespace.read/write: vault-ingest job persists SHA reconciliation
   // state in a plugin DB namespace to avoid re-ingesting unchanged files.
-  // database.namespace.migrate: the job runs `CREATE TABLE IF NOT EXISTS
-  // vault_ingest_state` (idempotent DDL) on each run instead of a formal
-  // migration, which the host gates behind this capability.
+  // database.namespace.migrate: the vault_ingest_state table is created by
+  // migrations/001_init.sql, applied by the host before worker init — the host
+  // gates migration application behind this capability. (Runtime DDL via
+  // ctx.db.execute is forbidden, so the table CANNOT be created at job time.)
   capabilities: [
     "jobs.schedule",
     "http.outbound",
@@ -24,6 +25,17 @@ var manifest = {
     "database.namespace.write",
     "database.namespace.migrate"
   ],
+  // Declaring `database` is REQUIRED for the host to provision + activate this
+  // plugin's Postgres namespace. Without it, ensureNamespace/applyMigrations
+  // short-circuit (return null) and the worker fails at runtime with "Plugin
+  // database namespace is not active" — which is why vault-ingest persistence
+  // (Migration Step 8) silently never worked. migrationsDir → migrations/001_init.sql
+  // creates vault_ingest_state in the host-derived namespace
+  // plugin_openviking_df76e0e812 (= plugin_<slug>_<sha256(id)[:10]>).
+  database: {
+    namespaceSlug: "openviking",
+    migrationsDir: "migrations"
+  },
   jobs: [
     {
       jobKey: "vault-ingest",
