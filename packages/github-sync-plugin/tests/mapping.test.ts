@@ -1,24 +1,28 @@
 import { describe, it, expect } from "vitest";
 import {
-  ensureMappingTable,
   getByPaperclipId,
   upsert,
   type MappingDb,
   type MappingRow,
 } from "../src/mapping.js";
 
+const NAMESPACE = "plugin_github_sync_40eceaaa3a";
+
 /**
  * In-memory fake of the `ctx.db` surface, keyed by Paperclip issue id. Parses
- * just enough SQL to exercise the mapping helpers (mirrors openviking's fakes).
+ * just enough SQL to exercise the mapping helpers, and records the raw SQL so we
+ * can assert it is schema-qualified with the plugin namespace.
  */
-function makeFakeDb(): MappingDb & { rows: Map<string, MappingRow>; ddl: string[] } {
+function makeFakeDb(): MappingDb & { rows: Map<string, MappingRow>; sql: string[] } {
   const rows = new Map<string, MappingRow>();
-  const ddl: string[] = [];
+  const sql: string[] = [];
   return {
+    namespace: NAMESPACE,
     rows,
-    ddl,
-    async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
-      if (/SELECT/i.test(sql) && /WHERE paperclip_issue_id = \$1/i.test(sql)) {
+    sql,
+    async query<T = Record<string, unknown>>(q: string, params?: unknown[]): Promise<T[]> {
+      sql.push(q);
+      if (/SELECT/i.test(q) && /WHERE paperclip_issue_id = \$1/i.test(q)) {
         const row = rows.get(String(params?.[0]));
         if (!row) return [];
         return [
@@ -33,12 +37,9 @@ function makeFakeDb(): MappingDb & { rows: Map<string, MappingRow>; ddl: string[
       }
       return [];
     },
-    async execute(sql: string, params?: unknown[]): Promise<{ rowCount: number }> {
-      if (/CREATE TABLE/i.test(sql)) {
-        ddl.push(sql);
-        return { rowCount: 0 };
-      }
-      if (/INSERT INTO/i.test(sql)) {
+    async execute(q: string, params?: unknown[]): Promise<{ rowCount: number }> {
+      sql.push(q);
+      if (/INSERT INTO/i.test(q)) {
         const [id, repo, num, syncedAt, origin] = params ?? [];
         rows.set(String(id), {
           paperclipIssueId: String(id),
@@ -55,11 +56,32 @@ function makeFakeDb(): MappingDb & { rows: Map<string, MappingRow>; ddl: string[
 }
 
 describe("mapping", () => {
-  it("ensureMappingTable issues idempotent CREATE TABLE IF NOT EXISTS", async () => {
+  it("qualifies the table with the plugin namespace (host contract)", async () => {
     const db = makeFakeDb();
-    await ensureMappingTable(db);
-    expect(db.ddl).toHaveLength(1);
-    expect(db.ddl[0]).toMatch(/CREATE TABLE IF NOT EXISTS github_sync_mapping/);
+    await getByPaperclipId(db, "x");
+    await upsert(db, {
+      paperclipIssueId: "pi-1",
+      githubRepo: "repo",
+      githubIssueNumber: 10,
+      lastSyncedAt: "2026-01-01T00:00:00Z",
+      origin: "paperclip",
+    });
+    // Every statement references `<namespace>.github_sync_mapping`, never the bare table.
+    for (const q of db.sql) {
+      expect(q).toContain(`${NAMESPACE}.github_sync_mapping`);
+    }
+  });
+
+  it("upsert never references the `excluded` pseudo-table (validator-safe)", async () => {
+    const db = makeFakeDb();
+    await upsert(db, {
+      paperclipIssueId: "pi-1",
+      githubRepo: "repo",
+      githubIssueNumber: 10,
+      lastSyncedAt: "2026-01-01T00:00:00Z",
+      origin: "paperclip",
+    });
+    expect(db.sql.join("\n")).not.toMatch(/excluded\./i);
   });
 
   it("getByPaperclipId returns null when no row exists", async () => {

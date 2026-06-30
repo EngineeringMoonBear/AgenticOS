@@ -3,7 +3,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const manifest: PaperclipPluginManifestV1 = {
   id: "agenticos.github-sync-plugin",
   apiVersion: 1,
-  version: "0.2.0",
+  version: "0.3.0",
   displayName: "GitHub Sync",
   description:
     "Mirror Paperclip issue changes to GitHub issues (Paperclip → GitHub). Supports multiple repo↔project bridges across orgs; authenticates via the gh-token-broker (GitHub App), no static PAT.",
@@ -30,6 +30,15 @@ const manifest: PaperclipPluginManifestV1 = {
     "database.namespace.write",
     "database.namespace.migrate",
   ],
+  // Declaring `database` is REQUIRED for the host to provision + activate the
+  // plugin's Postgres namespace (without it, ensureNamespace returns null and the
+  // worker fails with "namespace is not active"). migrationsDir → migrations/001_init.sql
+  // creates the github_sync_mapping table (runtime DDL via ctx.db.execute is
+  // forbidden by the host contract, so the table MUST come from a migration).
+  database: {
+    namespaceSlug: "github_sync",
+    migrationsDir: "migrations",
+  },
   instanceConfigSchema: {
     type: "object",
     properties: {
@@ -81,6 +90,14 @@ const manifest: PaperclipPluginManifestV1 = {
       },
       githubToken: {
         type: "string",
+        // format: "secret-ref" marks this as the (only) secret-bearing field.
+        // Beyond its semantic meaning, it's load-bearing: the host's config
+        // secret-ref extractor falls back to flagging ANY UUID-looking string as a
+        // secret reference when NO field declares format:"secret-ref". Our
+        // bridges[].paperclipProjectId values ARE UUIDs, so without this the whole
+        // config is rejected ("secret references are disabled"). Declaring one
+        // secret-ref field scopes the extractor to this path only.
+        format: "secret-ref",
         title: "GitHub Token (fallback)",
         description:
           "Optional static PAT used only when no token broker is configured. Normally unset — auth uses the GitHub App via the broker, which works across orgs and needs no stored secret.",

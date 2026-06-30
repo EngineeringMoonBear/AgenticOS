@@ -2,10 +2,14 @@
  * `github_sync_mapping` — the plugin-DB-namespace link between a Paperclip issue
  * and its mirrored GitHub issue, plus the sync origin used for loop prevention.
  *
- * Structural subset of `PluginDatabaseClient` (ctx.db) so callers/tests can pass
- * an in-memory fake, mirroring openviking-plugin's `IngestDb`.
+ * The table is created by `migrations/001_init.sql` (the Paperclip plugin-DB
+ * contract forbids runtime DDL — `ctx.db.execute` rejects CREATE/ALTER/DROP).
+ * Every runtime statement must be SCHEMA-QUALIFIED with the host-derived
+ * namespace, which the SDK exposes as `ctx.db.namespace`.
  */
 export interface MappingDb {
+  /** Host-derived Postgres schema for this plugin (ctx.db.namespace). */
+  namespace: string;
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
   execute(sql: string, params?: unknown[]): Promise<{ rowCount: number }>;
 }
@@ -23,21 +27,9 @@ export interface MappingRow {
 
 export const MAPPING_TABLE = "github_sync_mapping";
 
-/**
- * Idempotent DDL — avoids a formal migration. Requires the
- * database.namespace.migrate capability (see manifest). Safe to call on every
- * worker start.
- */
-export async function ensureMappingTable(db: MappingDb): Promise<void> {
-  await db.execute(
-    `CREATE TABLE IF NOT EXISTS ${MAPPING_TABLE} (
-       paperclip_issue_id TEXT PRIMARY KEY,
-       github_repo TEXT NOT NULL,
-       github_issue_number INTEGER NOT NULL,
-       last_synced_at TEXT NOT NULL,
-       origin TEXT NOT NULL
-     )`,
-  );
+/** Fully-qualified `<namespace>.github_sync_mapping` for runtime SQL. */
+function qualifiedTable(db: MappingDb): string {
+  return `${db.namespace}.${MAPPING_TABLE}`;
 }
 
 function toRow(raw: Record<string, unknown>): MappingRow {
@@ -57,24 +49,30 @@ export async function getByPaperclipId(
 ): Promise<MappingRow | null> {
   const rows = await db.query<Record<string, unknown>>(
     `SELECT paperclip_issue_id, github_repo, github_issue_number, last_synced_at, origin
-       FROM ${MAPPING_TABLE} WHERE paperclip_issue_id = $1`,
+       FROM ${qualifiedTable(db)} WHERE paperclip_issue_id = $1`,
     [paperclipIssueId],
   );
   const first = rows[0];
   return first ? toRow(first) : null;
 }
 
-/** Create or replace the mapping row for a Paperclip issue (upsert by PK). */
+/**
+ * Create or replace the mapping row for a Paperclip issue (upsert by PK).
+ *
+ * The `DO UPDATE SET` uses the bound parameters directly rather than `excluded.*`
+ * — the host's runtime-SQL validator only permits qualified refs inside the
+ * plugin namespace, and an `excluded.col` ref could trip that check.
+ */
 export async function upsert(db: MappingDb, row: MappingRow): Promise<void> {
   await db.execute(
-    `INSERT INTO ${MAPPING_TABLE}
+    `INSERT INTO ${qualifiedTable(db)}
        (paperclip_issue_id, github_repo, github_issue_number, last_synced_at, origin)
      VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT(paperclip_issue_id) DO UPDATE SET
-       github_repo = excluded.github_repo,
-       github_issue_number = excluded.github_issue_number,
-       last_synced_at = excluded.last_synced_at,
-       origin = excluded.origin`,
+     ON CONFLICT (paperclip_issue_id) DO UPDATE SET
+       github_repo = $2,
+       github_issue_number = $3,
+       last_synced_at = $4,
+       origin = $5`,
     [
       row.paperclipIssueId,
       row.githubRepo,

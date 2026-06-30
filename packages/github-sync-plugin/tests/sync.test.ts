@@ -25,6 +25,7 @@ const silentLogger: SyncLogger = { info() {}, warn() {}, error() {} };
 function makeFakeDb(): MappingDb & { rows: Map<string, MappingRow> } {
   const rows = new Map<string, MappingRow>();
   return {
+    namespace: "plugin_github_sync_40eceaaa3a",
     rows,
     async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
       if (/WHERE paperclip_issue_id = \$1/i.test(sql)) {
