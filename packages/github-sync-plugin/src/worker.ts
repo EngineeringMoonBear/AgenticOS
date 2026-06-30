@@ -1,55 +1,77 @@
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import type { PluginContext, PluginEvent } from "@paperclipai/plugin-sdk";
 import { GitHubClient } from "./github-client.js";
+import { makeBrokerTokenProvider, staticTokenProvider } from "./broker.js";
 import { ensureMappingTable } from "./mapping.js";
 import {
   handleIssueCreated,
   handleIssueUpdated,
-  type SyncConfig,
   type SyncDeps,
 } from "./sync.js";
 
-interface GithubSyncConfig extends SyncConfig {
-  githubToken: string;
+/** One repo ↔ project bridge. The same plugin can carry several (pluginKey is unique). */
+interface BridgeConfig {
   githubOrg: string;
-  /** Only issues in this project are mirrored; subscriptions are filtered to it. */
+  githubRepo: string;
   paperclipProjectId: string;
+  syncLabelPaperclip: string;
+  syncMarkerGithub: string;
+}
+
+interface GithubSyncConfig {
+  bridges: BridgeConfig[];
+  /** Override for GH_TOKEN_BROKER_URL (set if the env isn't passed to plugin workers). */
+  tokenBrokerUrl?: string;
+  /** Optional static-PAT fallback, used only when no broker is configured. */
+  githubToken?: string;
 }
 
 function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
+  const rawBridges = Array.isArray(raw.bridges) ? raw.bridges : [];
+  const bridges: BridgeConfig[] = rawBridges
+    .map((b) => {
+      const o = (b ?? {}) as Record<string, unknown>;
+      return {
+        githubOrg: String(o.githubOrg ?? "EngineeringMoonBear"),
+        githubRepo: String(o.githubRepo ?? ""),
+        paperclipProjectId: String(o.paperclipProjectId ?? ""),
+        syncLabelPaperclip: String(o.syncLabelPaperclip ?? "synced-from-paperclip"),
+        syncMarkerGithub: String(o.syncMarkerGithub ?? "synced-from-github"),
+      };
+    })
+    // A bridge without a repo or project can't sync anything — drop it.
+    .filter((b) => b.githubRepo && b.paperclipProjectId);
+
   return {
-    githubToken: String(raw.githubToken ?? ""),
-    githubOrg: String(raw.githubOrg ?? "EngineeringMoonBear"),
-    githubRepo: String(raw.githubRepo ?? ""),
-    paperclipProjectId: String(raw.paperclipProjectId ?? ""),
-    syncLabelPaperclip: String(raw.syncLabelPaperclip ?? "synced-from-paperclip"),
-    syncMarkerGithub: String(raw.syncMarkerGithub ?? "synced-from-github"),
+    bridges,
+    tokenBrokerUrl: raw.tokenBrokerUrl ? String(raw.tokenBrokerUrl) : undefined,
+    githubToken: raw.githubToken ? String(raw.githubToken) : undefined,
   };
 }
 
 /**
- * Assemble the sync dependencies from the current plugin config, read at call
- * time so config edits take effect without a worker restart.
+ * Wrap a sync handler with per-event error isolation and the entityId guard —
+ * a handler must never throw back onto the event bus.
  */
-async function buildDeps(ctx: PluginContext): Promise<SyncDeps> {
-  const cfg = readConfig(await ctx.config.get());
-  if (!cfg.githubToken) {
-    throw new Error("GitHub token not configured — set it in the plugin settings");
-  }
-  if (!cfg.githubRepo) {
-    throw new Error("GitHub repo not configured — set it in the plugin settings");
-  }
-  const github = new GitHubClient({
-    token: cfg.githubToken,
-    org: cfg.githubOrg,
-    timeoutMs: 8000,
-  });
-  return {
-    db: ctx.db,
-    github,
-    config: cfg,
-    logger: ctx.logger,
-    getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId),
+function makeHandler(
+  ctx: PluginContext,
+  deps: SyncDeps,
+  handle: (deps: SyncDeps, input: { issueId: string; companyId: string }) => Promise<void>,
+  eventName: string,
+) {
+  return async (event: PluginEvent) => {
+    try {
+      if (!event.entityId) {
+        ctx.logger.warn(`${eventName} event missing entityId; skipping`);
+        return;
+      }
+      await handle(deps, { issueId: event.entityId, companyId: event.companyId });
+    } catch (err) {
+      ctx.logger.error(`${eventName} handler failed`, {
+        issueId: event.entityId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   };
 }
 
@@ -60,58 +82,65 @@ const plugin = definePlugin({
     // Idempotent DDL on start so the mapping table exists before the first event.
     await ensureMappingTable(ctx.db);
 
-    // Scope to ONE project. Subscribing company-wide would mirror unrelated work
-    // (QA-triage issues, every agent task) into GitHub — and could double up with
-    // issues GitHub Actions already opened — so refuse to run unscoped.
-    const projectId = readConfig(await ctx.config.get()).paperclipProjectId;
-    if (!projectId) {
+    const cfg = readConfig(await ctx.config.get());
+    if (cfg.bridges.length === 0) {
       ctx.logger.warn(
-        "paperclipProjectId not configured — GitHub Sync is INACTIVE (refusing to mirror company-wide). Set it in plugin settings.",
+        "no bridges configured — GitHub Sync is INACTIVE. Set config.bridges = [{ githubOrg, githubRepo, paperclipProjectId }]. The plugin refuses to mirror company-wide.",
       );
       return;
     }
-    const projectFilter = { projectId };
 
-    // --- Paperclip → GitHub mirroring (event-driven, scoped to the project) ---
+    // Auth: prefer the gh-token-broker (repo-scoped GitHub App installation tokens,
+    // cross-org). Fall back to a static PAT only if no broker URL is available.
+    const brokerUrl = cfg.tokenBrokerUrl || process.env.GH_TOKEN_BROKER_URL || "";
 
-    ctx.events.on("issue.created", projectFilter, async (event: PluginEvent) => {
-      // Per-event error isolation — a handler must never throw back to the bus.
-      try {
-        if (!event.entityId) {
-          ctx.logger.warn("issue.created event missing entityId; skipping");
-          return;
-        }
-        const deps = await buildDeps(ctx);
-        await handleIssueCreated(deps, {
-          issueId: event.entityId,
-          companyId: event.companyId,
-        });
-      } catch (err) {
-        ctx.logger.error("issue.created handler failed", {
-          issueId: event.entityId,
-          error: err instanceof Error ? err.message : String(err),
-        });
+    for (const bridge of cfg.bridges) {
+      let getToken;
+      if (brokerUrl) {
+        getToken = makeBrokerTokenProvider(brokerUrl, bridge.githubOrg);
+      } else if (cfg.githubToken) {
+        getToken = staticTokenProvider(cfg.githubToken);
+      } else {
+        ctx.logger.warn(
+          `bridge ${bridge.githubOrg}/${bridge.githubRepo} has no auth (no GH_TOKEN_BROKER_URL / tokenBrokerUrl and no githubToken) — skipping`,
+        );
+        continue;
       }
-    });
 
-    ctx.events.on("issue.updated", projectFilter, async (event: PluginEvent) => {
-      try {
-        if (!event.entityId) {
-          ctx.logger.warn("issue.updated event missing entityId; skipping");
-          return;
-        }
-        const deps = await buildDeps(ctx);
-        await handleIssueUpdated(deps, {
-          issueId: event.entityId,
-          companyId: event.companyId,
-        });
-      } catch (err) {
-        ctx.logger.error("issue.updated handler failed", {
-          issueId: event.entityId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    });
+      const github = new GitHubClient({ org: bridge.githubOrg, getToken });
+      const deps: SyncDeps = {
+        db: ctx.db,
+        github,
+        config: {
+          githubRepo: bridge.githubRepo,
+          syncLabelPaperclip: bridge.syncLabelPaperclip,
+          syncMarkerGithub: bridge.syncMarkerGithub,
+        },
+        logger: ctx.logger,
+        getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId),
+      };
+
+      // Scope each subscription to this bridge's project. Subscribing company-wide
+      // would mirror unrelated work (QA-triage issues, other agents' tasks) and could
+      // double up with issues GitHub Actions already opened.
+      const projectFilter = { projectId: bridge.paperclipProjectId };
+      ctx.events.on(
+        "issue.created",
+        projectFilter,
+        makeHandler(ctx, deps, handleIssueCreated, "issue.created"),
+      );
+      ctx.events.on(
+        "issue.updated",
+        projectFilter,
+        makeHandler(ctx, deps, handleIssueUpdated, "issue.updated"),
+      );
+
+      ctx.logger.info("bridge active", {
+        repo: `${bridge.githubOrg}/${bridge.githubRepo}`,
+        projectId: bridge.paperclipProjectId,
+        auth: brokerUrl ? "gh-token-broker" : "static token",
+      });
+    }
   },
 
   async onHealth() {

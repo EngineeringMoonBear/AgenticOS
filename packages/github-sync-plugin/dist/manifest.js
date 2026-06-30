@@ -2,9 +2,9 @@
 var manifest = {
   id: "agenticos.github-sync-plugin",
   apiVersion: 1,
-  version: "0.1.0",
+  version: "0.2.0",
   displayName: "GitHub Sync",
-  description: "Mirror Paperclip issue changes to GitHub issues (Paperclip \u2192 GitHub, one direction)",
+  description: "Mirror Paperclip issue changes to GitHub issues (Paperclip \u2192 GitHub). Supports multiple repo\u2194project bridges across orgs; authenticates via the gh-token-broker (GitHub App), no static PAT.",
   author: "AgenticOS",
   categories: ["connector"],
   // events.subscribe: the worker subscribes to core "issue.created" / "issue.updated".
@@ -31,41 +31,57 @@ var manifest = {
   instanceConfigSchema: {
     type: "object",
     properties: {
+      bridges: {
+        type: "array",
+        title: "Repo \u2194 Project bridges",
+        description: "Each entry mirrors one GitHub repo to one Paperclip project. ONLY issues in a bridge's project are mirrored to its repo \u2014 the worker refuses to subscribe company-wide, so unrelated work (e.g. QA-triage issues in other projects) is never mirrored. Add one entry per repo you want synced; they may span multiple orgs (the gh-token-broker mints a token per repo).",
+        items: {
+          type: "object",
+          properties: {
+            githubOrg: {
+              type: "string",
+              title: "GitHub Org/Owner",
+              description: "Owner of the target repository.",
+              default: "EngineeringMoonBear"
+            },
+            githubRepo: {
+              type: "string",
+              title: "GitHub Repo (no owner)",
+              description: "Target repository name. Native Paperclip issues are mirrored here."
+            },
+            paperclipProjectId: {
+              type: "string",
+              title: "Paperclip Project ID",
+              description: "The project that bridges to githubRepo. Must equal the inbound routine's projectId."
+            },
+            syncLabelPaperclip: {
+              type: "string",
+              title: "Paperclip \u2192 GitHub label",
+              description: "Label applied to GitHub issues created from Paperclip issues.",
+              default: "synced-from-paperclip"
+            },
+            syncMarkerGithub: {
+              type: "string",
+              title: "GitHub \u2192 Paperclip marker label",
+              description: "Label marking issues that originated in GitHub (set by the inbound routine).",
+              default: "synced-from-github"
+            }
+          },
+          required: ["githubOrg", "githubRepo", "paperclipProjectId"]
+        }
+      },
+      tokenBrokerUrl: {
+        type: "string",
+        title: "Token Broker URL",
+        description: "gh-token-broker endpoint that mints repo-scoped GitHub App installation tokens. Defaults to the GH_TOKEN_BROKER_URL env var; set to http://gh-token-broker:9099 if the env is not passed to plugin workers."
+      },
       githubToken: {
         type: "string",
-        title: "GitHub Token",
-        description: "Write-scoped GitHub PAT used to create/update issues. Stored in plugin config."
-      },
-      githubOrg: {
-        type: "string",
-        title: "GitHub Org",
-        description: "GitHub organization/owner that owns the target repository.",
-        default: "EngineeringMoonBear"
-      },
-      githubRepo: {
-        type: "string",
-        title: "GitHub Repo",
-        description: "Target repository name (without owner). Native Paperclip issues are mirrored here."
-      },
-      paperclipProjectId: {
-        type: "string",
-        title: "Paperclip Project ID",
-        description: "ONLY issues in this Paperclip project are mirrored to GitHub. Required \u2014 the worker refuses to subscribe company-wide, so unrelated work (e.g. QA-triage issues in other projects) is never mirrored. This is the project that bridges to githubRepo."
-      },
-      syncLabelPaperclip: {
-        type: "string",
-        title: "Paperclip \u2192 GitHub label",
-        description: "Label applied to GitHub issues created from Paperclip issues.",
-        default: "synced-from-paperclip"
-      },
-      syncMarkerGithub: {
-        type: "string",
-        title: "GitHub \u2192 Paperclip marker label",
-        description: "Label that marks issues that originated in GitHub (set by the inbound routine).",
-        default: "synced-from-github"
+        title: "GitHub Token (fallback)",
+        description: "Optional static PAT used only when no token broker is configured. Normally unset \u2014 auth uses the GitHub App via the broker, which works across orgs and needs no stored secret."
       }
     },
-    required: ["githubToken", "githubRepo", "paperclipProjectId"]
+    required: ["bridges"]
   },
   // Event-driven only — no scheduled jobs.
   entrypoints: {
