@@ -75,6 +75,7 @@ POST /api/routines/{routineId}/triggers  { "kind":"webhook", "signingMode":"gith
 triggers are API-only; the board UI shows "coming soon".)
 
 ### 5. Repo secrets (in the synced GitHub repo)
+
 | Secret | Value |
 | --- | --- |
 | `PAPERCLIP_ISSUE_SYNC_WEBHOOK` | `https://paperclip.gatheringatthegrove.com/api/routine-triggers/public/<publicId>/fire` |
