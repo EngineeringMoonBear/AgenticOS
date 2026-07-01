@@ -5,8 +5,15 @@ import { vikingUriFor } from "./viking-uri.js";
 /**
  * Minimal database surface the job needs — a structural subset of
  * `PluginDatabaseClient` (ctx.db) so the job is testable with an in-memory fake.
+ *
+ * The vault_ingest_state table is created by `migrations/001_init.sql` (the
+ * Paperclip plugin-DB contract forbids runtime DDL — `ctx.db.execute` rejects
+ * CREATE/ALTER/DROP). Every runtime statement must be SCHEMA-QUALIFIED with the
+ * host-derived namespace, which the SDK exposes as `ctx.db.namespace`.
  */
 export interface IngestDb {
+  /** Host-derived Postgres schema for this plugin (ctx.db.namespace). */
+  namespace: string;
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
   execute(sql: string, params?: unknown[]): Promise<{ rowCount: number }>;
 }
@@ -33,6 +40,11 @@ export interface VaultIngestSummary {
 
 const STATE_TABLE = "vault_ingest_state";
 
+/** Fully-qualified `<namespace>.vault_ingest_state` for runtime SQL. */
+function qualifiedTable(db: IngestDb): string {
+  return `${db.namespace}.${STATE_TABLE}`;
+}
+
 /** Last path segment (POSIX) — used as the multipart filename. */
 function basename(path: string): string {
   const parts = path.split("/");
@@ -53,11 +65,8 @@ export async function runVaultIngest(
   const { reader, viking, db, vaultServerUrl } = deps;
   const summary: VaultIngestSummary = { added: 0, updated: 0, removed: 0, errors: 0 };
 
-  // Idempotent DDL — avoids needing a formal migration. Requires the
-  // database.namespace.migrate capability (see manifest).
-  await db.execute(
-    `CREATE TABLE IF NOT EXISTS ${STATE_TABLE} (path TEXT PRIMARY KEY, sha256 TEXT NOT NULL)`,
-  );
+  // The vault_ingest_state table is created by migrations/001_init.sql, applied
+  // by the host before worker init — runtime DDL is not permitted by ctx.db.
 
   const read = await reader(vaultServerUrl);
   if (!read.ok) {
@@ -65,7 +74,7 @@ export async function runVaultIngest(
   }
 
   const rows = await db.query<{ path: string; sha256: string }>(
-    `SELECT path, sha256 FROM ${STATE_TABLE}`,
+    `SELECT path, sha256 FROM ${qualifiedTable(db)}`,
   );
   const prior = new Map<string, string>(rows.map((r) => [r.path, r.sha256]));
 
@@ -80,9 +89,12 @@ export async function runVaultIngest(
         vikingUriFor(file.path),
       );
       if (!res.ok) throw new Error(res.error);
+      // DO UPDATE SET uses the bound $2 param rather than `excluded.sha256` —
+      // the host's runtime-SQL validator only permits qualified refs inside the
+      // plugin namespace, and an `excluded.col` ref could trip that check.
       await db.execute(
-        `INSERT INTO ${STATE_TABLE} (path, sha256) VALUES ($1, $2)
-           ON CONFLICT(path) DO UPDATE SET sha256 = excluded.sha256`,
+        `INSERT INTO ${qualifiedTable(db)} (path, sha256) VALUES ($1, $2)
+           ON CONFLICT (path) DO UPDATE SET sha256 = $2`,
         [file.path, file.sha256],
       );
       if (isAdd) summary.added += 1;
@@ -96,7 +108,7 @@ export async function runVaultIngest(
     try {
       const res = await viking.rm(vikingUriFor(path));
       if (!res.ok) throw new Error(res.error);
-      await db.execute(`DELETE FROM ${STATE_TABLE} WHERE path = $1`, [path]);
+      await db.execute(`DELETE FROM ${qualifiedTable(db)} WHERE path = $1`, [path]);
       summary.removed += 1;
     } catch {
       summary.errors += 1;
