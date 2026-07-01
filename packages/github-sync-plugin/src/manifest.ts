@@ -3,7 +3,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const manifest: PaperclipPluginManifestV1 = {
   id: "agenticos.github-sync-plugin",
   apiVersion: 1,
-  version: "0.3.0",
+  version: "0.4.0",
   displayName: "GitHub Sync",
   description:
     "Mirror Paperclip issue changes to GitHub issues (Paperclip → GitHub). Supports multiple repo↔project bridges across orgs; authenticates via the gh-token-broker (GitHub App), no static PAT.",
@@ -13,8 +13,9 @@ const manifest: PaperclipPluginManifestV1 = {
   // http.outbound: the github-client writes issues to the GitHub REST API.
   // database.namespace.{read,write,migrate}: a "github_sync_mapping" table in the
   //   plugin DB namespace links paperclip_issue_id <-> github repo#number and records
-  //   sync origin for loop prevention. The table is created with an idempotent
-  //   CREATE TABLE IF NOT EXISTS (gated behind database.namespace.migrate).
+  //   sync origin for loop prevention. The table is created by migrations/001_init.sql
+  //   (runtime DDL via ctx.db.execute is forbidden), and runtime reads/writes are
+  //   namespace-qualified via ctx.db.namespace (gated behind these capabilities).
   // issues.read: REQUIRED and added beyond the original spec list. The plugin event
   //   payload for issue.created/issue.updated is delta-based (the activity-log
   //   `details` blob — title/identifier/changed-fields), NOT the full Issue object,

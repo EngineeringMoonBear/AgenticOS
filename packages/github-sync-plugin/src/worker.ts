@@ -49,12 +49,21 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
 }
 
 /**
- * Wrap a sync handler with per-event error isolation and the entityId guard —
- * a handler must never throw back onto the event bus.
+ * Route an issue event to the bridge for its project, with per-event error
+ * isolation (a handler must never throw back onto the bus).
+ *
+ * WHY company-wide + in-handler routing instead of a `{ projectId }` subscription
+ * filter: the host's issue.created/issue.updated events carry a DELTA payload that
+ * does not reliably include `projectId` (the event-bus filter reads
+ * `payload.projectId`, which is often absent), so a project-scoped filter silently
+ * drops every event. We instead subscribe company-wide and read the full issue back
+ * to learn its real project, then dispatch to the matching bridge — or skip if the
+ * issue isn't in a synced project. Scoping to configured projects is preserved; it
+ * just no longer depends on the event payload's shape.
  */
-function makeHandler(
+function makeDispatch(
   ctx: PluginContext,
-  deps: SyncDeps,
+  depsByProject: Map<string, SyncDeps>,
   handle: (deps: SyncDeps, input: { issueId: string; companyId: string }) => Promise<void>,
   eventName: string,
 ) {
@@ -64,6 +73,15 @@ function makeHandler(
         ctx.logger.warn(`${eventName} event missing entityId; skipping`);
         return;
       }
+      const issue = await ctx.issues.get(event.entityId, event.companyId);
+      if (!issue) {
+        ctx.logger.warn(`${eventName}: issue not readable; skipping`, {
+          issueId: event.entityId,
+        });
+        return;
+      }
+      const deps = issue.projectId ? depsByProject.get(issue.projectId) : undefined;
+      if (!deps) return; // not in a synced project — ignore quietly
       await handle(deps, { issueId: event.entityId, companyId: event.companyId });
     } catch (err) {
       ctx.logger.error(`${eventName} handler failed`, {
@@ -93,6 +111,9 @@ const plugin = definePlugin({
     // cross-org). Fall back to a static PAT only if no broker URL is available.
     const brokerUrl = cfg.tokenBrokerUrl || process.env.GH_TOKEN_BROKER_URL || "";
 
+    // Build a projectId → SyncDeps map. Subscriptions below are company-wide (the
+    // event filter can't see projectId — see makeDispatch), so routing is by project.
+    const depsByProject = new Map<string, SyncDeps>();
     for (const bridge of cfg.bridges) {
       let getToken;
       if (brokerUrl) {
@@ -107,7 +128,7 @@ const plugin = definePlugin({
       }
 
       const github = new GitHubClient({ org: bridge.githubOrg, getToken });
-      const deps: SyncDeps = {
+      depsByProject.set(bridge.paperclipProjectId, {
         db: ctx.db,
         github,
         config: {
@@ -117,22 +138,7 @@ const plugin = definePlugin({
         },
         logger: ctx.logger,
         getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId),
-      };
-
-      // Scope each subscription to this bridge's project. Subscribing company-wide
-      // would mirror unrelated work (QA-triage issues, other agents' tasks) and could
-      // double up with issues GitHub Actions already opened.
-      const projectFilter = { projectId: bridge.paperclipProjectId };
-      ctx.events.on(
-        "issue.created",
-        projectFilter,
-        makeHandler(ctx, deps, handleIssueCreated, "issue.created"),
-      );
-      ctx.events.on(
-        "issue.updated",
-        projectFilter,
-        makeHandler(ctx, deps, handleIssueUpdated, "issue.updated"),
-      );
+      });
 
       ctx.logger.info("bridge active", {
         repo: `${bridge.githubOrg}/${bridge.githubRepo}`,
@@ -140,6 +146,20 @@ const plugin = definePlugin({
         auth: brokerUrl ? "gh-token-broker" : "static token",
       });
     }
+
+    if (depsByProject.size === 0) {
+      ctx.logger.warn("no usable bridges (all missing auth) — GitHub Sync is INACTIVE.");
+      return;
+    }
+
+    // One company-wide subscription per event type; makeDispatch routes each event
+    // to the bridge for the issue's project (or drops it if not a synced project).
+    ctx.events.on("issue.created", makeDispatch(ctx, depsByProject, handleIssueCreated, "issue.created"));
+    ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleIssueUpdated, "issue.updated"));
+
+    ctx.logger.info("github sync listening", {
+      projects: Array.from(depsByProject.keys()),
+    });
   },
 
   async onHealth() {
