@@ -57,6 +57,24 @@ export async function getByPaperclipId(
 }
 
 /**
+ * Look up the mapping for a GitHub issue (`<repo>#<number>`), or null.
+ * Used by the inbound webhook to dedupe redeliveries before creating a mirror.
+ */
+export async function getByRepoNumber(
+  db: MappingDb,
+  githubRepo: string,
+  githubIssueNumber: number,
+): Promise<MappingRow | null> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT paperclip_issue_id, github_repo, github_issue_number, last_synced_at, origin
+       FROM ${qualifiedTable(db)} WHERE github_repo = $1 AND github_issue_number = $2`,
+    [githubRepo, githubIssueNumber],
+  );
+  const first = rows[0];
+  return first ? toRow(first) : null;
+}
+
+/**
  * Create or replace the mapping row for a Paperclip issue (upsert by PK).
  *
  * The `DO UPDATE SET` uses the bound parameters directly rather than `excluded.*`

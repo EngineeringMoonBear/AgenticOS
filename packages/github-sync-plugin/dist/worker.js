@@ -10151,6 +10151,15 @@ async function getByPaperclipId(db, paperclipIssueId) {
   const first = rows[0];
   return first ? toRow(first) : null;
 }
+async function getByRepoNumber(db, githubRepo, githubIssueNumber) {
+  const rows = await db.query(
+    `SELECT paperclip_issue_id, github_repo, github_issue_number, last_synced_at, origin
+       FROM ${qualifiedTable(db)} WHERE github_repo = $1 AND github_issue_number = $2`,
+    [githubRepo, githubIssueNumber]
+  );
+  const first = rows[0];
+  return first ? toRow(first) : null;
+}
 async function upsert(db, row) {
   await db.execute(
     `INSERT INTO ${qualifiedTable(db)}
@@ -10169,6 +10178,49 @@ async function upsert(db, row) {
       row.origin
     ]
   );
+}
+
+// src/inbound.ts
+import { createHmac, timingSafeEqual } from "node:crypto";
+function getHeader(headers, name) {
+  const lower = name.toLowerCase();
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === lower) return Array.isArray(v) ? v[0] : v;
+  }
+  return void 0;
+}
+function verifyGithubSignature(rawBody, secret, signatureHeader) {
+  if (!signatureHeader || !secret) return false;
+  const expected = `sha256=${createHmac("sha256", secret).update(rawBody, "utf8").digest("hex")}`;
+  const a = Buffer.from(signatureHeader);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+function parseInboundPayload(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw;
+  const repo = typeof o.repo === "string" ? o.repo : "";
+  const number = typeof o.number === "number" ? o.number : Number(o.number);
+  const title = typeof o.title === "string" ? o.title : "";
+  if (!repo || !Number.isFinite(number) || number <= 0 || !title) return null;
+  return {
+    repo,
+    number,
+    title,
+    body: typeof o.body === "string" ? o.body : "",
+    url: typeof o.url === "string" ? o.url : ""
+  };
+}
+function githubMarker(repo, num) {
+  return `<!-- synced-from-github: ${repo}#${num} -->`;
+}
+function buildInboundDescription(p) {
+  return `${githubMarker(p.repo, p.number)}
+
+${p.body}
+
+---
+Synced from GitHub: ${p.url}`;
 }
 
 // src/sync.ts
@@ -10285,6 +10337,15 @@ async function handleIssueUpdated(deps, input) {
 }
 
 // src/worker.ts
+var INBOUND_ENDPOINT_KEY = "github-issue";
+var currentContext = null;
+function safeJson(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
 function readConfig(raw) {
   const rawBridges = Array.isArray(raw.bridges) ? raw.bridges : [];
   const bridges = rawBridges.map((b) => {
@@ -10300,7 +10361,9 @@ function readConfig(raw) {
   return {
     bridges,
     tokenBrokerUrl: raw.tokenBrokerUrl ? String(raw.tokenBrokerUrl) : void 0,
-    githubToken: raw.githubToken ? String(raw.githubToken) : void 0
+    githubToken: raw.githubToken ? String(raw.githubToken) : void 0,
+    companyId: raw.companyId ? String(raw.companyId) : void 0,
+    inboundWebhookSecret: raw.inboundWebhookSecret ? String(raw.inboundWebhookSecret) : void 0
   };
 }
 function makeDispatch(ctx, depsByProject, handle, eventName) {
@@ -10331,6 +10394,7 @@ function makeDispatch(ctx, depsByProject, handle, eventName) {
 var plugin = definePlugin({
   async setup(ctx) {
     ctx.logger.info("GitHub Sync plugin starting");
+    currentContext = ctx;
     const cfg = readConfig(await ctx.config.get());
     if (cfg.bridges.length === 0) {
       ctx.logger.warn(
@@ -10379,6 +10443,82 @@ var plugin = definePlugin({
     ctx.logger.info("github sync listening", {
       projects: Array.from(depsByProject.keys())
     });
+  },
+  /**
+   * Inbound leg (GitHub → Paperclip). The host routes the public endpoint
+   * `POST /api/plugins/:id/webhooks/github-issue` here. We verify the HMAC
+   * (the plugin's responsibility), then create the mirror issue directly —
+   * routines can't, since every routine run requires an agent.
+   */
+  async onWebhook(input) {
+    const ctx = currentContext;
+    if (!ctx) return;
+    if (input.endpointKey !== INBOUND_ENDPOINT_KEY) {
+      ctx.logger.warn("inbound webhook: unknown endpoint", { endpointKey: input.endpointKey });
+      return;
+    }
+    const cfg = readConfig(await ctx.config.get());
+    if (!cfg.inboundWebhookSecret) {
+      ctx.logger.error("inbound webhook: no inboundWebhookSecret configured \u2014 rejecting");
+      return;
+    }
+    if (!verifyGithubSignature(input.rawBody, cfg.inboundWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
+      ctx.logger.warn("inbound webhook: signature verification failed");
+      return;
+    }
+    const payload = parseInboundPayload(input.parsedBody ?? safeJson(input.rawBody));
+    if (!payload) {
+      ctx.logger.warn("inbound webhook: unparseable/invalid payload");
+      return;
+    }
+    const bridge = cfg.bridges.find(
+      (b) => `${b.githubOrg}/${b.githubRepo}`.toLowerCase() === payload.repo.toLowerCase() || b.githubRepo.toLowerCase() === payload.repo.toLowerCase()
+    );
+    if (!bridge) {
+      ctx.logger.info("inbound webhook: repo not in a synced bridge; ignoring", { repo: payload.repo });
+      return;
+    }
+    if (!cfg.companyId) {
+      ctx.logger.error("inbound webhook: companyId not configured \u2014 cannot create issue");
+      return;
+    }
+    try {
+      const existing = await getByRepoNumber(ctx.db, payload.repo, payload.number);
+      if (existing) {
+        ctx.logger.info("inbound webhook: already mirrored; skipping", {
+          repo: payload.repo,
+          number: payload.number
+        });
+        return;
+      }
+      const issue = await ctx.issues.create({
+        companyId: cfg.companyId,
+        projectId: bridge.paperclipProjectId,
+        title: payload.title,
+        description: buildInboundDescription(payload),
+        status: "todo",
+        priority: "medium"
+      });
+      await upsert(ctx.db, {
+        paperclipIssueId: issue.id,
+        githubRepo: payload.repo,
+        githubIssueNumber: payload.number,
+        lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        origin: "github"
+      });
+      ctx.logger.info("inbound: created Paperclip issue from GitHub", {
+        repo: payload.repo,
+        number: payload.number,
+        projectId: bridge.paperclipProjectId,
+        issueId: issue.id
+      });
+    } catch (err) {
+      ctx.logger.error("inbound webhook: failed to create mirror issue", {
+        repo: payload.repo,
+        number: payload.number,
+        error: err instanceof Error ? err.message : String(err)
+      });
+    }
   },
   async onHealth() {
     return { status: "ok" };
