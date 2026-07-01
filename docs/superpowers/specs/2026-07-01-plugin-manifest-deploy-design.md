@@ -124,7 +124,7 @@ New idempotent script, run from the Mac exactly like
    `setup()` to re-run so subscriptions/webhooks re-register with fresh config.
    Also recovers an error-state install.
 5. **Assert**: re-fetch `/api/plugins`, print each target's `status`, exit
-   non-zero if any target is not `active`.
+   non-zero if any target is in an error state (healthy = not `error`/`failed`).
 
 Accepts one or more plugin names; with no args, prints usage. Reuses the SSH
 tunnel convention (`PAPERCLIP_BASE` default `http://localhost:3100`).
@@ -172,11 +172,11 @@ behavior (sync all three, optional pr-triage trigger) is unchanged.
 - **No-op (cheap path intact):** worker-only change → CI shows no
   `MANIFEST_BUMP`, workers hot-reload, no warning emitted.
 - **Bump path:** change a manifest → CI emits the `::warning::` + step-summary
-  line naming the plugin; running `deploy-plugin.sh <p>` on the Mac drives the
-  plugin `status` to `active`.
+  line naming the plugin; running `deploy-plugin.sh <p>` on the Mac leaves the
+  plugin healthy (not `error`/`failed`).
 - **Idempotency:** re-run `deploy-plugin.sh <p>` → recreate-guard skips (mount
   already resolved), reinstall + config + enable are safe to repeat, still ends
-  `active`.
+  healthy (not in an error state).
 - **Static checks:** `bash -n` on all three scripts; `shellcheck` if available.
 
 ## Out of scope

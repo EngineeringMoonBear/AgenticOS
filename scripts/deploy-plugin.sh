@@ -54,7 +54,7 @@ pc_load_board_key
 # recreate_guard PLUGIN — recreate paperclip-server iff the plugin dir is not
 # yet visible in the container. Idempotent (skips when the mount resolves).
 recreate_guard() {
-  local p="$1" i
+  local p="$1"
   if ssh "${DROPLET_SSH}" \
        "cd ${COMPOSE_DIR} && docker compose exec -T paperclip-server test -s /paperclip/plugins/${p}/package.json" \
        >/dev/null 2>&1; then
@@ -64,7 +64,7 @@ recreate_guard() {
   echo "    ${p}: mount missing in container -> force-recreate paperclip-server"
   ssh "${DROPLET_SSH}" \
     "cd ${COMPOSE_DIR} && docker compose up -d --force-recreate paperclip-server"
-  for i in $(seq 1 30); do
+  for _ in $(seq 1 30); do
     if api GET /api/plugins >/dev/null 2>&1; then return 0; fi
     sleep 2
   done
@@ -107,10 +107,12 @@ cycle() {
 }
 
 # assert_healthy PLUGIN — print status; fail on an error/empty state.
+# Healthy = not in an error state. A plugin like github-sync-plugin stays
+# inactive by design until separately configured, so we do NOT assert "active".
 assert_healthy() {
   local p="$1" status
   status="$(api GET /api/plugins | jq -r --arg k "agenticos.${p}" \
-    '(.plugins // .)[] | select(.pluginKey==$k) | .status')"
+    '(if type=="object" then .plugins else . end)[] | select(.pluginKey==$k) | .status')"
   echo "    ${p}: status=${status}"
   case "$status" in
     error|failed|"") echo "FATAL: ${p} not healthy (status='${status}')" >&2; return 1 ;;

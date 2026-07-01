@@ -49,7 +49,7 @@ pc_load_board_key
 
 echo "==> 1/3 refreshing plugins (delete + reinstall to pick up new manifests)"
 existing="$(api GET /api/plugins)"
-echo "$existing" | jq -r '(.plugins // .)[] | select(.pluginKey|startswith("agenticos.")) | .id' \
+echo "$existing" | jq -r '(if type=="object" then .plugins else . end)[] | select(.pluginKey|startswith("agenticos.")) | .id' \
   | while read -r id; do
       [ -n "$id" ] && api DELETE "/api/plugins/${id}" >/dev/null && echo "    deleted ${id}"
     done
@@ -70,7 +70,7 @@ configure_openviking
 gh_id="$(resolve_plugin_id agenticos.github-plugin)"
 if [ "${TRIGGER_TRIAGE}" = "1" ]; then
   echo "==> 3/3 triggering pr-triage"
-  job_id="$(api GET "/api/plugins/${gh_id}/jobs" | jq -r '(.jobs // .)[] | select(.jobKey=="pr-triage") | .id' | head -1)"
+  job_id="$(api GET "/api/plugins/${gh_id}/jobs" | jq -r '(if type=="object" then .jobs else . end)[] | select(.jobKey=="pr-triage") | .id' | head -1)"
   if [ -n "$job_id" ]; then
     api POST "/api/plugins/${gh_id}/jobs/${job_id}/trigger" '{}' >/dev/null && echo "    pr-triage triggered"
   else

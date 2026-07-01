@@ -49,9 +49,12 @@ The script is idempotent — re-run it freely. Per plugin it:
 
 ## Verify
 
+`deploy-plugin.sh` already prints each target's status at the end; this curl is an independent re-check.
+
 ```sh
-curl -fsS -H "Authorization: Bearer $(op read 'op://Goldberry Grove - Admin/AgenticOS Infra/paperclip_board_key')" \
-  http://localhost:3100/api/plugins | jq '(.plugins // .)[] | {pluginKey, status}'
+BK="$(op read 'op://Goldberry Grove - Admin/AgenticOS Infra/paperclip_board_key')"
+curl -fsS -H "Authorization: Bearer $BK" \
+  http://localhost:3100/api/plugins | jq '(if type=="object" then .plugins else . end)[] | {pluginKey, status}'
 ```
 
 All target plugins should be present and NOT `error`/`failed`.

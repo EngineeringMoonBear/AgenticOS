@@ -1,7 +1,5 @@
 name: Deploy Droplet Plugins
 
-# Deploy Droplet Plugins
-#
 # Auto-deploys the Paperclip plugins on push to main when any plugin source
 # changes. Companion to deploy-droplet.yml (which handles vault-server).
 #

@@ -46,7 +46,7 @@ api() {
 # resolve_plugin_id PLUGINKEY — echoes the plugin id, or empty if not installed.
 resolve_plugin_id() {
   api GET /api/plugins | jq -r --arg k "$1" \
-    '(.plugins // .)[] | select(.pluginKey==$k) | .id'
+    '(if type=="object" then .plugins else . end)[] | select(.pluginKey==$k) | .id'
 }
 
 # configure_github — POST github-plugin config (token read from 1Password,
