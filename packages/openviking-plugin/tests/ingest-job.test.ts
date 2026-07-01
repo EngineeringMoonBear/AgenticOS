@@ -3,12 +3,21 @@ import { runVaultIngest, type IngestDb, type IngestViking } from "../src/ingest/
 import type { Result } from "../src/viking-client.js";
 import type { VaultFile } from "../src/ingest/reconcile.js";
 
-/** In-memory fake of the path→sha state table backed by a Map. */
+/** A representative host-derived namespace (= plugin_<slug>_<sha256(id)[:10]>). */
+const NAMESPACE = "plugin_openviking_df76e0e812";
+
+/**
+ * In-memory fake of the path→sha state table backed by a Map. Records every raw
+ * SQL string so tests can assert it is schema-qualified with the plugin namespace
+ * (the Paperclip plugin-DB contract requires it).
+ */
 class FakeDb implements IngestDb {
+  namespace = NAMESPACE;
   state = new Map<string, string>();
-  createdTable = false;
+  sql: string[] = [];
 
   async query<T = Record<string, unknown>>(sql: string): Promise<T[]> {
+    this.sql.push(sql);
     if (/SELECT path, sha256/i.test(sql)) {
       return [...this.state.entries()].map(([path, sha256]) => ({ path, sha256 })) as T[];
     }
@@ -16,10 +25,7 @@ class FakeDb implements IngestDb {
   }
 
   async execute(sql: string, params: unknown[] = []): Promise<{ rowCount: number }> {
-    if (/CREATE TABLE/i.test(sql)) {
-      this.createdTable = true;
-      return { rowCount: 0 };
-    }
+    this.sql.push(sql);
     if (/INSERT INTO/i.test(sql)) {
       const [path, sha256] = params as [string, string];
       this.state.set(path, sha256);
@@ -75,7 +81,6 @@ describe("runVaultIngest", () => {
       vaultServerUrl: "http://vault",
     });
 
-    expect(db.createdTable).toBe(true);
     expect(summary).toEqual({ added: 2, updated: 0, removed: 0, errors: 0 });
     expect(viking.added).toEqual([
       { content: "# hi", filename: "HELLO.md", vikingUri: "viking://resources/notes/HELLO.md" },
@@ -146,6 +151,36 @@ describe("runVaultIngest", () => {
     expect(db.state.has("bad.md")).toBe(false);
     expect(db.state.get("ok1.md")).toBe("s1");
     expect(db.state.get("ok2.md")).toBe("s3");
+  });
+
+  it("qualifies every statement with the plugin namespace and never emits DDL", async () => {
+    const db = new FakeDb();
+    db.state.set("gone.md", "g");
+    const viking = new FakeViking();
+    const files = [vf("new.md", "x", "s1")];
+
+    await runVaultIngest({ reader: reader(files), viking, db, vaultServerUrl: "http://vault" });
+
+    // Exercised SELECT (read state) + INSERT (add) + DELETE (remove) paths.
+    expect(db.sql.length).toBeGreaterThanOrEqual(3);
+    for (const q of db.sql) {
+      // Schema-qualified — never the bare table — and no runtime DDL.
+      expect(q).toContain(`${NAMESPACE}.vault_ingest_state`);
+      expect(q).not.toMatch(/CREATE TABLE/i);
+    }
+  });
+
+  it("upsert never references the `excluded` pseudo-table (validator-safe)", async () => {
+    const db = new FakeDb();
+    const viking = new FakeViking();
+    const files = [vf("a.md", "x", "s1")];
+
+    await runVaultIngest({ reader: reader(files), viking, db, vaultServerUrl: "http://vault" });
+
+    const insert = db.sql.find((q) => /INSERT INTO/i.test(q));
+    expect(insert).toBeDefined();
+    expect(insert).not.toMatch(/excluded\./i);
+    expect(insert).toContain("DO UPDATE SET sha256 = $2");
   });
 
   it("throws when the reader fails (whole run aborts)", async () => {
