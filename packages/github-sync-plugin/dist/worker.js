@@ -10303,13 +10303,22 @@ function readConfig(raw) {
     githubToken: raw.githubToken ? String(raw.githubToken) : void 0
   };
 }
-function makeHandler(ctx, deps, handle, eventName) {
+function makeDispatch(ctx, depsByProject, handle, eventName) {
   return async (event) => {
     try {
       if (!event.entityId) {
         ctx.logger.warn(`${eventName} event missing entityId; skipping`);
         return;
       }
+      const issue = await ctx.issues.get(event.entityId, event.companyId);
+      if (!issue) {
+        ctx.logger.warn(`${eventName}: issue not readable; skipping`, {
+          issueId: event.entityId
+        });
+        return;
+      }
+      const deps = issue.projectId ? depsByProject.get(issue.projectId) : void 0;
+      if (!deps) return;
       await handle(deps, { issueId: event.entityId, companyId: event.companyId });
     } catch (err) {
       ctx.logger.error(`${eventName} handler failed`, {
@@ -10330,6 +10339,7 @@ var plugin = definePlugin({
       return;
     }
     const brokerUrl = cfg.tokenBrokerUrl || process.env.GH_TOKEN_BROKER_URL || "";
+    const depsByProject = /* @__PURE__ */ new Map();
     for (const bridge of cfg.bridges) {
       let getToken;
       if (brokerUrl) {
@@ -10343,7 +10353,7 @@ var plugin = definePlugin({
         continue;
       }
       const github = new GitHubClient({ org: bridge.githubOrg, getToken });
-      const deps = {
+      depsByProject.set(bridge.paperclipProjectId, {
         db: ctx.db,
         github,
         config: {
@@ -10353,24 +10363,22 @@ var plugin = definePlugin({
         },
         logger: ctx.logger,
         getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId)
-      };
-      const projectFilter = { projectId: bridge.paperclipProjectId };
-      ctx.events.on(
-        "issue.created",
-        projectFilter,
-        makeHandler(ctx, deps, handleIssueCreated, "issue.created")
-      );
-      ctx.events.on(
-        "issue.updated",
-        projectFilter,
-        makeHandler(ctx, deps, handleIssueUpdated, "issue.updated")
-      );
+      });
       ctx.logger.info("bridge active", {
         repo: `${bridge.githubOrg}/${bridge.githubRepo}`,
         projectId: bridge.paperclipProjectId,
         auth: brokerUrl ? "gh-token-broker" : "static token"
       });
     }
+    if (depsByProject.size === 0) {
+      ctx.logger.warn("no usable bridges (all missing auth) \u2014 GitHub Sync is INACTIVE.");
+      return;
+    }
+    ctx.events.on("issue.created", makeDispatch(ctx, depsByProject, handleIssueCreated, "issue.created"));
+    ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleIssueUpdated, "issue.updated"));
+    ctx.logger.info("github sync listening", {
+      projects: Array.from(depsByProject.keys())
+    });
   },
   async onHealth() {
     return { status: "ok" };
