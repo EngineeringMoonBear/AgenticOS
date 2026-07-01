@@ -37,48 +37,25 @@
 #
 set -euo pipefail
 
-PAPERCLIP_BASE="${PAPERCLIP_BASE:-http://localhost:3100}"
-OP_ITEM="${OP_ITEM:-AgenticOS Infra}"
-OP_VAULT="${OP_VAULT:-Goldberry Grove - Admin}"
-OP_FIELD_BOARD_KEY="${OP_FIELD_BOARD_KEY:-paperclip_board_key}"
-OP_FIELD_GITHUB="${OP_FIELD_GITHUB:-github_token}"
-OP_FIELD_OPENVIKING="${OP_FIELD_OPENVIKING:-openviking_root_api_key}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/paperclip-lib.sh
+source "${HERE}/paperclip-lib.sh"
+
 GITHUB_ORG="${GITHUB_ORG:-EngineeringMoonBear}"
 TRIGGER_TRIAGE="${TRIGGER_TRIAGE:-0}"
 
-command -v op  >/dev/null || { echo "FATAL: 1Password CLI 'op' not found" >&2; exit 1; }
-command -v jq  >/dev/null || { echo "FATAL: 'jq' not found" >&2; exit 1; }
-
-op_read() { op read "op://${OP_VAULT}/${OP_ITEM}/$1"; }
-
-echo "==> reading credentials from 1Password (values stay in memory, never printed)"
-BOARD_KEY="$(op_read "${OP_FIELD_BOARD_KEY}")"
-GITHUB_TOKEN="$(op_read "${OP_FIELD_GITHUB}")"
-OPENVIKING_KEY="$(op_read "${OP_FIELD_OPENVIKING}")"
-[ -n "${BOARD_KEY}" ]       || { echo "FATAL: board key empty" >&2; exit 1; }
-[ -n "${GITHUB_TOKEN}" ]    || { echo "FATAL: github token empty" >&2; exit 1; }
-[ -n "${OPENVIKING_KEY}" ]  || { echo "FATAL: openviking key empty" >&2; exit 1; }
-
-AUTH=(-H "Authorization: Bearer ${BOARD_KEY}")
-api() { # method path [json-body]
-  local method="$1" path="$2" body="${3:-}"
-  if [ -n "$body" ]; then
-    curl -fsS -X "$method" "${AUTH[@]}" -H "Content-Type: application/json" \
-      -d "$body" "${PAPERCLIP_BASE}${path}"
-  else
-    curl -fsS -X "$method" "${AUTH[@]}" "${PAPERCLIP_BASE}${path}"
-  fi
-}
+pc_require_tools
+pc_load_board_key
 
 echo "==> 1/3 refreshing plugins (delete + reinstall to pick up new manifests)"
 existing="$(api GET /api/plugins)"
-echo "$existing" | jq -r '(.plugins // .)[] | select(.pluginKey|startswith("agenticos.")) | .id' \
+echo "$existing" | jq -r '(if type=="object" then .plugins else . end)[] | select(.pluginKey|startswith("agenticos.")) | .id' \
   | while read -r id; do
       [ -n "$id" ] && api DELETE "/api/plugins/${id}" >/dev/null && echo "    deleted ${id}"
     done
-# github-sync-plugin is installed here but configured separately (it needs a
-# write-scoped token + the synced project id); see docs/runbooks/github-issue-sync.md.
-# Until configured it stays INACTIVE (the worker refuses to subscribe unscoped).
+# github-sync-plugin is installed here but configured separately (write-scoped
+# token + synced project id); see docs/runbooks/github-issue-sync.md. Until
+# configured it stays INACTIVE (the worker refuses to subscribe unscoped).
 for name in vault-plugin openviking-plugin github-plugin github-sync-plugin; do
   status="$(api POST /api/plugins/install \
     "{\"packageName\":\"/paperclip/plugins/${name}\",\"isLocalPath\":true}" \
@@ -86,23 +63,14 @@ for name in vault-plugin openviking-plugin github-plugin github-sync-plugin; do
   echo "    installed ${name} -> ${status}"
 done
 
-# Resolve fresh plugin ids by key.
-plugins="$(api GET /api/plugins)"
-gh_id="$(echo "$plugins" | jq -r '(.plugins // .)[] | select(.pluginKey=="agenticos.github-plugin") | .id')"
-ov_id="$(echo "$plugins" | jq -r '(.plugins // .)[] | select(.pluginKey=="agenticos.openviking-plugin") | .id')"
-
 echo "==> 2/3 setting plugin config (token values supplied inline by jq, not echoed)"
-gh_cfg="$(jq -nc --arg t "$GITHUB_TOKEN" --arg org "$GITHUB_ORG" \
-  '{configJson:{githubToken:$t, org:$org, staleDays:7, vaultPath:"wiki/_meta/dev-pr-digest.md", vaultServerUrl:"http://vault-server:7777"}}')"
-api POST "/api/plugins/${gh_id}/config" "$gh_cfg" >/dev/null && echo "    github-plugin config set"
+configure_github
+configure_openviking
 
-ov_cfg="$(jq -nc --arg k "$OPENVIKING_KEY" \
-  '{configJson:{apiKey:$k, endpoint:"http://openviking:1933", account:"agenticos", user:"deploy"}}')"
-api POST "/api/plugins/${ov_id}/config" "$ov_cfg" >/dev/null && echo "    openviking-plugin config set"
-
+gh_id="$(resolve_plugin_id agenticos.github-plugin)"
 if [ "${TRIGGER_TRIAGE}" = "1" ]; then
   echo "==> 3/3 triggering pr-triage"
-  job_id="$(api GET "/api/plugins/${gh_id}/jobs" | jq -r '(.jobs // .)[] | select(.jobKey=="pr-triage") | .id' | head -1)"
+  job_id="$(api GET "/api/plugins/${gh_id}/jobs" | jq -r '(if type=="object" then .jobs else . end)[] | select(.jobKey=="pr-triage") | .id' | head -1)"
   if [ -n "$job_id" ]; then
     api POST "/api/plugins/${gh_id}/jobs/${job_id}/trigger" '{}' >/dev/null && echo "    pr-triage triggered"
   else

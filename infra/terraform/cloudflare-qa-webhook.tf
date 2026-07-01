@@ -46,6 +46,47 @@ resource "cloudflare_zero_trust_access_policy" "paperclip_webhook_allow_service_
   }
 }
 
+# --- Step 9 inbound: GitHub → Paperclip via the github-sync-plugin webhook ------
+# The plugin exposes a public inbound webhook at
+#   POST /api/plugins/<plugin-id>/webhooks/github-issue
+# That lives under /api/plugins/* — NOT /api/routine-triggers/public — so the app
+# above does not cover it, and GitHub Actions would be 302'd to SSO. Add a SECOND
+# path-scoped Access app for this plugin's /webhooks prefix, reusing the SAME
+# service token. Scoped to the plugin's webhooks path only, so the token can't
+# reach /api/plugins/<id>/config or /install (those also require board auth at the
+# app layer — this keeps least-privilege at the edge too). The plugin id is stable
+# across reinstalls; signature verification is still the plugin's job (HMAC).
+
+variable "github_sync_plugin_id" {
+  description = "Installed github-sync-plugin id (stable across reinstalls). Path-scopes its inbound webhook Access app."
+  type        = string
+  default     = "f46075f1-bfb9-441b-90ea-ab1976ef83ff"
+}
+
+resource "cloudflare_zero_trust_access_application" "paperclip_plugin_webhook" {
+  account_id = var.cloudflare_account_id
+  name       = "AgenticOS Paperclip — plugin webhooks (service token)"
+  # Path-scoped to this one plugin's webhook endpoints. More specific than the
+  # host-wide `paperclip` SSO app, so it wins for this path.
+  domain                     = "${var.paperclip_domain}/api/plugins/${var.github_sync_plugin_id}/webhooks"
+  type                       = "self_hosted"
+  session_duration           = "0s"
+  app_launcher_visible       = false
+  http_only_cookie_attribute = true
+}
+
+resource "cloudflare_zero_trust_access_policy" "paperclip_plugin_webhook_allow_service_token" {
+  account_id     = var.cloudflare_account_id
+  application_id = cloudflare_zero_trust_access_application.paperclip_plugin_webhook.id
+  name           = "Allow issue-sync service token"
+  precedence     = 1
+  decision       = "non_identity"
+
+  include {
+    service_token = [cloudflare_zero_trust_access_service_token.qa_smoke_webhook.id]
+  }
+}
+
 # The CI client credentials. Put them in odoocker's GitHub Actions secrets
 # (CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET) and have the qa-smoke workflow
 # send them as `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers on the

@@ -1,21 +1,24 @@
 name: Deploy Droplet Plugins
 
-# Auto-deploys the Paperclip plugins (vault / openviking / github) on push to
-# main when any plugin source changes. Companion to deploy-droplet.yml, which
-# handles vault-server. Until now plugin changes were deployed by hand.
+# Auto-deploys the Paperclip plugins on push to main when any plugin source
+# changes. Companion to deploy-droplet.yml (which handles vault-server).
 #
-# Deploy mechanism differs from vault-server's tar+image-build: the plugins'
-# compose mounts resolve through the `packages` symlink into the git checkout
-# at /opt/agenticos/repo, and Paperclip's plugin-dev-watcher HOT-RELOADS a
-# worker whenever its dist/ changes. So the deploy is: git pull the repo, build
-# the three dists in place — the running workers reload with no restart.
+# CHEAP PATH (worker code changes): git-pull the repo + rebuild the dists in
+# place. Paperclip's plugin-dev-watcher HOT-RELOADS each worker whose dist/
+# changed — no restart, no manual step.
 #
-# Caveats (intentional, see the README/runbook):
-#   - Manifest changes (new config field / capability) need a reinstall, which
-#     the dev-watcher does NOT do (it refreshes worker code, not the stored
-#     manifest). Run scripts/sync-paperclip-secrets.sh for those — rare.
-#   - Secrets/config never flow through CI. Tokens live in 1Password and are
-#     pushed once via the sync script.
+# MANIFEST CHANGES (new capability / config field / database / webhook): the
+# hot-reload refreshes worker CODE but NOT the stored manifest. This workflow
+# DETECTS a manifest change (scripts/detect-manifest-bumps.sh diffs
+# packages/<p>/src/manifest.ts across the deploy) and emits a ::warning:: +
+# job-summary telling you to finish it from a Mac:
+#     scripts/deploy-plugin.sh <plugin>
+# which does recreate-guard -> reinstall -> config -> enable. CI cannot do this
+# itself: applying plugin config needs the service tokens, and tokens flow ONLY
+# from 1Password, never through CI. See docs/runbooks/deploy-plugin-manifest-change.md.
+#
+# Convention: bump `version:` in the manifest on every manifest change. (CI
+# detects by whole-file diff, so a forgotten bump is still caught.)
 
 on:
   push:
@@ -58,19 +61,18 @@ jobs:
           HOST: ${{ secrets.DROPLET_HOST }}
           USER: ${{ secrets.DROPLET_USER }}
         run: |
-          # bash -lc → login shell so pnpm/node are on PATH (the plain ssh
-          # non-interactive shell would not source the profile that sets them).
+          # bash -lc → login shell so pnpm/node are on PATH.
           ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" 'bash -lc '"'"'
             set -euo pipefail
 
-            # Self-heal the packages symlink: a stale REAL dir would shadow the
-            # repo checkout and silently deploy old code (the known drift bug).
+            # Self-heal the packages symlink (stale REAL dir shadows the repo).
             if [ -e /opt/agenticos/packages ] && [ ! -L /opt/agenticos/packages ]; then
               rm -rf /opt/agenticos/packages
             fi
             ln -sfn /opt/agenticos/repo/packages /opt/agenticos/packages
 
             cd /opt/agenticos/repo
+            OLD="$(git rev-parse HEAD)"
             git fetch --quiet origin main
             git checkout --quiet main
             git reset --hard --quiet origin/main
@@ -92,7 +94,24 @@ jobs:
               done
               echo "ok: $p"
             done
-          '"'"''
+
+            echo "=== manifest bump detection ==="
+            bash scripts/detect-manifest-bumps.sh "$OLD" HEAD
+          '"'"'' | tee deploy.log
+
+      - name: Warn on manifest changes
+        if: always()
+        run: |
+          grep "^MANIFEST_BUMP:" deploy.log > bumps.txt || true
+          if [ -s bumps.txt ]; then
+            echo "### ⚠️ Manifest changes need a manual finish" >> "$GITHUB_STEP_SUMMARY"
+            while read -r _ plugin; do
+              echo "::warning title=Manifest changed::${plugin}: worker code hot-reloaded, but the stored manifest is stale. Run scripts/deploy-plugin.sh ${plugin} from a Mac (op signed in + SSH tunnel) to reinstall, reapply config, and enable."
+              echo "- **${plugin}** — run \`scripts/deploy-plugin.sh ${plugin}\` from a Mac to finish (reinstall + config + enable)." >> "$GITHUB_STEP_SUMMARY"
+            done < bumps.txt
+          else
+            echo "No manifest changes — workers hot-reloaded (cheap path)." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Confirm workers hot-reloaded
         env:
