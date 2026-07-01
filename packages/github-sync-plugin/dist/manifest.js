@@ -2,9 +2,9 @@
 var manifest = {
   id: "agenticos.github-sync-plugin",
   apiVersion: 1,
-  version: "0.4.0",
+  version: "0.5.0",
   displayName: "GitHub Sync",
-  description: "Mirror Paperclip issue changes to GitHub issues (Paperclip \u2192 GitHub). Supports multiple repo\u2194project bridges across orgs; authenticates via the gh-token-broker (GitHub App), no static PAT.",
+  description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",
   categories: ["connector"],
   // events.subscribe: the worker subscribes to core "issue.created" / "issue.updated".
@@ -21,13 +21,31 @@ var manifest = {
   //   issue body (title + description + status) the handler reads the full issue
   //   back via ctx.issues.get(event.entityId, event.companyId), which the host
   //   gates behind issues.read. See vendor/paperclip/server/src/services/activity-log.ts.
+  // issues.create + webhooks.receive: the inbound leg. The host exposes a public
+  //   (board-auth-free) endpoint POST /api/plugins/:id/webhooks/github-issue for the
+  //   GitHub Actions workflow; onWebhook verifies the HMAC and creates the mirror
+  //   issue directly via ctx.issues.create. Routines can't do this — every routine
+  //   run requires an agent ("Default agent required"), so they dispatch work rather
+  //   than mirror. The plugin webhook auth-route mode is disabled on this host, but
+  //   manifest-declared webhooks (webhooks.receive) are the supported public path.
   capabilities: [
     "events.subscribe",
     "http.outbound",
     "issues.read",
+    "issues.create",
+    "webhooks.receive",
     "database.namespace.read",
     "database.namespace.write",
     "database.namespace.migrate"
+  ],
+  // Inbound endpoint. The workflow POSTs the GitHub issue-opened payload here;
+  // signature verification is the plugin's responsibility (see onWebhook).
+  webhooks: [
+    {
+      endpointKey: "github-issue",
+      displayName: "GitHub issue opened \u2192 Paperclip mirror",
+      description: "Receives a GitHub issue-opened payload {repo,number,title,body,url} (HMAC-signed) and creates the mirror Paperclip issue in the matching bridge's project."
+    }
   ],
   // Declaring `database` is REQUIRED for the host to provision + activate the
   // plugin's Postgres namespace (without it, ensureNamespace returns null and the
@@ -97,11 +115,22 @@ var manifest = {
         format: "secret-ref",
         title: "GitHub Token (fallback)",
         description: "Optional static PAT used only when no token broker is configured. Normally unset \u2014 auth uses the GitHub App via the broker, which works across orgs and needs no stored secret."
+      },
+      companyId: {
+        type: "string",
+        title: "Company ID (inbound)",
+        description: "UUID of the company owning the synced projects. Required for the inbound leg \u2014 the public webhook has no actor, so ctx.issues.create needs the company explicitly."
+      },
+      inboundWebhookSecret: {
+        type: "string",
+        format: "secret-ref",
+        title: "Inbound webhook HMAC secret",
+        description: "Shared secret the GitHub Actions workflow signs the inbound payload with (X-Hub-Signature-256). onWebhook verifies it before creating a mirror issue. Set the SAME value as the workflow's PAPERCLIP_ISSUE_SYNC_SECRET repo secret."
       }
     },
     required: ["bridges"]
   },
-  // Event-driven only — no scheduled jobs.
+  // Event-driven + inbound webhook. No scheduled jobs.
   entrypoints: {
     worker: "./dist/worker.js"
   }
