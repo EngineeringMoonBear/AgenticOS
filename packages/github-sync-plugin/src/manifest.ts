@@ -45,9 +45,15 @@ const manifest: PaperclipPluginManifestV1 = {
   webhooks: [
     {
       endpointKey: "github-issue",
-      displayName: "GitHub issue opened → Paperclip mirror",
+      displayName: "GitHub issue opened → Paperclip mirror (custom Actions workflow)",
       description:
-        "Receives a GitHub issue-opened payload {repo,number,title,body,url} (HMAC-signed) and creates the mirror Paperclip issue in the matching bridge's project.",
+        "Receives a GitHub issue-opened payload {repo,number,title,body,url} (HMAC-signed with inboundWebhookSecret) and creates the mirror Paperclip issue in the matching bridge's project. Requires a per-repo Actions workflow + repo secret.",
+    },
+    {
+      endpointKey: "github-app",
+      displayName: "GitHub App issues event → Paperclip mirror (no per-repo setup)",
+      description:
+        "Point the AgenticOS Developer GitHub App's webhook here and subscribe it to `issues` events. GitHub then delivers a native, signed `issues` payload for EVERY installed repo — the plugin mirrors `opened` issues into a matching bridge's project. Verified with appWebhookSecret; no per-repo Actions workflow or repo secret needed.",
     },
   ],
   // Declaring `database` is REQUIRED for the host to provision + activate the
@@ -131,9 +137,16 @@ const manifest: PaperclipPluginManifestV1 = {
       inboundWebhookSecret: {
         type: "string",
         format: "secret-ref",
-        title: "Inbound webhook HMAC secret",
+        title: "Inbound webhook HMAC secret (custom workflow path)",
         description:
-          "Shared secret the GitHub Actions workflow signs the inbound payload with (X-Hub-Signature-256). onWebhook verifies it before creating a mirror issue. Set the SAME value as the workflow's PAPERCLIP_ISSUE_SYNC_SECRET repo secret.",
+          "Shared secret the GitHub Actions workflow signs the inbound payload with (X-Hub-Signature-256). onWebhook verifies it before creating a mirror issue. Set the SAME value as the workflow's PAPERCLIP_ISSUE_SYNC_SECRET repo secret. Only needed for the `github-issue` endpoint; the `github-app` endpoint uses appWebhookSecret instead.",
+      },
+      appWebhookSecret: {
+        type: "string",
+        format: "secret-ref",
+        title: "GitHub App webhook secret (native issues path)",
+        description:
+          "The webhook secret configured on the AgenticOS Developer GitHub App. Verifies X-Hub-Signature-256 on native `issues` events delivered to the `github-app` endpoint. Set this to the SAME value as the App's webhook secret. Preferred over per-repo inboundWebhookSecret — one secret covers every installed repo.",
       },
     },
     required: ["bridges"],

@@ -67,6 +67,55 @@ export function parseInboundPayload(raw: unknown): InboundPayload | null {
 }
 
 /**
+ * Native GitHub App `issues` webhook event (the Option-B path). GitHub delivers
+ * one signed POST per issue action to the App's single webhook URL, covering
+ * EVERY installed repo — so no per-repo Actions workflow or repo secret is
+ * needed. Shape: `{ action, issue: { number, title, body, html_url, labels }, repository: { full_name } }`.
+ */
+export interface GithubIssueEvent {
+  /** e.g. "opened", "edited", "closed" — only "opened" is mirrored. */
+  action: string;
+  /** Label names on the issue, used for the outbound loop guard. */
+  labels: string[];
+  payload: InboundPayload;
+}
+
+/**
+ * Parse GitHub's native `issues` event webhook body into our InboundPayload.
+ * Returns null if it isn't a usable issue event. Unlike the custom endpoint,
+ * `repo` comes from `repository.full_name` and the fields live under `issue`.
+ */
+export function parseGithubAppIssueEvent(raw: unknown): GithubIssueEvent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const action = typeof o.action === "string" ? o.action : "";
+  const repository = (o.repository ?? {}) as Record<string, unknown>;
+  const issue = (o.issue ?? {}) as Record<string, unknown>;
+
+  const repo = typeof repository.full_name === "string" ? repository.full_name : "";
+  const number = typeof issue.number === "number" ? issue.number : Number(issue.number);
+  const title = typeof issue.title === "string" ? issue.title : "";
+  if (!repo || !Number.isFinite(number) || number <= 0 || !title) return null;
+
+  const rawLabels = Array.isArray(issue.labels) ? issue.labels : [];
+  const labels = rawLabels
+    .map((l) => (l && typeof l === "object" ? (l as Record<string, unknown>).name : l))
+    .filter((n): n is string => typeof n === "string");
+
+  return {
+    action,
+    labels,
+    payload: {
+      repo,
+      number,
+      title,
+      body: typeof issue.body === "string" ? issue.body : "",
+      url: typeof issue.html_url === "string" ? issue.html_url : "",
+    },
+  };
+}
+
+/**
  * The GitHub→Paperclip marker. MUST stay compatible with sync.ts's
  * `detectGithubMarker` regex `/<!--\s*synced-from-github:\s*([^\s#]+)#(\d+)\s*-->/i`
  * so the outbound handler recognises inbound-origin issues and skips the bounce.

@@ -6,8 +6,10 @@ import { getByRepoNumber, upsert } from "./mapping.js";
 import {
   buildInboundDescription,
   getHeader,
+  parseGithubAppIssueEvent,
   parseInboundPayload,
   verifyGithubSignature,
+  type InboundPayload,
 } from "./inbound.js";
 import {
   handleIssueCreated,
@@ -15,8 +17,11 @@ import {
   type SyncDeps,
 } from "./sync.js";
 
-/** Manifest-declared inbound webhook endpoint key (GitHub → Paperclip). */
+/** Manifest-declared inbound webhook endpoint keys (GitHub → Paperclip). */
+/** Custom Actions-workflow path: a signed {repo,number,title,body,url} payload. */
 const INBOUND_ENDPOINT_KEY = "github-issue";
+/** Native GitHub App path: GitHub's own signed `issues` event, one App webhook for all repos. */
+const APP_WEBHOOK_ENDPOINT_KEY = "github-app";
 
 /** Captured in setup() so onWebhook (which only receives `input`) can reach ctx. */
 let currentContext: PluginContext | null = null;
@@ -46,8 +51,10 @@ interface GithubSyncConfig {
   githubToken?: string;
   /** Company owning the synced projects — required to create inbound mirror issues. */
   companyId?: string;
-  /** HMAC secret for the inbound GitHub webhook (verifies X-Hub-Signature-256). */
+  /** HMAC secret for the custom inbound GitHub webhook (verifies X-Hub-Signature-256). */
   inboundWebhookSecret?: string;
+  /** HMAC secret configured on the GitHub App's webhook (native `issues` events). */
+  appWebhookSecret?: string;
 }
 
 function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
@@ -72,6 +79,7 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
     githubToken: raw.githubToken ? String(raw.githubToken) : undefined,
     companyId: raw.companyId ? String(raw.companyId) : undefined,
     inboundWebhookSecret: raw.inboundWebhookSecret ? String(raw.inboundWebhookSecret) : undefined,
+    appWebhookSecret: raw.appWebhookSecret ? String(raw.appWebhookSecret) : undefined,
   };
 }
 
@@ -117,6 +125,155 @@ function makeDispatch(
       });
     }
   };
+}
+
+/** Find the bridge whose repo matches "org/repo" or the bare repo name. */
+function matchBridge(cfg: GithubSyncConfig, repo: string): BridgeConfig | undefined {
+  return cfg.bridges.find(
+    (b) =>
+      `${b.githubOrg}/${b.githubRepo}`.toLowerCase() === repo.toLowerCase() ||
+      b.githubRepo.toLowerCase() === repo.toLowerCase(),
+  );
+}
+
+/**
+ * Shared inbound tail. Dedupe an already-mirrored GitHub issue, else create the
+ * mirror Paperclip issue and record the mapping (origin "github") up front so the
+ * issue.created event it triggers is seen as already-mapped and NOT bounced back.
+ */
+async function createMirrorIssue(
+  ctx: PluginContext,
+  cfg: GithubSyncConfig,
+  bridge: BridgeConfig,
+  payload: InboundPayload,
+): Promise<void> {
+  if (!cfg.companyId) {
+    ctx.logger.error("inbound webhook: companyId not configured — cannot create issue");
+    return;
+  }
+
+  // Idempotency: skip redeliveries of an already-mirrored GitHub issue. This also
+  // catches Paperclip-origin issues (outbound sync recorded their mapping first).
+  const existing = await getByRepoNumber(ctx.db, payload.repo, payload.number);
+  if (existing) {
+    ctx.logger.info("inbound webhook: already mirrored; skipping", {
+      repo: payload.repo,
+      number: payload.number,
+    });
+    return;
+  }
+
+  const issue = await ctx.issues.create({
+    companyId: cfg.companyId,
+    projectId: bridge.paperclipProjectId,
+    title: payload.title,
+    description: buildInboundDescription(payload),
+    status: "todo",
+    priority: "medium",
+  });
+
+  await upsert(ctx.db, {
+    paperclipIssueId: issue.id,
+    githubRepo: payload.repo,
+    githubIssueNumber: payload.number,
+    lastSyncedAt: new Date().toISOString(),
+    origin: "github",
+  });
+
+  ctx.logger.info("inbound: created Paperclip issue from GitHub", {
+    repo: payload.repo,
+    number: payload.number,
+    projectId: bridge.paperclipProjectId,
+    issueId: issue.id,
+  });
+}
+
+/**
+ * Custom Actions-workflow endpoint (`github-issue`): a per-repo workflow signs a
+ * `{repo,number,title,body,url}` payload with the shared `inboundWebhookSecret`.
+ */
+async function handleCustomInbound(
+  ctx: PluginContext,
+  cfg: GithubSyncConfig,
+  input: PluginWebhookInput,
+): Promise<void> {
+  if (!cfg.inboundWebhookSecret) {
+    ctx.logger.error("inbound webhook: no inboundWebhookSecret configured — rejecting");
+    return;
+  }
+  if (!verifyGithubSignature(input.rawBody, cfg.inboundWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
+    ctx.logger.warn("inbound webhook: signature verification failed");
+    return;
+  }
+
+  const payload = parseInboundPayload(input.parsedBody ?? safeJson(input.rawBody));
+  if (!payload) {
+    ctx.logger.warn("inbound webhook: unparseable/invalid payload");
+    return;
+  }
+
+  const bridge = matchBridge(cfg, payload.repo);
+  if (!bridge) {
+    ctx.logger.info("inbound webhook: repo not in a synced bridge; ignoring", { repo: payload.repo });
+    return;
+  }
+  await createMirrorIssue(ctx, cfg, bridge, payload);
+}
+
+/**
+ * Native GitHub App endpoint (`github-app`): GitHub delivers its own signed
+ * `issues` event for EVERY installed repo. We verify the App webhook secret,
+ * mirror only `opened` issues, and skip Paperclip-origin issues (label guard).
+ */
+async function handleAppInbound(
+  ctx: PluginContext,
+  cfg: GithubSyncConfig,
+  input: PluginWebhookInput,
+): Promise<void> {
+  if (!cfg.appWebhookSecret) {
+    ctx.logger.error("app webhook: no appWebhookSecret configured — rejecting");
+    return;
+  }
+  if (!verifyGithubSignature(input.rawBody, cfg.appWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
+    ctx.logger.warn("app webhook: signature verification failed");
+    return;
+  }
+
+  // GitHub sets X-GitHub-Event; ignore anything but `issues`. Lenient if absent.
+  const eventType = getHeader(input.headers, "x-github-event");
+  if (eventType && eventType !== "issues") {
+    ctx.logger.info("app webhook: ignoring non-issues event", { eventType });
+    return;
+  }
+
+  const event = parseGithubAppIssueEvent(input.parsedBody ?? safeJson(input.rawBody));
+  if (!event) {
+    ctx.logger.warn("app webhook: unparseable/invalid issues payload");
+    return;
+  }
+  if (event.action !== "opened") {
+    ctx.logger.info("app webhook: ignoring issue action", { action: event.action });
+    return;
+  }
+
+  const bridge = matchBridge(cfg, event.payload.repo);
+  if (!bridge) {
+    ctx.logger.info("app webhook: repo not in a synced bridge; ignoring", { repo: event.payload.repo });
+    return;
+  }
+
+  // Loop guard: never mirror an issue GitHub already shows as Paperclip-origin.
+  // createMirrorIssue's getByRepoNumber dedupe also catches these, but the label
+  // check avoids a needless read and is robust if the mapping row is missing.
+  if (event.labels.some((l) => l.toLowerCase() === bridge.syncLabelPaperclip.toLowerCase())) {
+    ctx.logger.info("app webhook: issue is Paperclip-origin (label); skipping", {
+      repo: event.payload.repo,
+      number: event.payload.number,
+    });
+    return;
+  }
+
+  await createMirrorIssue(ctx, cfg, bridge, event.payload);
 }
 
 const plugin = definePlugin({
@@ -193,90 +350,28 @@ const plugin = definePlugin({
   },
 
   /**
-   * Inbound leg (GitHub → Paperclip). The host routes the public endpoint
-   * `POST /api/plugins/:id/webhooks/github-issue` here. We verify the HMAC
-   * (the plugin's responsibility), then create the mirror issue directly —
-   * routines can't, since every routine run requires an agent.
+   * Inbound leg (GitHub → Paperclip). The host routes two public endpoints here:
+   *   - `POST …/webhooks/github-issue` → a custom Actions-workflow payload, or
+   *   - `POST …/webhooks/github-app`   → GitHub's native `issues` App-webhook event.
+   * Each verifies its own HMAC (the plugin's responsibility) then creates the
+   * mirror issue directly — routines can't, since every routine run needs an agent.
    */
   async onWebhook(input: PluginWebhookInput): Promise<void> {
     const ctx = currentContext;
     if (!ctx) return;
-    if (input.endpointKey !== INBOUND_ENDPOINT_KEY) {
-      ctx.logger.warn("inbound webhook: unknown endpoint", { endpointKey: input.endpointKey });
-      return;
-    }
 
     const cfg = readConfig(await ctx.config.get());
-    if (!cfg.inboundWebhookSecret) {
-      ctx.logger.error("inbound webhook: no inboundWebhookSecret configured — rejecting");
-      return;
-    }
-    if (!verifyGithubSignature(input.rawBody, cfg.inboundWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
-      ctx.logger.warn("inbound webhook: signature verification failed");
-      return;
-    }
-
-    const payload = parseInboundPayload(input.parsedBody ?? safeJson(input.rawBody));
-    if (!payload) {
-      ctx.logger.warn("inbound webhook: unparseable/invalid payload");
-      return;
-    }
-
-    // Match the repo to a configured bridge ("org/repo" or the bare repo name).
-    const bridge = cfg.bridges.find(
-      (b) =>
-        `${b.githubOrg}/${b.githubRepo}`.toLowerCase() === payload.repo.toLowerCase() ||
-        b.githubRepo.toLowerCase() === payload.repo.toLowerCase(),
-    );
-    if (!bridge) {
-      ctx.logger.info("inbound webhook: repo not in a synced bridge; ignoring", { repo: payload.repo });
-      return;
-    }
-    if (!cfg.companyId) {
-      ctx.logger.error("inbound webhook: companyId not configured — cannot create issue");
-      return;
-    }
-
     try {
-      // Idempotency: skip redeliveries of an already-mirrored GitHub issue.
-      const existing = await getByRepoNumber(ctx.db, payload.repo, payload.number);
-      if (existing) {
-        ctx.logger.info("inbound webhook: already mirrored; skipping", {
-          repo: payload.repo,
-          number: payload.number,
-        });
-        return;
+      if (input.endpointKey === INBOUND_ENDPOINT_KEY) {
+        await handleCustomInbound(ctx, cfg, input);
+      } else if (input.endpointKey === APP_WEBHOOK_ENDPOINT_KEY) {
+        await handleAppInbound(ctx, cfg, input);
+      } else {
+        ctx.logger.warn("inbound webhook: unknown endpoint", { endpointKey: input.endpointKey });
       }
-
-      const issue = await ctx.issues.create({
-        companyId: cfg.companyId,
-        projectId: bridge.paperclipProjectId,
-        title: payload.title,
-        description: buildInboundDescription(payload),
-        status: "todo",
-        priority: "medium",
-      });
-
-      // Record the mapping (origin github) up front so the issue.created event this
-      // triggers is seen as already-mapped and is NOT bounced back to GitHub.
-      await upsert(ctx.db, {
-        paperclipIssueId: issue.id,
-        githubRepo: payload.repo,
-        githubIssueNumber: payload.number,
-        lastSyncedAt: new Date().toISOString(),
-        origin: "github",
-      });
-
-      ctx.logger.info("inbound: created Paperclip issue from GitHub", {
-        repo: payload.repo,
-        number: payload.number,
-        projectId: bridge.paperclipProjectId,
-        issueId: issue.id,
-      });
     } catch (err) {
-      ctx.logger.error("inbound webhook: failed to create mirror issue", {
-        repo: payload.repo,
-        number: payload.number,
+      ctx.logger.error("inbound webhook: handler failed", {
+        endpointKey: input.endpointKey,
         error: err instanceof Error ? err.message : String(err),
       });
     }

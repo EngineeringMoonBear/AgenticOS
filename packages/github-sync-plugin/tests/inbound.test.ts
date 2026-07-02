@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import {
   buildInboundDescription,
   getHeader,
+  parseGithubAppIssueEvent,
   parseInboundPayload,
   verifyGithubSignature,
   type InboundPayload,
@@ -49,6 +50,50 @@ describe("parseInboundPayload", () => {
     expect(parseInboundPayload({ repo: "o/r", number: 7 })).toBeNull();
     expect(parseInboundPayload({ repo: "o/r", number: 0, title: "t" })).toBeNull();
     expect(parseInboundPayload("nope")).toBeNull();
+  });
+});
+
+describe("parseGithubAppIssueEvent", () => {
+  const event = (over: Record<string, unknown> = {}) => ({
+    action: "opened",
+    repository: { full_name: "Goldberry-Playground/odoocker-goldberrygrove" },
+    issue: {
+      number: 42,
+      title: "Bug: cart 500s",
+      body: "steps...",
+      html_url: "https://github.com/Goldberry-Playground/odoocker-goldberrygrove/issues/42",
+      labels: [{ name: "bug" }, { name: "synced-from-paperclip" }],
+    },
+    ...over,
+  });
+
+  it("maps a native issues payload to InboundPayload + action + labels", () => {
+    const parsed = parseGithubAppIssueEvent(event());
+    expect(parsed?.action).toBe("opened");
+    expect(parsed?.labels).toEqual(["bug", "synced-from-paperclip"]);
+    expect(parsed?.payload).toEqual({
+      repo: "Goldberry-Playground/odoocker-goldberrygrove",
+      number: 42,
+      title: "Bug: cart 500s",
+      body: "steps...",
+      url: "https://github.com/Goldberry-Playground/odoocker-goldberrygrove/issues/42",
+    });
+  });
+
+  it("preserves non-opened actions (caller decides to skip)", () => {
+    expect(parseGithubAppIssueEvent(event({ action: "edited" }))?.action).toBe("edited");
+  });
+
+  it("tolerates string-valued labels and a missing labels array", () => {
+    expect(parseGithubAppIssueEvent(event({ issue: { number: 1, title: "t", labels: ["x"] } }))?.labels).toEqual(["x"]);
+    expect(parseGithubAppIssueEvent(event({ issue: { number: 1, title: "t" } }))?.labels).toEqual([]);
+  });
+
+  it("returns null without repository.full_name, title, or a positive number", () => {
+    expect(parseGithubAppIssueEvent(event({ repository: {} }))).toBeNull();
+    expect(parseGithubAppIssueEvent(event({ issue: { number: 42, title: "" } }))).toBeNull();
+    expect(parseGithubAppIssueEvent(event({ issue: { number: 0, title: "t" } }))).toBeNull();
+    expect(parseGithubAppIssueEvent("nope")).toBeNull();
   });
 });
 
