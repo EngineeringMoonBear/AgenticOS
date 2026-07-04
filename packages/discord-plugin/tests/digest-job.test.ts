@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runDigest } from "../src/digest/job.js";
+import { runDigest, paginateDigest } from "../src/digest/job.js";
 import { renderMetaBlock, renderExtractionComment } from "../src/receipt-meta.js";
 import type { ReceiptMeta, ReceiptExtraction } from "../src/types.js";
 
@@ -61,5 +61,17 @@ describe("runDigest", () => {
     const out = await runDigest(deps);
     expect(out.receipts).toBe(1);
     expect(dms[0]).toContain("needs attention");
+  });
+
+  it("paginates into multiple DMs under 2000 chars when URLs are long", async () => {
+    const items = Array.from({ length: 8 }, (_, i) => receipt(i + 1, "card"));
+    const { deps, dms } = makeDeps(items);
+    deps.archive.presignGet = async (key: string) => `https://signed/${key}?sig=${"x".repeat(400)}`;
+    const out = await runDigest(deps);
+    expect(out).toEqual({ receipts: 8, sent: true });
+    expect(dms.length).toBeGreaterThan(1);
+    for (const dm of dms) expect(dm.length).toBeLessThanOrEqual(2000);
+    expect(dms[0]).toContain("Receipt attach pass");
+    expect(dms.at(-1)).toContain("After attaching in FarmRaise");
   });
 });
