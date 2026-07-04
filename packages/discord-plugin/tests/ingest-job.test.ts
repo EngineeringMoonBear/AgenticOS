@@ -99,4 +99,31 @@ describe("runIngest", () => {
     expect(created).toHaveLength(0);
     expect(cursorRef()).toBe("10"); // still consume it
   });
+
+  it("partial-message failure: first attachment's issue survives, re-run dedups it and retries the second", async () => {
+    const twoAtt = msg("10", [
+      { id: "a", filename: "r1.jpg", content_type: "image/jpeg" },
+      { id: "b", filename: "r2.jpg", content_type: "image/jpeg" },
+    ]);
+
+    // Run 1: attachment "a" succeeds, attachment "b" fails at issue creation.
+    const first = makeFakes([twoAtt]);
+    first.deps.issues.createReceiptIssue = async (input: { title: string; description: string }) => {
+      if (input.title.includes("/b)")) throw new Error("db down");
+      first.created.push(input);
+      return { id: "issue-1" };
+    };
+    const run1 = await runIngest(first.deps);
+    expect(run1).toMatchObject({ created: 1, failed: 1 });
+    expect(first.cursorRef()).toBeNull(); // cursor never advanced onto message 10
+
+    // Run 2 (fresh poll of the same message): "a" already exists, only "b" is created.
+    const second = makeFakes([twoAtt]);
+    second.existing.add("10:a");
+    const run2 = await runIngest(second.deps);
+    expect(run2).toMatchObject({ created: 1, skippedDuplicates: 1, failed: 0 });
+    expect(second.created).toHaveLength(1);
+    expect(second.created[0]!.title).toContain("/b)");
+    expect(second.cursorRef()).toBe("10");
+  });
 });
