@@ -75,3 +75,45 @@ configure_openviking() {
   api POST "/api/plugins/${id}/config" "$cfg" >/dev/null
   echo "    openviking-plugin config set"
 }
+
+# configure_discord_plugin — POST discord-plugin config (secrets from 1Password).
+# Env vars required (all :? so the script fails fast if unset):
+#   DISCORD_RECEIPTS_CHANNEL_ID   Discord channel id for #receipts (or #receipts-test)
+#   PAPERCLIP_COMPANY_ID          company row id from the Paperclip DB
+#   PENNY_AGENT_ID                agent row id for Penny in the Paperclip DB
+#   JOSH_DISCORD_USER_ID          Josh's Discord user snowflake (for DM digests)
+# 1Password fields (same OP_VAULT/OP_ITEM as the rest of this lib):
+#   discord-bot-token, spaces-receipts-key, spaces-receipts-secret
+configure_discord_plugin() {
+  local id discord_token spaces_key spaces_secret cfg
+  discord_token="$(op_read discord-bot-token)"
+  [ -n "$discord_token" ] || { echo "FATAL: discord-bot-token empty" >&2; return 1; }
+  spaces_key="$(op_read spaces-receipts-key)"
+  [ -n "$spaces_key" ] || { echo "FATAL: spaces-receipts-key empty" >&2; return 1; }
+  spaces_secret="$(op_read spaces-receipts-secret)"
+  [ -n "$spaces_secret" ] || { echo "FATAL: spaces-receipts-secret empty" >&2; return 1; }
+  id="$(resolve_plugin_id agenticos.discord-plugin)"
+  [ -n "$id" ] || { echo "FATAL: discord-plugin not installed" >&2; return 1; }
+  cfg="$(jq -nc \
+    --arg t  "$discord_token" \
+    --arg chan "${DISCORD_RECEIPTS_CHANNEL_ID:?set DISCORD_RECEIPTS_CHANNEL_ID}" \
+    --arg co  "${PAPERCLIP_COMPANY_ID:?set PAPERCLIP_COMPANY_ID}" \
+    --arg penny "${PENNY_AGENT_ID:?set PENNY_AGENT_ID}" \
+    --arg josh  "${JOSH_DISCORD_USER_ID:?set JOSH_DISCORD_USER_ID}" \
+    --arg sk "$spaces_key" \
+    --arg ss "$spaces_secret" \
+    '{configJson:{
+      discordBotToken:$t,
+      receiptsChannelId:$chan,
+      companyId:$co,
+      pennyAgentId:$penny,
+      joshDiscordUserId:$josh,
+      spacesKey:$sk,
+      spacesSecret:$ss,
+      spacesBucket:"agenticos-receipts",
+      spacesRegion:"nyc3",
+      spacesEndpoint:"https://nyc3.digitaloceanspaces.com",
+      presignExpirySeconds:604800}}')"
+  api POST "/api/plugins/${id}/config" "$cfg" >/dev/null
+  echo "    discord-plugin config set"
+}

@@ -300,6 +300,7 @@ services:
       - ./packages/openviking-plugin:/paperclip/plugins/openviking-plugin:ro
       - ./packages/github-plugin:/paperclip/plugins/github-plugin:ro
       - ./packages/github-sync-plugin:/paperclip/plugins/github-sync-plugin:ro
+      - ./packages/discord-plugin:/paperclip/plugins/discord-plugin:ro
       # Shared agent house-rules (internal API endpoint + local Obsidian vault).
       # Reference it from each agent's adapterConfig.instructionsFilePath =
       # /paperclip/agent-house-rules.md so it's prepended to every run.

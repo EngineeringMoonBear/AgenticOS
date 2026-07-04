@@ -17,7 +17,7 @@
 #   5. assert — plugin present and not in an error state
 #
 # Usage: scripts/deploy-plugin.sh <plugin> [<plugin> ...]
-#   plugin ∈ vault-plugin | openviking-plugin | github-plugin | github-sync-plugin
+#   plugin ∈ vault-plugin | openviking-plugin | github-plugin | github-sync-plugin | discord-plugin
 #
 # Env: as paperclip-lib.sh, plus:
 #   DROPLET_SSH   default "deploy@agenticos-droplet"  (recreate-guard SSH target)
@@ -30,7 +30,7 @@ source "${HERE}/paperclip-lib.sh"
 
 DROPLET_SSH="${DROPLET_SSH:-deploy@agenticos-droplet}"
 COMPOSE_DIR="${COMPOSE_DIR:-/opt/agenticos}"
-VALID_PLUGINS="vault-plugin openviking-plugin github-plugin github-sync-plugin"
+VALID_PLUGINS="vault-plugin openviking-plugin github-plugin github-sync-plugin discord-plugin"
 
 usage() {
   echo "Usage: $0 <plugin> [<plugin> ...]" >&2
@@ -93,6 +93,7 @@ apply_config() {
     openviking-plugin)  configure_openviking ;;
     vault-plugin)       echo "    ${p}: no config" ;;
     github-sync-plugin) echo "    ${p}: config deferred -> see docs/runbooks/github-issue-sync.md" ;;
+    discord-plugin)     configure_discord_plugin ;;
   esac
 }
 
