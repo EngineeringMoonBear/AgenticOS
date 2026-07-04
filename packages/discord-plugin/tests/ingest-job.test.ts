@@ -17,7 +17,7 @@ function msg(id: string, attachments: Array<{ id: string; filename: string; cont
 }
 
 function makeFakes(messages: DiscordMessage[]) {
-  const created: Array<{ title: string; description: string }> = [];
+  const created: Array<{ title: string; description: string; originId: string }> = [];
   const existing = new Set<string>();
   let cursor: string | null = null;
   const deps = {
@@ -31,7 +31,7 @@ function makeFakes(messages: DiscordMessage[]) {
     },
     issues: {
       existsByOrigin: async (originId: string) => existing.has(originId),
-      createReceiptIssue: async (input: { title: string; description: string }) => {
+      createReceiptIssue: async (input: { title: string; description: string; originId: string }) => {
         created.push(input);
         return { id: `issue-${created.length}` };
       },
@@ -82,8 +82,8 @@ describe("runIngest", () => {
       msg("10", [{ id: "a", filename: "r1.jpg", content_type: "image/jpeg" }]),
       msg("11", [{ id: "b", filename: "r2.jpg", content_type: "image/jpeg" }]),
     ]);
-    deps.issues.createReceiptIssue = async (input: { title: string }) => {
-      if (input.title.includes("11")) throw new Error("db down");
+    deps.issues.createReceiptIssue = async (input: { title: string; description: string; originId: string }) => {
+      if (input.originId.startsWith("11:")) throw new Error("db down");
       return { id: "issue-1" };
     };
     const summary = await runIngest(deps);
@@ -108,8 +108,8 @@ describe("runIngest", () => {
 
     // Run 1: attachment "a" succeeds, attachment "b" fails at issue creation.
     const first = makeFakes([twoAtt]);
-    first.deps.issues.createReceiptIssue = async (input: { title: string; description: string }) => {
-      if (input.title.includes("/b)")) throw new Error("db down");
+    first.deps.issues.createReceiptIssue = async (input: { title: string; description: string; originId: string }) => {
+      if (input.originId === "10:b") throw new Error("db down");
       first.created.push(input);
       return { id: "issue-1" };
     };

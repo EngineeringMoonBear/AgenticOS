@@ -15,7 +15,7 @@ export interface IngestArchive {
 
 export interface IngestIssues {
   existsByOrigin(originId: string): Promise<boolean>;
-  createReceiptIssue(input: { title: string; description: string }): Promise<{ id: string }>;
+  createReceiptIssue(input: { title: string; description: string; originId: string }): Promise<{ id: string }>;
 }
 
 export interface IngestState {
@@ -95,6 +95,7 @@ export async function runIngest(deps: {
         await deps.issues.createReceiptIssue({
           title: `RCPT ${message.timestamp.slice(0, 10)} from ${message.author.username} (${message.id}/${att.id})`,
           description,
+          originId,
         });
         summary.created += 1;
       }
