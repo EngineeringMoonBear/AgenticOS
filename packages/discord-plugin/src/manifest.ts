@@ -16,6 +16,10 @@ const manifest: PaperclipPluginManifestV1 = {
     "issues.create",
     "issues.update",
     "issue.comments.create",
+    "issue.comments.read",
+    "plugin.state.read",
+    "plugin.state.write",
+    "agent.tools.register",
   ],
   jobs: [
     {
