@@ -134,3 +134,15 @@ variable "paperclip_tunnel_secret" {
   type        = string
   sensitive   = true
 }
+
+variable "alert_emails" {
+  description = "Email addresses that receive DigitalOcean droplet resource alerts (memory/disk/load). Defaults to the operator."
+  type        = list(string)
+  default     = ["josh@goldberrygrove.farm"]
+}
+
+variable "alert_slack" {
+  description = "Optional Slack/Discord-compatible incoming-webhook for DO alerts. Leave url empty to send email only. (DO's Slack alert type also posts to Discord webhooks with /slack appended.)"
+  type = object({ url = string, channel = string })
+  default = { url = "", channel = "" }
+}
