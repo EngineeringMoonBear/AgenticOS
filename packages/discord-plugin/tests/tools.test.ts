@@ -59,12 +59,28 @@ describe("receipt_record_extraction", () => {
     expect(typeof out.error).toBe("string");
     expect(calls.statuses).toHaveLength(0);
     expect(calls.sidecars).toHaveLength(0);
+    expect(calls.comments).toHaveLength(0);
+    expect(calls.replies).toHaveLength(0);
   });
 
   it("errors when issue has no receipt-meta block", async () => {
     const { deps } = makeDeps("plain description");
     const out = await handleRecordExtraction(deps, { issueId: "i1", extraction });
     expect(out.error).toContain("receipt-meta");
+  });
+
+  it("rejects NaN confidence and strips unknown fields from valid extractions", async () => {
+    const { deps, calls } = makeDeps();
+    const bad = await handleRecordExtraction(deps, { issueId: "i1", extraction: { ...extraction, confidence: NaN } });
+    expect(typeof bad.error).toBe("string");
+    expect(calls.sidecars).toHaveLength(0);
+
+    const ok = await handleRecordExtraction(deps, {
+      issueId: "i1",
+      extraction: { ...extraction, injected_field: "sneaky" },
+    });
+    expect(ok.error).toBeUndefined();
+    expect(calls.sidecars[0]!.value).not.toHaveProperty("injected_field");
   });
 });
 

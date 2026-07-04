@@ -25,13 +25,26 @@ function validateExtraction(raw: unknown): ReceiptExtraction | string {
   const x = raw as Record<string, unknown>;
   if (typeof x.vendor !== "string" || x.vendor.length === 0) return "vendor must be a non-empty string";
   if (typeof x.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(x.date)) return "date must be YYYY-MM-DD";
-  if (typeof x.total !== "number" || !(x.total > 0)) return "total must be a positive number";
+  if (typeof x.total !== "number" || !Number.isFinite(x.total) || !(x.total > 0)) return "total must be a positive number";
   if (!["card", "cash", "check", "unknown"].includes(x.payment_method as string)) return "invalid payment_method";
   if (typeof x.suggested_category !== "string" || x.suggested_category.length === 0) return "suggested_category required";
-  if (typeof x.confidence !== "number" || x.confidence < 0 || x.confidence > 1) return "confidence must be 0..1";
+  if (typeof x.confidence !== "number" || !Number.isFinite(x.confidence) || x.confidence < 0 || x.confidence > 1) return "confidence must be 0..1";
   if (!Array.isArray(x.flags)) return "flags must be an array";
   if (!Array.isArray(x.line_items)) return "line_items must be an array";
-  return { ...(x as unknown as ReceiptExtraction), v: 1 };
+  return {
+    v: 1,
+    vendor: x.vendor as string,
+    date: x.date as string,
+    total: x.total as number,
+    payment_method: x.payment_method as ReceiptExtraction["payment_method"],
+    line_items: (x.line_items as ReceiptExtraction["line_items"]).map((li) => ({
+      description: String(li.description),
+      amount: Number(li.amount),
+    })),
+    suggested_category: x.suggested_category as string,
+    confidence: x.confidence as number,
+    flags: (x.flags as unknown[]).map(String),
+  };
 }
 
 export async function handleRecordExtraction(deps: ToolDeps, params: unknown): Promise<Record<string, unknown>> {
