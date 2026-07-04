@@ -51,20 +51,49 @@ heading() {
 }
 
 # ───── DigitalOcean ─────
-heading "DigitalOcean"
-http_get https://api.digitalocean.com/v2/account "Authorization: Bearer $TF_VAR_do_token"
+# GOL-75: the DO token is least-privilege scoped (droplet r+w + monitoring r+w
+# ONLY). We must NOT validate it against /v2/account — a scoped token 403s there
+# by design. Instead we prove the two in-scope surfaces (droplet + monitoring)
+# AND assert that account access is denied, so an accidentally full-privilege
+# token is caught here rather than silently widening blast radius.
+DO_DROPLET_ID="${AGENTICOS_DROPLET_ID:-572389418}"
+heading "DigitalOcean (scoped: droplet + monitoring)"
+
+# 1) droplet:read must work
+http_get "https://api.digitalocean.com/v2/droplets/$DO_DROPLET_ID" "Authorization: Bearer $TF_VAR_do_token"
 if [ "$HTTP_CODE" = "200" ]; then
-    email="$(jq -r '.account.email // "?"' < "$BODY")"
-    status="$(jq -r '.account.status // "?"' < "$BODY")"
-    droplet_limit="$(jq -r '.account.droplet_limit // "?"' < "$BODY")"
-    green "✓ DO API auth ok"
-    echo "    account:        $email"
-    echo "    status:         $status"
-    echo "    droplet limit:  $droplet_limit"
+    name="$(jq -r '.droplet.name // "?"' < "$BODY")"
+    region="$(jq -r '.droplet.region.slug // "?"' < "$BODY")"
+    green "✓ DO droplet:read ok (droplet $DO_DROPLET_ID)"
+    echo "    name:   $name"
+    echo "    region: $region"
 else
-    red "✗ DO API returned HTTP $HTTP_CODE"
+    red "✗ DO droplet:read returned HTTP $HTTP_CODE (expected 200 for droplet $DO_DROPLET_ID)"
     head -5 "$BODY"
     FAILED=$((FAILED+1))
+fi
+
+# 2) monitoring:read must work
+http_get "https://api.digitalocean.com/v2/monitoring/alerts" "Authorization: Bearer $TF_VAR_do_token"
+if [ "$HTTP_CODE" = "200" ]; then
+    n="$(jq -r '.policies | length' < "$BODY" 2>/dev/null || echo "?")"
+    green "✓ DO monitoring:read ok ($n alert policies)"
+else
+    red "✗ DO monitoring:read returned HTTP $HTTP_CODE (expected 200)"
+    head -5 "$BODY"
+    FAILED=$((FAILED+1))
+fi
+
+# 3) account access MUST be denied — proves the token is least-privilege
+http_get "https://api.digitalocean.com/v2/account" "Authorization: Bearer $TF_VAR_do_token"
+if [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "401" ]; then
+    green "✓ DO /v2/account denied (HTTP $HTTP_CODE) — token is correctly scoped"
+elif [ "$HTTP_CODE" = "200" ]; then
+    red "✗ DO /v2/account returned 200 — token is FULL-PRIVILEGE, not the scoped grant (GOL-75)"
+    FAILED=$((FAILED+1))
+else
+    yellow "⚠ DO /v2/account returned HTTP $HTTP_CODE (expected 401/403); verify token scope manually"
+    WARN=$((WARN+1))
 fi
 
 # ───── Tailscale ─────

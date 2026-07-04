@@ -1,5 +1,5 @@
 variable "do_token" {
-  description = "DigitalOcean Personal Access Token with read+write to all resources"
+  description = "DigitalOcean least-privilege scoped PAT: droplet read+write + monitoring read+write ONLY (GOL-75). Sourced from op://Goldberry Grove - Admin/GoldberryGrove Infra/do_token_scoped. NOT a full-account token."
   type        = string
   sensitive   = true
 }
