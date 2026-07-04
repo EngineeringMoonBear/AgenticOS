@@ -120,4 +120,15 @@ describe("DiscordClient", () => {
     expect(res.ok).toBe(true);
     if (res.ok) expect([...res.data]).toEqual([1, 2, 3]);
   });
+
+  it("react PUTs the encoded emoji reaction", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await client().react("c", "m1", "🤷");
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${BASE}/channels/c/messages/m1/reactions/${encodeURIComponent("🤷")}/@me`,
+      expect.objectContaining({ method: "PUT" }),
+    );
+    expect(res.ok).toBe(true);
+  });
 });

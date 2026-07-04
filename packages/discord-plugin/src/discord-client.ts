@@ -77,7 +77,7 @@ export class DiscordClient {
       `/channels/${channelId}/messages?limit=${limit}${after}`,
     );
     if (!res.ok) return res;
-    return { ok: true, data: [...res.data].sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1)) };
+    return { ok: true, data: [...res.data].sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : BigInt(a.id) > BigInt(b.id) ? 1 : 0)) };
   }
 
   async replyToMessage(
@@ -108,12 +108,16 @@ export class DiscordClient {
 
   /** Plain download — attachment URLs are pre-signed by Discord, no bot auth header. */
   async downloadAttachment(url: string): Promise<Result<Uint8Array>> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: controller.signal });
       if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
       return { ok: true, data: new Uint8Array(await res.arrayBuffer()) };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : "download failed" };
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
