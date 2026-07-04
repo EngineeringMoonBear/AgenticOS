@@ -148,6 +148,13 @@ write_files:
       WantedBy=timers.target
 
 runcmd:
+  # --- Swap file (GOL-53): OOM safety net so a RAM spike degrades to swap
+  #     instead of hard-crashing the stack. 4G, low swappiness. Idempotent. ---
+  - test -f /swapfile || (fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile)
+  - grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - sysctl -w vm.swappiness=10
+  - echo 'vm.swappiness=10' > /etc/sysctl.d/99-swap.conf
+
   # --- SSH hardening ---
   - sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
   - sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
