@@ -20,15 +20,12 @@ terraform {
     }
   }
 
-  # Default: local state. The versioned remote bucket `agenticos-tfstate` is
-  # already bootstrapped (see state-backend/ + GOL-38). To migrate this root
-  # state onto it, DO NOT hand-edit blindly — follow the reversible runbook:
-  #   infra/terraform/MIGRATION-GOL38.md   (or: bash infra/terraform/migrate-state-gol38.sh)
-  # It backs up local state, uncomments the block below, runs
-  # `terraform init -migrate-state`, and gates on a zero-drift `terraform plan`.
-  # Kept commented until that migration is executed + verified (guardrail:
-  # local state stays authoritative until the zero-diff plan passes).
-  #
+  # Remote state — ACTIVE. State lives in the versioned `agenticos-tfstate`
+  # Spaces bucket (see state-backend/ + GOL-38). The migration has been executed
+  # and verified (zero real drift: 0 add / 0 destroy; only the known cosmetic
+  # dashboard SECRET-env re-render remains), so this block is now uncommented.
+  # Reversible runbook + script preserved at infra/terraform/MIGRATION-GOL38.md
+  # and migrate-state-gol38.sh for reference / disaster recovery.
   backend "s3" {
     # DigitalOcean Spaces speaks the S3-compatible protocol; this is NOT AWS.
     # The four skip_* flags below (esp. skip_requesting_account_id) stop the
@@ -45,6 +42,11 @@ terraform {
     # Newer AWS SDKs (provider >= 5.x) send integrity checksums Spaces returns
     # 501 Not Implemented for; without this, init/plan fail on every read/write.
     skip_s3_checksum = true
+    # NOTE: S3-native state locking via `use_lockfile = true` is deferred to
+    # GOL-40 — it requires Terraform >= 1.10 and a `required_version` bump to
+    # match. This migration (GOL-38) was executed/verified on TF 1.9.8 without
+    # it; GOL-40 adds locking + the version bump as a follow-up. Concurrency is
+    # meanwhile guarded by CI `concurrency:` groups (GOL-39).
   }
 }
 

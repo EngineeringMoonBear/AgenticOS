@@ -23,6 +23,7 @@ on:
       - 'scripts/agent-git/**'
       - 'docs/agent-house-rules.md'
       - 'docker-compose.yml'
+      - 'infra/otel/**'
       - '.github/workflows/deploy-droplet.yml'
   workflow_dispatch:
 
@@ -92,6 +93,27 @@ jobs:
              # inbound traffic.
              docker compose up -d cloudflared
              docker compose ps vault-server paperclip-server cloudflared'
+
+      - name: Reconcile otel-collector (GOL-54, conditional)
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+        run: |
+          # The otel-collector is behind the `observability` compose profile, so it starts ONLY
+          # where the obs endpoint is configured. Gate on OPENOBSERVE_OTLP_BASE being present in
+          # /opt/agenticos/.env — otherwise the collector would crash-loop exporting to an unset
+          # endpoint. Once the obs-droplet ingest URL + creds are set in .env, this brings the
+          # collector up (and applies config changes shipped via infra/otel/**). Purely additive:
+          # never touches the stateful services above.
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" '
+            set -euo pipefail
+            cd /opt/agenticos
+            if grep -q "^OPENOBSERVE_OTLP_BASE=." .env 2>/dev/null; then
+              docker compose --profile observability up -d otel-collector
+              docker compose ps otel-collector
+            else
+              echo "otel-collector not enabled (OPENOBSERVE_OTLP_BASE unset in .env); skipping — GOL-54"
+            fi'
 
       - name: Health check
         env:

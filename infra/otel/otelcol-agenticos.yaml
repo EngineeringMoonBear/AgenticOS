@@ -1,0 +1,106 @@
+# AgenticOS OTel Collector — host + container USE metrics → shared obs-droplet OpenObserve.
+#
+# GOL-54 (P1 of the GOL-51 Observability & Autoscaling strategy). Ships the AgenticOS Droplet's
+# resource telemetry (host CPU/RAM/disk/swap/net + per-container CPU/RAM) to the SEPARATE Grove
+# observability droplet's OpenObserve. Closes the gap the Grove Observability design blueprints
+# but never built. Per the corrected plan, the collector config lives in THIS repo even though it
+# exports to the shared obs stack.
+#
+# WHY PUSH-OUT, SELF-CONTAINED:
+#   - AgenticOS is its own failure domain (agent fleet + Paperclip control plane). The collector
+#     exports OTLP OUT so it never depends on the obs-droplet: if the obs-droplet is down,
+#     AgenticOS keeps running and the DO-native alerts (infra/terraform/monitor-alerts.tf, P0)
+#     still fire; if AgenticOS is down, the obs-droplet already holds the last window of metrics.
+#   - No otlp/Beyla/postgresql receivers — this box runs none of those. Host + containers only.
+#
+# Runs as the `otel-collector` compose service (profile: observability), reading /hostfs + the
+# Docker socket read-only. See docs/runbooks/agenticos-openobserve.md.
+#
+# PENDING LIVE VALIDATION: the OpenObserve OTLP endpoint/auth and resulting stream/field names
+# are the documented shapes but not yet exercised end-to-end from this box — confirm on first
+# deploy and adjust the exporter + any downstream alert stream names if they differ.
+
+extensions:
+  # OpenObserve v0.17 authenticates OTLP with the root user's basicauth in the current Grove obs
+  # stack. FOLLOW-UP (least privilege): provision a scoped ingest-only OpenObserve user on the
+  # obs-droplet and swap these creds so root creds never live on the AgenticOS box. Injected from
+  # /opt/agenticos/.env (env_file on the service).
+  basicauth/openobserve:
+    client_auth:
+      username: ${env:OPENOBSERVE_ROOT_EMAIL}
+      password: ${env:OPENOBSERVE_ROOT_PASSWORD}
+
+receivers:
+  # Host CPU/RAM/disk/filesystem/network/swap. root_path=/hostfs reads the host's /proc + /sys,
+  # mounted read-only by the compose service.
+  hostmetrics:
+    collection_interval: 30s
+    root_path: /hostfs
+    scrapers:
+      cpu:
+      load:
+      memory:
+      disk:
+      filesystem:
+      network:
+      paging:   # swap in/out + swap utilization — the swap file is the OOM safety net (P0);
+                # paging.utilization is how we see it working before the next OOM.
+
+  # Per-container CPU% + memory% (of limit) via the Docker socket. Attributes an AgenticOS RAM
+  # spike to a specific container (paperclip-server runs every agent subprocess — the OOM root
+  # cause) rather than just "the box is hot".
+  docker_stats:
+    endpoint: unix:///var/run/docker.sock
+    collection_interval: 30s
+    metrics:
+      container.cpu.utilization:
+        enabled: true
+      container.memory.percent:
+        enabled: true
+
+processors:
+  batch:
+    timeout: 10s
+  resourcedetection:
+    detectors: [env, system]
+    system:
+      hostname_sources: [os]
+  # Tag every metric so the obs-droplet can separate AgenticOS from the odoo-droplet in the SAME
+  # OpenObserve streams. Downstream OpenObserve alerts filter on host_role='agenticos'.
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: ${env:COST_ENV}
+        action: upsert
+      - key: host.role
+        value: agenticos
+        action: upsert
+      - key: host.name
+        value: agenticos
+        action: upsert
+
+exporters:
+  otlphttp/openobserve:
+    # obs-droplet OpenObserve OTLP-HTTP base, e.g. https://obs.gatheringatthegrove.com/api/default
+    # Set OPENOBSERVE_OTLP_BASE in /opt/agenticos/.env.
+    endpoint: ${env:OPENOBSERVE_OTLP_BASE}
+    auth:
+      authenticator: basicauth/openobserve
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+service:
+  extensions: [basicauth/openobserve]
+  pipelines:
+    metrics:
+      receivers: [hostmetrics, docker_stats]
+      processors: [resourcedetection, resource, batch]
+      exporters: [otlphttp/openobserve]
+  telemetry:
+    logs:
+      level: info
