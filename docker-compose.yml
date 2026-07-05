@@ -18,6 +18,9 @@ services:
   agenticos-db:
     image: pgvector/pgvector:pg15
     container_name: agenticos-db
+    # OOM guardrail (GOL-53): Postgres (max_connections=200) — cap so a connection storm can't balloon RAM.
+    mem_limit: 768m
+    mem_reservation: 256m
     restart: unless-stopped
     command: ["postgres", "-c", "max_connections=200"]
     environment:
@@ -46,6 +49,9 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
+    # OOM guardrail (GOL-53): Ollama is the elastic hog (OLLAMA_MAX_LOADED_MODELS=2) — hard-cap the model cache.
+    mem_limit: 2g
+    mem_reservation: 512m
     restart: unless-stopped
     # Bind to localhost only — other compose services (OpenViking,
     # paperclip-server) reach it on the docker-compose network at
@@ -89,6 +95,9 @@ services:
   openviking:
     image: ghcr.io/volcengine/openviking:v0.3.19
     container_name: openviking
+    # OOM guardrail (GOL-53): OpenViking memory store + sqlite/vectordb.
+    mem_limit: 768m
+    mem_reservation: 256m
     restart: unless-stopped
     # Bind on the agenticos VPC interface (10.116.16.2) so App Platform's
     # dashboard can reach Viking over the private VPC. paperclip-server reaches
@@ -129,6 +138,9 @@ services:
       dockerfile: infra/vault-server/Dockerfile
     image: agenticos/vault-server:local
     container_name: vault-server
+    # OOM guardrail (GOL-53): Small Node HTTP shim over the vault.
+    mem_limit: 256m
+    mem_reservation: 64m
     restart: unless-stopped
     # Run as the host `deploy` user (uid:gid 1000:1000) that owns /opt/vault.
     # The image's built-in `app` user is 1001, so it could read the
@@ -218,6 +230,9 @@ services:
       context: /opt/paperclip
       dockerfile: Dockerfile
     container_name: paperclip-server
+    # OOM guardrail (GOL-53): Runs every agent subprocess — the primary OOM source. Cap contains a runaway agent/LLM run to a container OOM-kill instead of crashing the whole Droplet.
+    mem_limit: 3g
+    mem_reservation: 512m
     restart: unless-stopped
     ports:
       - "10.116.16.2:3100:3100"
@@ -348,6 +363,9 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: cloudflared-paperclip
+    # OOM guardrail (GOL-53): Outbound tunnel connector.
+    mem_limit: 128m
+    mem_reservation: 32m
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
@@ -368,6 +386,9 @@ services:
   gh-token-broker:
     image: node:22-slim
     container_name: gh-token-broker
+    # OOM guardrail (GOL-53): Tiny token minter.
+    mem_limit: 128m
+    mem_reservation: 32m
     restart: unless-stopped
     command: ["node", "/app/github-app-token.mjs", "serve"]
     environment:
