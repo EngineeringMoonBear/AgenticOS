@@ -89,7 +89,12 @@ function toRuns(data: QueueDepthResponse): KpiData["activeRuns"] {
 }
 
 function toMemories(data: VikingScopesResponse): KpiData["memoriesIndexed"] {
-  if (!data.reachable) throw new Error("OpenViking unreachable");
+  // Degrade this ONE tile to null (renders "—") when OpenViking is unreachable.
+  // Must not throw: this runs inside the queryFn's return-object construction,
+  // AFTER Promise.allSettled, so a throw here escapes queryFn and fails the
+  // WHOLE query — blanking all four tiles instead of just this one, defeating
+  // the per-tile isolation the banner is built around.
+  if (!data.reachable) return null;
   const categories = Object.entries(data.scopes)
     .sort(([, a], [, b]) => b - a)
     .map(([k]) => k);
