@@ -42,6 +42,9 @@ terraform {
   #   skip_metadata_api_check     = true
   #   skip_region_validation      = true
   #   skip_requesting_account_id  = true
+  #   # Newer AWS SDKs (provider >= 5.x) send integrity checksums Spaces returns
+  #   # 501 Not Implemented for; without this, init/plan fail on every read/write.
+  #   skip_s3_checksum            = true
   # }
 }
 
