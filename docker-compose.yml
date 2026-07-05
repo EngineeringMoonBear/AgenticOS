@@ -407,6 +407,40 @@ services:
       retries: 3
       start_period: 5s
 
+  # otel-collector — host + per-container USE metrics → shared obs-droplet OpenObserve.
+  # GOL-54 (P1). Ships hostmetrics (CPU/RAM/disk/swap/net) + docker_stats (per-container
+  # CPU%/mem%) OUT to the obs-droplet, tagged host.role=agenticos. Independent host, push-out
+  # → no circular dependency; the DO-native alerts (infra/terraform/monitor-alerts.tf, P0)
+  # remain the fast redundant layer. Config: infra/otel/otelcol-agenticos.yaml.
+  #
+  # Behind the `observability` profile so it starts ONLY where the obs endpoint is configured
+  # (OPENOBSERVE_OTLP_BASE in /opt/agenticos/.env) — otherwise it would crash-loop exporting to
+  # an unset endpoint. deploy-droplet.yml starts it conditionally on that var being present.
+  # See docs/runbooks/agenticos-openobserve.md.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.0
+    container_name: otel-collector
+    profiles: ["observability"]
+    # OOM guardrail: the watcher must never be the thing that OOMs the box it watches.
+    mem_limit: 200m
+    mem_reservation: 64m
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      COST_ENV: ${COST_ENV:-agenticos}
+    env_file:
+      # OPENOBSERVE_OTLP_BASE + OPENOBSERVE_ROOT_EMAIL/PASSWORD live here (obs-droplet ingest).
+      - /opt/agenticos/.env
+    volumes:
+      - ./infra/otel/otelcol-agenticos.yaml:/etc/otelcol/config.yaml:ro
+      - /:/hostfs:ro                                    # host CPU/RAM/disk/swap via hostmetrics
+      - /var/run/docker.sock:/var/run/docker.sock:ro    # per-container CPU/RAM via docker_stats
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   agenticos-db-data:
   ollama-models:
