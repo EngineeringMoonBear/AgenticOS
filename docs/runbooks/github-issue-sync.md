@@ -69,15 +69,20 @@ gs_id=$(curl -sS "$BASE/api/plugins" -H "Authorization: Bearer $BK" \
   | jq -r '.[] | select(.pluginKey=="agenticos.github-sync-plugin") | .id')
 cfg=$(jq -nc --arg cid "$CID" --arg sec "$WHSEC" \
   --arg p1 "<AGENTICOS_PROJECT_ID>" --arg p2 "<GOLDBERRY_PROJECT_ID>" \
+  --arg fe "<FOUNDING_ENGINEER_AGENT_ID>" --arg ops "<DISCORD_OPS_WEBHOOK_URL>" \
   '{configJson:{
      companyId:$cid,
      inboundWebhookSecret:$sec,
      tokenBrokerUrl:"http://gh-token-broker:9099",
+     opsWebhookUrl:$ops,
      bridges:[
-       {githubOrg:"EngineeringMoonBear",  githubRepo:"AgenticOS",                paperclipProjectId:$p1},
-       {githubOrg:"Goldberry-Playground", githubRepo:"odoocker-goldberrygrove", paperclipProjectId:$p2}
+       {githubOrg:"EngineeringMoonBear",  githubRepo:"AgenticOS",                paperclipProjectId:$p1, defaultAssigneeAgentId:$fe},
+       {githubOrg:"Goldberry-Playground", githubRepo:"odoocker-goldberrygrove", paperclipProjectId:$p2, defaultAssigneeAgentId:$fe}
      ]
    }}')
+# defaultAssigneeAgentId is REQUIRED to close the auto-pickup loop (GOL-80): a mirror
+# created without an assignee is never picked up (agents don't take unassigned work).
+# opsWebhookUrl is optional — a Discord webhook that gets a ping on each mirror creation.
 curl -sS -X POST "$BASE/api/plugins/$gs_id/config" -H "Authorization: Bearer $BK" \
   -H "Content-Type: application/json" -d "$cfg" >/dev/null && echo "configured"
 printf '%s' "$WHSEC" | pbcopy   # secret on clipboard for the repo secret; do NOT paste it into chat

@@ -128,3 +128,33 @@ export function githubMarker(repo: string, num: number): string {
 export function buildInboundDescription(p: InboundPayload): string {
   return `${githubMarker(p.repo, p.number)}\n\n${p.body}\n\n---\nSynced from GitHub: ${p.url}`;
 }
+
+/** Facts about a freshly-created mirror, used to build the ops-visibility ping. */
+export interface MirrorOpsInfo {
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  projectId: string;
+  issueId: string;
+  /** The agent the mirror was assigned to, if default routing was configured. */
+  assigneeAgentId?: string;
+}
+
+/**
+ * Build the Discord ops-webhook message body for a newly-created mirror issue.
+ * Pure (no I/O) so it is unit-testable. When no assignee is configured we make
+ * the gap loud — an unassigned mirror never enters an agent heartbeat (heartbeat
+ * rule #1), which is exactly the silent-pileup failure GOL-80 exists to close.
+ */
+export function buildMirrorOpsMessage(info: MirrorOpsInfo): string {
+  const who = info.assigneeAgentId
+    ? `assigned → \`${info.assigneeAgentId}\``
+    : "⚠️ UNASSIGNED — set the bridge's `defaultAssigneeAgentId` so it gets picked up";
+  const link = info.url ? ` (<${info.url}>)` : "";
+  return (
+    `🔁 GitHub → Paperclip mirror created: **${info.title}** ` +
+    `[${info.repo}#${info.number}]${link} — ${who} ` +
+    `in project \`${info.projectId}\` · issue \`${info.issueId}\``
+  );
+}
