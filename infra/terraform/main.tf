@@ -20,9 +20,14 @@ terraform {
     }
   }
 
-  # Default: local state. To move state to DigitalOcean Spaces (S3-compatible),
-  # uncomment the block below, fill in the bucket details, and run:
-  #   terraform init -migrate-state
+  # Default: local state. The versioned remote bucket `agenticos-tfstate` is
+  # already bootstrapped (see state-backend/ + GOL-38). To migrate this root
+  # state onto it, DO NOT hand-edit blindly — follow the reversible runbook:
+  #   infra/terraform/MIGRATION-GOL38.md   (or: bash infra/terraform/migrate-state-gol38.sh)
+  # It backs up local state, uncomments the block below, runs
+  # `terraform init -migrate-state`, and gates on a zero-drift `terraform plan`.
+  # Kept commented until that migration is executed + verified (guardrail:
+  # local state stays authoritative until the zero-diff plan passes).
   #
   # backend "s3" {
   #   endpoint                    = "https://nyc3.digitaloceanspaces.com"
