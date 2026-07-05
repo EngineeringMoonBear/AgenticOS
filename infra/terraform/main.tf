@@ -29,23 +29,23 @@ terraform {
   # Kept commented until that migration is executed + verified (guardrail:
   # local state stays authoritative until the zero-diff plan passes).
   #
-  # backend "s3" {
-  #   # DigitalOcean Spaces speaks the S3-compatible protocol; this is NOT AWS.
-  #   # The four skip_* flags below (esp. skip_requesting_account_id) stop the
-  #   # backend from calling real AWS STS/IAM to look up an account id — without
-  #   # them, terraform hits AWS and fails with STS 403 InvalidClientTokenId.
-  #   endpoints                   = { s3 = "https://nyc3.digitaloceanspaces.com" }
-  #   region                      = "us-east-1" # required by the backend, ignored by Spaces
-  #   bucket                      = "agenticos-tfstate"
-  #   key                         = "foundation-v2/terraform.tfstate"
-  #   skip_credentials_validation = true
-  #   skip_metadata_api_check     = true
-  #   skip_region_validation      = true
-  #   skip_requesting_account_id  = true
-  #   # Newer AWS SDKs (provider >= 5.x) send integrity checksums Spaces returns
-  #   # 501 Not Implemented for; without this, init/plan fail on every read/write.
-  #   skip_s3_checksum            = true
-  # }
+  backend "s3" {
+    # DigitalOcean Spaces speaks the S3-compatible protocol; this is NOT AWS.
+    # The four skip_* flags below (esp. skip_requesting_account_id) stop the
+    # backend from calling real AWS STS/IAM to look up an account id — without
+    # them, terraform hits AWS and fails with STS 403 InvalidClientTokenId.
+    endpoints                   = { s3 = "https://nyc3.digitaloceanspaces.com" }
+    region                      = "us-east-1" # required by the backend, ignored by Spaces
+    bucket                      = "agenticos-tfstate"
+    key                         = "foundation-v2/terraform.tfstate"
+    skip_credentials_validation = true
+    skip_metadata_api_check     = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+    # Newer AWS SDKs (provider >= 5.x) send integrity checksums Spaces returns
+    # 501 Not Implemented for; without this, init/plan fail on every read/write.
+    skip_s3_checksum = true
+  }
 }
 
 provider "digitalocean" {
