@@ -5,6 +5,7 @@ import { makeBrokerTokenProvider, staticTokenProvider } from "./broker.js";
 import { getByRepoNumber, upsert } from "./mapping.js";
 import {
   buildInboundDescription,
+  buildMirrorOpsMessage,
   getHeader,
   parseGithubAppIssueEvent,
   parseInboundPayload,
@@ -34,6 +35,10 @@ function safeJson(raw: string): unknown {
   }
 }
 
+/** Paperclip issue priorities (mirrors Issue["priority"] without importing the type). */
+type IssuePriority = "critical" | "high" | "medium" | "low";
+const PRIORITIES: readonly IssuePriority[] = ["critical", "high", "medium", "low"];
+
 /** One repo ↔ project bridge. The same plugin can carry several (pluginKey is unique). */
 interface BridgeConfig {
   githubOrg: string;
@@ -41,6 +46,15 @@ interface BridgeConfig {
   paperclipProjectId: string;
   syncLabelPaperclip: string;
   syncMarkerGithub: string;
+  /**
+   * Deterministic default routing (GOL-80). When set, inbound mirror issues are
+   * created ASSIGNED to this agent so they enter its heartbeat automatically —
+   * without this a mirror lands unassigned and Paperclip agents never pick up
+   * unassigned work (heartbeat rule #1), so GitHub issues pile up unowned.
+   */
+  defaultAssigneeAgentId?: string;
+  /** Priority for mirror issues from this bridge. Defaults to "medium". */
+  defaultPriority?: IssuePriority;
 }
 
 interface GithubSyncConfig {
@@ -55,6 +69,12 @@ interface GithubSyncConfig {
   inboundWebhookSecret?: string;
   /** HMAC secret configured on the GitHub App's webhook (native `issues` events). */
   appWebhookSecret?: string;
+  /**
+   * Optional Discord (or Discord-compatible) webhook URL. When set, the plugin
+   * posts a best-effort ops ping on every mirror creation so inbound triage is
+   * never silent (GOL-80). A failed ping never blocks mirror creation.
+   */
+  opsWebhookUrl?: string;
 }
 
 function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
@@ -62,12 +82,19 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
   const bridges: BridgeConfig[] = rawBridges
     .map((b) => {
       const o = (b ?? {}) as Record<string, unknown>;
+      const rawPriority = typeof o.defaultPriority === "string" ? o.defaultPriority.toLowerCase() : "";
+      const defaultAssigneeAgentId = o.defaultAssigneeAgentId ? String(o.defaultAssigneeAgentId) : undefined;
       return {
         githubOrg: String(o.githubOrg ?? "EngineeringMoonBear"),
         githubRepo: String(o.githubRepo ?? ""),
         paperclipProjectId: String(o.paperclipProjectId ?? ""),
         syncLabelPaperclip: String(o.syncLabelPaperclip ?? "synced-from-paperclip"),
         syncMarkerGithub: String(o.syncMarkerGithub ?? "synced-from-github"),
+        defaultAssigneeAgentId,
+        // Invalid/absent priority silently falls back to "medium" at create time.
+        defaultPriority: (PRIORITIES as readonly string[]).includes(rawPriority)
+          ? (rawPriority as IssuePriority)
+          : undefined,
       };
     })
     // A bridge without a repo or project can't sync anything — drop it.
@@ -80,7 +107,31 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
     companyId: raw.companyId ? String(raw.companyId) : undefined,
     inboundWebhookSecret: raw.inboundWebhookSecret ? String(raw.inboundWebhookSecret) : undefined,
     appWebhookSecret: raw.appWebhookSecret ? String(raw.appWebhookSecret) : undefined,
+    opsWebhookUrl: raw.opsWebhookUrl ? String(raw.opsWebhookUrl) : undefined,
   };
+}
+
+/**
+ * Best-effort ops-visibility ping (GOL-80). Posts a Discord-style `{content}`
+ * message to the configured webhook. Any failure is logged and swallowed — mirror
+ * creation must never depend on the ops channel being reachable.
+ */
+async function postOpsPing(ctx: PluginContext, webhookUrl: string | undefined, content: string): Promise<void> {
+  if (!webhookUrl) return;
+  try {
+    const res = await ctx.http.fetch(webhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) {
+      ctx.logger.warn("ops webhook ping failed", { status: res.status });
+    }
+  } catch (err) {
+    ctx.logger.warn("ops webhook ping error", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
@@ -163,13 +214,18 @@ async function createMirrorIssue(
     return;
   }
 
+  // Deterministic default routing (GOL-80): assign the mirror to the bridge's
+  // configured owner so it enters an agent heartbeat automatically. Without an
+  // assignee the mirror lands unowned and no agent ever picks it up.
+  const assigneeAgentId = bridge.defaultAssigneeAgentId;
   const issue = await ctx.issues.create({
     companyId: cfg.companyId,
     projectId: bridge.paperclipProjectId,
     title: payload.title,
     description: buildInboundDescription(payload),
     status: "todo",
-    priority: "medium",
+    priority: bridge.defaultPriority ?? "medium",
+    ...(assigneeAgentId ? { assigneeAgentId } : {}),
   });
 
   await upsert(ctx.db, {
@@ -185,7 +241,32 @@ async function createMirrorIssue(
     number: payload.number,
     projectId: bridge.paperclipProjectId,
     issueId: issue.id,
+    assigneeAgentId: assigneeAgentId ?? null,
   });
+
+  if (!assigneeAgentId) {
+    // Surface the misconfiguration loudly: an unassigned mirror is the exact
+    // silent-pileup failure GOL-80 exists to close.
+    ctx.logger.warn(
+      "inbound: mirror created UNASSIGNED — set the bridge's defaultAssigneeAgentId so it enters an agent heartbeat",
+      { repo: payload.repo, number: payload.number, projectId: bridge.paperclipProjectId },
+    );
+  }
+
+  // Ops visibility: best-effort ping so inbound triage is never silent.
+  await postOpsPing(
+    ctx,
+    cfg.opsWebhookUrl,
+    buildMirrorOpsMessage({
+      repo: payload.repo,
+      number: payload.number,
+      title: payload.title,
+      url: payload.url,
+      projectId: bridge.paperclipProjectId,
+      issueId: issue.id,
+      assigneeAgentId,
+    }),
+  );
 }
 
 /**
