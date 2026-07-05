@@ -56,7 +56,8 @@ echo "$existing" | jq -r '(if type=="object" then .plugins else . end)[] | selec
 # github-sync-plugin is installed here but configured separately (write-scoped
 # token + synced project id); see docs/runbooks/github-issue-sync.md. Until
 # configured it stays INACTIVE (the worker refuses to subscribe unscoped).
-for name in vault-plugin openviking-plugin github-plugin github-sync-plugin; do
+# discord-plugin is installed here; config is set below via configure_discord_plugin.
+for name in vault-plugin openviking-plugin github-plugin github-sync-plugin discord-plugin; do
   status="$(api POST /api/plugins/install \
     "{\"packageName\":\"/paperclip/plugins/${name}\",\"isLocalPath\":true}" \
     | jq -r '.status')"
@@ -66,6 +67,14 @@ done
 echo "==> 2/3 setting plugin config (token values supplied inline by jq, not echoed)"
 configure_github
 configure_openviking
+# discord-plugin config requires env vars; skip gracefully if not set so the
+# script can still run for a partial refresh (e.g., only github/openviking).
+if [[ -n "${DISCORD_RECEIPTS_CHANNEL_ID:-}" && -n "${PAPERCLIP_COMPANY_ID:-}" && \
+      -n "${PENNY_AGENT_ID:-}" && -n "${JOSH_DISCORD_USER_ID:-}" ]]; then
+  configure_discord_plugin
+else
+  echo "    discord-plugin: skipped (set DISCORD_RECEIPTS_CHANNEL_ID / PAPERCLIP_COMPANY_ID / PENNY_AGENT_ID / JOSH_DISCORD_USER_ID to configure)"
+fi
 
 gh_id="$(resolve_plugin_id agenticos.github-plugin)"
 if [ "${TRIGGER_TRIAGE}" = "1" ]; then
