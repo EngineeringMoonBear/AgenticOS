@@ -38,8 +38,8 @@ DigitalOcean Spaces speaks the **S3 protocol**, not the DO REST API. So:
   to `agenticos-tfstate` only. That is the least-privilege credential the root
   backend + any future CI consume.
 
-  Its durable home is **1Password** (`AgenticOS Infra / tfstate_spaces_access_key_id`
-  + `tfstate_spaces_secret_key`). Optionally it is also pushed to GitHub Actions
+  Its durable home is **1Password** (`AgenticOS Infra / tfstate_spaces_access_key_id` +
+  `tfstate_spaces_secret_key`). Optionally it is also pushed to GitHub Actions
   secrets `SPACES_ACCESS_KEY_ID` / `SPACES_SECRET_ACCESS_KEY` when
   `manage_github_secrets = true` — that path needs a `github_token` with
   Actions:Secrets write on the repo, which the current AgenticOS Infra token
