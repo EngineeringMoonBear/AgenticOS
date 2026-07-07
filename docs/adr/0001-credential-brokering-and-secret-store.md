@@ -62,13 +62,31 @@ consumers:  Paperclip agents · CI (QA/Prod deploys) · terraform
 - **QA vs Prod.** Encoded as broker policy: an agent's identity is auto-granted QA credentials; Prod requires a higher-trust role and/or an explicit approval step before issuance.
 - **Audit.** 1Password usage reports show what the service account accessed; the broker logs every issuance (who/what/scope). Anomalies trigger rotation.
 
+## Deploy pipelines: QA-Deploy and Prod-Deploy
+
+Both are CI pipelines (GitHub Actions) for odoocker, grovesites, and AgenticOS. **Neither holds static secrets.** Each authenticates to the broker via **GitHub Actions OIDC** — the native, signed, short-lived JWT (`id-token: write`) carrying `repository`, `ref`, and `environment` claims — and the broker issues ephemeral, environment-scoped credentials. This is the same workload-identity idea as the DO droplet PoC, but the identity source is GitHub instead of a droplet's SSH key.
+
+- **QA-Deploy.** The job requests an OIDC token with `environment: qa`. The broker validates the repo + `environment=qa` claim and issues **QA-scoped** credentials (QA vault secrets, QA DO project/resources). **Auto-approved** — no human gate.
+- **Prod-Deploy.** The job targets a GitHub **Environment `production`** protected by **required reviewers**. GitHub holds the job at the environment gate until a human approves; only then does it run, obtain an OIDC token with `environment: production`, and the broker — seeing that claim — issues **Prod-scoped** credentials. So Prod approval is enforced **twice**: natively by GitHub Environments *and* by broker policy (which refuses Prod creds to any job not carrying the `production` claim). Defense in depth.
+
+Net: one broker, two identity-bearing caller types (Paperclip agents via compose-network identity; CI via GitHub OIDC), one policy engine, environment separation by claim, and Prod gated by a human approval enforced in two independent places.
+
+## Local development on OrbStack (non-negotiable)
+
+Local dev must **always** work on OrbStack with **zero dependency** on the prod broker, the scoped service account, network to 1Password's prod path, or the Families daily rate cap.
+
+- The broker is a **first-class compose service** that runs in *every* environment — local OrbStack, QA, Prod — exactly as `gh-token-broker` and the other services do today. Consumers (agents, terraform, deploy scripts) always talk to the broker over the compose network, so there is **no code difference** between local and prod; only the broker's backing config changes.
+- The broker supports a **local backing mode**: on OrbStack it resolves secrets from the developer's own source — interactive `op` (personal account), a dedicated dev vault, or a git-ignored `.env.local` of non-prod dev values — **never** the prod service-account token. So `docker compose up` on OrbStack always brings up a working stack, offline-friendly, with no prod-credential dependency.
+- This generalizes the existing `load-secrets.sh` tiering (Tier 1: 1Password CLI): same interface everywhere, backing source swapped per environment via one env var.
+- **Guardrail:** a local/dev run resolves **only** non-prod secrets; the prod service-account token and prod vault are never mounted into an OrbStack run. Prod creds require a prod identity (the service account, or a `production` OIDC claim) that a local run cannot present.
+
 ## Implementation plan (phased)
 
 - **Phase 0 — unblock today (independent of this ADR).** Mint the 5-scope DO PAT (`droplet, app, ssh_key, vpc, monitoring`, full CRUD) so current Terraform keeps working; store as `do_token_scoped` on the `Grove Infra` item and fix #232's item-name path.
-- **Phase 1 — broker skeleton + store access.** Stand up the caching broker on the AgenticOS droplet, modeled on `gh-token-broker`. Create the read-only, vault-scoped 1Password service account; broker reads + caches secrets via `OP_SERVICE_ACCOUNT_TOKEN`.
+- **Phase 1 — broker skeleton + store access + local mode.** Stand up the caching broker as a compose service (modeled on `gh-token-broker`) that runs identically on OrbStack, QA, and Prod. Create the read-only, vault-scoped 1Password service account; broker reads + caches secrets via `OP_SERVICE_ACCOUNT_TOKEN` in QA/Prod, and via a **local backing mode** (dev `op` / dev vault / `.env.local`) on OrbStack. Prove `docker compose up` works locally with no prod-credential dependency.
 - **Phase 2 — DO dynamic slice.** Broker holds the DO PAT and mints ephemeral scoped DO access (front the DO API and/or issue short-lived capability tokens). Wire one Paperclip agent end-to-end as proof.
 - **Phase 3 — retire Infisical.** Migrate odoocker/grovesites machine secrets into 1Password vault(s); repoint their CI to the broker / service-account token; decommission the Infisical Cloud subscription.
-- **Phase 4 — QA/Prod policy + rotation.** Implement the QA-vs-Prod policy split, Prod approval gating, and the rotation automation.
+- **Phase 4 — QA/Prod CI via OIDC + rotation.** Wire QA-Deploy and Prod-Deploy to authenticate to the broker with **GitHub Actions OIDC** (no static CI secrets); gate Prod behind a GitHub **Environment `production`** with required reviewers, and enforce the same `environment` claim in broker policy. Implement token rotation (automated if `op` supports it, else scheduled).
 
 ## Consequences
 
