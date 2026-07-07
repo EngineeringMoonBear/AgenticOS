@@ -98,6 +98,17 @@ var manifest = {
               title: "GitHub \u2192 Paperclip marker label",
               description: "Label marking issues that originated in GitHub (set by the inbound routine).",
               default: "synced-from-github"
+            },
+            defaultAssigneeAgentId: {
+              type: "string",
+              title: "Default assignee agent ID (inbound routing)",
+              description: "Agent UUID that inbound mirror issues from this repo are assigned to. REQUIRED to close the auto-pickup loop: Paperclip agents never pick up unassigned work, so a mirror created without an assignee sits unowned forever. Set this to the owner for the bridge (e.g. the Founding Engineer for AgenticOS infra issues) and new GitHub issues enter that agent's heartbeat automatically."
+            },
+            defaultPriority: {
+              type: "string",
+              title: "Default mirror priority",
+              description: 'Priority for mirror issues created from this repo. Defaults to "medium" if unset or invalid.',
+              enum: ["critical", "high", "medium", "low"]
             }
           },
           required: ["githubOrg", "githubRepo", "paperclipProjectId"]
@@ -137,6 +148,11 @@ var manifest = {
         format: "secret-ref",
         title: "GitHub App webhook secret (native issues path)",
         description: "The webhook secret configured on the AgenticOS Developer GitHub App. Verifies X-Hub-Signature-256 on native `issues` events delivered to the `github-app` endpoint. Set this to the SAME value as the App's webhook secret. Preferred over per-repo inboundWebhookSecret \u2014 one secret covers every installed repo."
+      },
+      opsWebhookUrl: {
+        type: "string",
+        title: "Ops webhook URL (Discord)",
+        description: "Optional Discord (or Discord-compatible) webhook URL. When set, the plugin posts a best-effort `{content}` ping on every inbound mirror creation so triage is never silent \u2014 including a loud warning when the mirror landed unassigned. A failed ping never blocks mirror creation."
       }
     },
     required: ["bridges"]

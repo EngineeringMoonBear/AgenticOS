@@ -10246,6 +10246,11 @@ ${p.body}
 ---
 Synced from GitHub: ${p.url}`;
 }
+function buildMirrorOpsMessage(info) {
+  const who = info.assigneeAgentId ? `assigned \u2192 \`${info.assigneeAgentId}\`` : "\u26A0\uFE0F UNASSIGNED \u2014 set the bridge's `defaultAssigneeAgentId` so it gets picked up";
+  const link = info.url ? ` (<${info.url}>)` : "";
+  return `\u{1F501} GitHub \u2192 Paperclip mirror created: **${info.title}** [${info.repo}#${info.number}]${link} \u2014 ${who} in project \`${info.projectId}\` \xB7 issue \`${info.issueId}\``;
+}
 
 // src/sync.ts
 var GITHUB_MARKER_RE = /<!--\s*synced-from-github:\s*([^\s#]+)#(\d+)\s*-->/i;
@@ -10371,16 +10376,22 @@ function safeJson(raw) {
     return null;
   }
 }
+var PRIORITIES = ["critical", "high", "medium", "low"];
 function readConfig(raw) {
   const rawBridges = Array.isArray(raw.bridges) ? raw.bridges : [];
   const bridges = rawBridges.map((b) => {
     const o = b ?? {};
+    const rawPriority = typeof o.defaultPriority === "string" ? o.defaultPriority.toLowerCase() : "";
+    const defaultAssigneeAgentId = o.defaultAssigneeAgentId ? String(o.defaultAssigneeAgentId) : void 0;
     return {
       githubOrg: String(o.githubOrg ?? "EngineeringMoonBear"),
       githubRepo: String(o.githubRepo ?? ""),
       paperclipProjectId: String(o.paperclipProjectId ?? ""),
       syncLabelPaperclip: String(o.syncLabelPaperclip ?? "synced-from-paperclip"),
-      syncMarkerGithub: String(o.syncMarkerGithub ?? "synced-from-github")
+      syncMarkerGithub: String(o.syncMarkerGithub ?? "synced-from-github"),
+      defaultAssigneeAgentId,
+      // Invalid/absent priority silently falls back to "medium" at create time.
+      defaultPriority: PRIORITIES.includes(rawPriority) ? rawPriority : void 0
     };
   }).filter((b) => b.githubRepo && b.paperclipProjectId);
   return {
@@ -10389,8 +10400,26 @@ function readConfig(raw) {
     githubToken: raw.githubToken ? String(raw.githubToken) : void 0,
     companyId: raw.companyId ? String(raw.companyId) : void 0,
     inboundWebhookSecret: raw.inboundWebhookSecret ? String(raw.inboundWebhookSecret) : void 0,
-    appWebhookSecret: raw.appWebhookSecret ? String(raw.appWebhookSecret) : void 0
+    appWebhookSecret: raw.appWebhookSecret ? String(raw.appWebhookSecret) : void 0,
+    opsWebhookUrl: raw.opsWebhookUrl ? String(raw.opsWebhookUrl) : void 0
   };
+}
+async function postOpsPing(ctx, webhookUrl, content) {
+  if (!webhookUrl) return;
+  try {
+    const res = await ctx.http.fetch(webhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content })
+    });
+    if (!res.ok) {
+      ctx.logger.warn("ops webhook ping failed", { status: res.status });
+    }
+  } catch (err) {
+    ctx.logger.warn("ops webhook ping error", {
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
 }
 function makeDispatch(ctx, depsByProject, handle, eventName) {
   return async (event) => {
@@ -10435,13 +10464,15 @@ async function createMirrorIssue(ctx, cfg, bridge, payload) {
     });
     return;
   }
+  const assigneeAgentId = bridge.defaultAssigneeAgentId;
   const issue = await ctx.issues.create({
     companyId: cfg.companyId,
     projectId: bridge.paperclipProjectId,
     title: payload.title,
     description: buildInboundDescription(payload),
     status: "todo",
-    priority: "medium"
+    priority: bridge.defaultPriority ?? "medium",
+    ...assigneeAgentId ? { assigneeAgentId } : {}
   });
   await upsert(ctx.db, {
     paperclipIssueId: issue.id,
@@ -10454,8 +10485,28 @@ async function createMirrorIssue(ctx, cfg, bridge, payload) {
     repo: payload.repo,
     number: payload.number,
     projectId: bridge.paperclipProjectId,
-    issueId: issue.id
+    issueId: issue.id,
+    assigneeAgentId: assigneeAgentId ?? null
   });
+  if (!assigneeAgentId) {
+    ctx.logger.warn(
+      "inbound: mirror created UNASSIGNED \u2014 set the bridge's defaultAssigneeAgentId so it enters an agent heartbeat",
+      { repo: payload.repo, number: payload.number, projectId: bridge.paperclipProjectId }
+    );
+  }
+  await postOpsPing(
+    ctx,
+    cfg.opsWebhookUrl,
+    buildMirrorOpsMessage({
+      repo: payload.repo,
+      number: payload.number,
+      title: payload.title,
+      url: payload.url,
+      projectId: bridge.paperclipProjectId,
+      issueId: issue.id,
+      assigneeAgentId
+    })
+  );
 }
 async function handleCustomInbound(ctx, cfg, input) {
   if (!cfg.inboundWebhookSecret) {

@@ -136,9 +136,17 @@ variable "paperclip_tunnel_secret" {
 }
 
 variable "alert_emails" {
-  description = "Email addresses that receive DigitalOcean droplet resource alerts (memory/disk/load). Defaults to the operator."
+  # DO's alert API rejects any recipient that is not a VERIFIED team member on
+  # the account with "400 email is not verified". The verified owner of this
+  # account (team MoonBear) is joshua_dunbar@me.com — josh@goldberrygrove.farm
+  # is NOT a verified DO team member, so it 400s the whole create. That is why
+  # GOL-53's alerts (PR #230) were merged but never applied. Default to the
+  # verified address so `apply` succeeds and config == applied state (clean
+  # zero-drift plan). To route alerts to josh@goldberrygrove.farm instead,
+  # first invite+verify it under DO → Settings → Team, then update this default.
+  description = "Email addresses that receive DigitalOcean droplet resource alerts (memory/disk/load). Must be VERIFIED DO team members. Defaults to the verified account owner."
   type        = list(string)
-  default     = ["josh@goldberrygrove.farm"]
+  default     = ["joshua_dunbar@me.com"]
 }
 
 variable "alert_slack" {

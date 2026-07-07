@@ -7,8 +7,14 @@
 
 resource "digitalocean_app" "dashboard" {
   spec {
-    name   = "agenticos-dashboard"
-    region = var.do_region
+    name = "agenticos-dashboard"
+    # App Platform region slugs are datacenter-group slugs ("nyc", "sfo", "fra"),
+    # NOT the Droplet/Spaces slugs ("nyc1"/"nyc3"). Using var.do_region (="nyc1")
+    # here caused a permanent plan diff: DO stores/returns "nyc" for the app, so
+    # TF re-proposed nyc->nyc1 on every plan and it never converged. Pin the
+    # App Platform slug explicitly. Same physical NYC datacenter group as the
+    # Droplet's nyc1 — colocated for VPC-private reachability.
+    region = "nyc"
 
     # Attach to the VPC where the Droplet lives so the App can reach the
     # Droplet's VPC-private services (Paperclip :3100, OpenViking :1933,
@@ -56,8 +62,8 @@ resource "digitalocean_app" "dashboard" {
       # ---------------------------------------------------------------------
       # Droplet-private endpoints. App Platform is attached to the same
       # `digitalocean_vpc.agenticos` VPC (see the `vpc { ... }` block above),
-      # so the Droplet's `ipv4_address_private` (10.10.0.x in the agenticos
-      # VPC) is reachable as a Layer-3 destination from App Platform's
+      # so the Droplet's `ipv4_address_private` (10.116.16.2 in the agenticos
+      # VPC 10.116.16.0/20) is reachable as a Layer-3 destination from App Platform's
       # container.
       #
       # For these to actually answer, the Droplet's docker-compose must bind
@@ -154,8 +160,13 @@ resource "digitalocean_app" "dashboard" {
       # ---------------------------------------------------------------------
 
       env {
-        key   = "PAPERCLIP_API_URL"
-        value = "http://10.116.16.2:3100"
+        key = "PAPERCLIP_API_URL"
+        # Interpolate the Droplet's VPC-private IP like the co-located services
+        # (AGENTICOS_DB_URL / OPENVIKING_* / VAULT_SERVER_URL) rather than
+        # hardcoding 10.116.16.2. Renders to the same value today, but on a
+        # Droplet recreate this auto-tracks the new IP instead of going stale
+        # and silently cutting the dashboard's data source after cutover.
+        value = "http://${digitalocean_droplet.agenticos_droplet.ipv4_address_private}:3100"
         scope = "RUN_TIME"
       }
 

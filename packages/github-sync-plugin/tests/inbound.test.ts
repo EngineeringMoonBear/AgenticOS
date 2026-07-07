@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createHmac } from "node:crypto";
 import {
   buildInboundDescription,
+  buildMirrorOpsMessage,
   getHeader,
   parseGithubAppIssueEvent,
   parseInboundPayload,
@@ -104,5 +105,37 @@ describe("buildInboundDescription", () => {
     expect(desc).toContain("hello");
     const marker = detectGithubMarker(desc);
     expect(marker).toEqual({ repo: "EngineeringMoonBear/AgenticOS", number: 123 });
+  });
+});
+
+describe("buildMirrorOpsMessage", () => {
+  const base = {
+    repo: "EngineeringMoonBear/AgenticOS",
+    number: 236,
+    title: "CI is flaky",
+    url: "https://github.com/EngineeringMoonBear/AgenticOS/issues/236",
+    projectId: "proj-1",
+    issueId: "iss-1",
+  };
+
+  it("names the assignee and the source issue when default routing is configured", () => {
+    const msg = buildMirrorOpsMessage({ ...base, assigneeAgentId: "agent-9" });
+    expect(msg).toContain("CI is flaky");
+    expect(msg).toContain("AgenticOS#236");
+    expect(msg).toContain("agent-9");
+    expect(msg).toContain("iss-1");
+    expect(msg).toContain(base.url);
+    expect(msg).not.toContain("UNASSIGNED");
+  });
+
+  it("loudly flags an unassigned mirror (the GOL-80 failure mode)", () => {
+    const msg = buildMirrorOpsMessage(base);
+    expect(msg).toContain("UNASSIGNED");
+    expect(msg).toContain("defaultAssigneeAgentId");
+  });
+
+  it("omits the link parenthetical when no url is present", () => {
+    const msg = buildMirrorOpsMessage({ ...base, url: "", assigneeAgentId: "agent-9" });
+    expect(msg).not.toContain("(<");
   });
 });
