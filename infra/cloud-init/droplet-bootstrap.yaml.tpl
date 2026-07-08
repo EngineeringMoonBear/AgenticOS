@@ -138,14 +138,19 @@ write_files:
   # at /etc/systemd/system/syncthing@deploy.service.d/override.conf and
   # is systemd's canonical way to extend a stock unit without modifying
   # the package-installed unit file.
+  # Restart=always (not the stock Restart=on-failure): Syncthing sometimes
+  # exits CLEANLY (self-restart on upgrade/config) expecting its supervisor to
+  # bring it back — on-failure ignores exit 0, which left sync dead for 17
+  # days (Jun 18 - Jul 5 2026) with nothing noticing. RestartSec throttles a
+  # crash-loop. (No [Install] section: drop-ins extend the unit, they are not
+  # installed themselves.)
   - path: /etc/systemd/system/syncthing@deploy.service.d/override.conf
     permissions: "0644"
     content: |
       [Service]
       Environment=STGUIADDRESS=0.0.0.0:8384
-
-      [Install]
-      WantedBy=timers.target
+      Restart=always
+      RestartSec=5
 
 runcmd:
   # --- Swap file (GOL-53): OOM safety net so a RAM spike degrades to swap
@@ -190,6 +195,14 @@ runcmd:
   - systemctl daemon-reload
   - systemctl enable --now syncthing@deploy.service
   - ufw allow in on tailscale0 to any port 8384 proto tcp
+  # vault-server's /recent-changes probes host Syncthing REST via
+  # host.docker.internal. Without this rule the container's SYNs hit
+  # default-deny and BLACKHOLE (hang, not refusal) — dashboard showed
+  # "Syncthing offline" while replication was healthy (2026-07-08 incident).
+  # 172.16.0.0/12 = Docker's private default-address-pool range, so the rule
+  # survives compose-network renumbering across re-provisions (the live box
+  # was 172.18.0.0/16). REST auth still requires the X-API-Key on top.
+  - ufw allow from 172.16.0.0/12 to any port 8384 proto tcp
 
   # --- Node 22 + pnpm ---
   - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
