@@ -17,6 +17,7 @@ dist/
 !packages/openviking-plugin/dist/
 !packages/github-plugin/dist/
 !packages/github-sync-plugin/dist/
+!packages/keep-alerts-plugin/dist/
 build/
 out/
 .env
