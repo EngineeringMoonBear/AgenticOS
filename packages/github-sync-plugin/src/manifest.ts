@@ -3,7 +3,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const manifest: PaperclipPluginManifestV1 = {
   id: "agenticos.github-sync-plugin",
   apiVersion: 1,
-  version: "0.5.0",
+  version: "0.5.1",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",
@@ -148,14 +148,19 @@ const manifest: PaperclipPluginManifestV1 = {
       },
       inboundWebhookSecret: {
         type: "string",
-        format: "secret-ref",
+        // Deliberately NOT format:"secret-ref": this host strips secret-ref
+        // fields from saved config (ref resolution is disabled until
+        // company-scoped plugin config lands), so marking it meant the worker
+        // saw NO secret and rejected every inbound delivery (verified live
+        // 2026-07-08). The raw hex value is not UUID-shaped, so it passes the
+        // extractor as long as one field (githubToken) stays secret-ref.
         title: "Inbound webhook HMAC secret (custom workflow path)",
         description:
           "Shared secret the GitHub Actions workflow signs the inbound payload with (X-Hub-Signature-256). onWebhook verifies it before creating a mirror issue. Set the SAME value as the workflow's PAPERCLIP_ISSUE_SYNC_SECRET repo secret. Only needed for the `github-issue` endpoint; the `github-app` endpoint uses appWebhookSecret instead.",
       },
       appWebhookSecret: {
         type: "string",
-        format: "secret-ref",
+        // NOT format:"secret-ref" — same reason as inboundWebhookSecret above.
         title: "GitHub App webhook secret (native issues path)",
         description:
           "The webhook secret configured on the AgenticOS Developer GitHub App. Verifies X-Hub-Signature-256 on native `issues` events delivered to the `github-app` endpoint. Set this to the SAME value as the App's webhook secret. Preferred over per-repo inboundWebhookSecret — one secret covers every installed repo.",
