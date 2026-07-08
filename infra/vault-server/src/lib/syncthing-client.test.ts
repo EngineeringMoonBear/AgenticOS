@@ -31,8 +31,34 @@ describe("SyncthingClient", () => {
     const client = new SyncthingClient({ baseUrl: "http://st:8384", apiKey: "k" });
     await client.getEvents({ since: 42 });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://st:8384/rest/events?since=42",
+      "http://st:8384/rest/events?since=42&timeout=1&limit=100",
       expect.objectContaining({ headers: { "X-API-Key": "k" } }),
     );
+  });
+
+  it("getEvents() always bounds the request: since=0 default, timeout=1, limit, and an abort signal", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("[]", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new SyncthingClient({ baseUrl: "http://st:8384", apiKey: "k" });
+    await client.getEvents();
+    // No bare /rest/events calls: they long-poll (up to 60s) and hung
+    // /recent-changes in the 2026-07-08 incident.
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://st:8384/rest/events?since=0&timeout=1&limit=100",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("getEvents() degrades to {available: false} when the request aborts (hang/blackhole)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new DOMException("The operation timed out.", "TimeoutError")),
+    );
+
+    const client = new SyncthingClient({ baseUrl: "http://st:8384", apiKey: "k" });
+    const result = await client.getEvents();
+    expect(result.available).toBe(false);
+    expect(result.events).toEqual([]);
   });
 });
