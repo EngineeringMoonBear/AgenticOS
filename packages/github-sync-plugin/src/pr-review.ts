@@ -229,3 +229,17 @@ export function buildChangesRequestedPing(reviewer: Reviewer, repo: string, prNu
 export function buildPipelineErrorPing(detail: string): string {
   return `🔥 PR review pipeline error: ${detail}`;
 }
+
+/**
+ * A Discord webhook returns `204 No Content` on a successful post. The plugin
+ * SDK's `http.fetch` reconstructs a WHATWG `Response` from the host result, and
+ * that constructor throws for a (non-null) body on a null-body status
+ * (204/205/304) — so a *successful* ops ping surfaces to the caller as a thrown
+ * error rather than a Response. Detect that specific error so the ops-ping
+ * wrapper can treat it as success instead of silently swallowing every ping
+ * (GOL-179; root-caused in GOL-178).
+ */
+export function isNullBodyStatusError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /invalid response status code (204|205|304)/i.test(msg);
+}
