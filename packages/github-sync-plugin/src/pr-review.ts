@@ -156,9 +156,10 @@ export function buildReviewIssueTitle(reviewer: Reviewer, ev: GithubPrEvent): st
 
 /**
  * Review-issue body: PR link, head SHA, changed-file summary, a short checklist,
- * and the loop-prevention marker. The reviewing agent signs off by posting the
- * `${CHECK_CONTEXT[reviewer]}` check-run on the head SHA (success), or failure +
- * a PR comment with requested changes.
+ * and the loop-prevention marker. The reviewing agent signs off by closing this
+ * review issue `done` — the plugin then completes the `${CHECK_CONTEXT[reviewer]}`
+ * check-run to success on the head SHA (GOL-186). To request changes instead, post
+ * a PR comment and leave the issue open (the check stays pending).
  */
 export function buildReviewIssueBody(
   reviewer: Reviewer,
@@ -185,7 +186,9 @@ export function buildReviewIssueBody(
     reviewer === "iris"
       ? "- [ ] Frontend — accessibility, responsive layout, design-system reuse"
       : "- [ ] Reuse/simplification, tests, security-sensitive changes flagged",
-    "- [ ] Sign off: post check-run `" + context + "` on the head SHA (success), or failure + a PR comment with requested changes.",
+    "- [ ] Sign off: close this issue `done` — the plugin then posts `" +
+      context +
+      "` = success on the head SHA. To request changes, comment on the PR and leave this open (the check stays pending).",
     "",
     "_Non-required check during Phase 2 soak (GOL-158). Merge gate flips in Phase 3._",
   ].join("\n");
@@ -197,6 +200,38 @@ export function buildNewCommitsNote(reviewer: Reviewer, ev: GithubPrEvent): stri
     `🔁 New commits pushed — head is now \`${ev.headSha}\` (${ev.url || `${ev.repo}#${ev.number}`}). ` +
     `Re-review against the new head SHA and re-post the \`${CHECK_CONTEXT[reviewer]}\` check-run (previous sign-off is stale).`
   );
+}
+
+// --- Phase 3 sign-off gate (GOL-186) --------------------------------------------
+
+/** Current review-issue states feeding the sign-off gate. */
+export interface SignoffGateInput {
+  /** Alice's review issue is `done`. Alice always reviews every PR. */
+  aliceDone: boolean;
+  /** A frontend (Iris) review issue exists for this PR (changed a frontend path). */
+  irisPresent: boolean;
+  /** Iris's review issue is `done` (only meaningful when `irisPresent`). */
+  irisDone: boolean;
+}
+
+/**
+ * Which `agent-review/*` checks may be completed green given the current review
+ * states (GOL-186). Pure — the worker maps each returned reviewer to a success
+ * check-run on that reviewer's row head SHA.
+ *
+ *  - `iris`  → green when the frontend review issue is done.
+ *  - `alice` (the REQUIRED check under Phase 3) → green only when Alice is done AND
+ *    there is no frontend review OR the frontend review is also done. This encodes
+ *    the spec rule "Alice's sign-off confirms Iris's check is green when a frontend
+ *    review issue exists," so a single required `agent-review/alice` gates the whole
+ *    PR. A done→done in either order converges: whichever issue.updated lands last
+ *    re-evaluates the full gate and posts alice green.
+ */
+export function evaluateSignoffGate(input: SignoffGateInput): Reviewer[] {
+  const out: Reviewer[] = [];
+  if (input.irisPresent && input.irisDone) out.push("iris");
+  if (input.aliceDone && (!input.irisPresent || input.irisDone)) out.push("alice");
+  return out;
 }
 
 // --- Discord state-change pings (spec System 3) ---------------------------------
@@ -215,12 +250,12 @@ export function buildReReviewPing(ev: GithubPrEvent, reviewers: readonly Reviewe
   return `🔁 PR ${ev.repo}#${ev.number} new commits (\`${shortSha(ev.headSha)}\`) → re-review: ${reviewerList(reviewers)}`;
 }
 
-/** ✅ sign-off green (posted by the reviewing agent's sign-off tooling). */
+/** ✅ sign-off green (posted plugin-side when the review issue closes `done`, GOL-186). */
 export function buildSignoffPing(reviewer: Reviewer, repo: string, prNumber: number): string {
   return `✅ PR ${repo}#${prNumber} ${CHECK_CONTEXT[reviewer]} — green`;
 }
 
-/** ❌ changes requested (posted by the reviewing agent's sign-off tooling). */
+/** ❌ changes requested (reserved: reviewer comments on the PR; check stays pending). */
 export function buildChangesRequestedPing(reviewer: Reviewer, repo: string, prNumber: number): string {
   return `❌ PR ${repo}#${prNumber} — ${REVIEWER_NAME[reviewer]} requested changes`;
 }

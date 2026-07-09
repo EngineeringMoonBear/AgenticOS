@@ -11297,13 +11297,19 @@ function buildReviewIssueBody(reviewer, ev, files) {
     "### Review checklist",
     "- [ ] Correctness \u2014 logic, edge cases, error handling",
     reviewer === "iris" ? "- [ ] Frontend \u2014 accessibility, responsive layout, design-system reuse" : "- [ ] Reuse/simplification, tests, security-sensitive changes flagged",
-    "- [ ] Sign off: post check-run `" + context + "` on the head SHA (success), or failure + a PR comment with requested changes.",
+    "- [ ] Sign off: close this issue `done` \u2014 the plugin then posts `" + context + "` = success on the head SHA. To request changes, comment on the PR and leave this open (the check stays pending).",
     "",
     "_Non-required check during Phase 2 soak (GOL-158). Merge gate flips in Phase 3._"
   ].join("\n");
 }
 function buildNewCommitsNote(reviewer, ev) {
   return `\u{1F501} New commits pushed \u2014 head is now \`${ev.headSha}\` (${ev.url || `${ev.repo}#${ev.number}`}). Re-review against the new head SHA and re-post the \`${CHECK_CONTEXT[reviewer]}\` check-run (previous sign-off is stale).`;
+}
+function evaluateSignoffGate(input) {
+  const out = [];
+  if (input.irisPresent && input.irisDone) out.push("iris");
+  if (input.aliceDone && (!input.irisPresent || input.irisDone)) out.push("alice");
+  return out;
 }
 function reviewerList(reviewers) {
   return reviewers.map((r) => REVIEWER_NAME[r]).join(" + ") || "\u2014";
@@ -11313,6 +11319,9 @@ function buildReviewIssuesCreatedPing(ev, reviewers) {
 }
 function buildReReviewPing(ev, reviewers) {
   return `\u{1F501} PR ${ev.repo}#${ev.number} new commits (\`${shortSha(ev.headSha)}\`) \u2192 re-review: ${reviewerList(reviewers)}`;
+}
+function buildSignoffPing(reviewer, repo, prNumber) {
+  return `\u2705 PR ${repo}#${prNumber} ${CHECK_CONTEXT[reviewer]} \u2014 green`;
 }
 function buildPipelineErrorPing(detail) {
   return `\u{1F525} PR review pipeline error: ${detail}`;
@@ -11347,6 +11356,17 @@ async function getReviewRecord(db, githubRepo, prNumber, reviewer) {
   const first = rows[0];
   return first ? toRow2(first) : null;
 }
+async function getReviewRecordByIssueId(db, paperclipIssueId) {
+  const rows = await db.query(
+    `SELECT github_repo, pr_number, reviewer, head_sha, paperclip_issue_id, updated_at
+       FROM ${qualified(db)}
+      WHERE paperclip_issue_id = $1
+      LIMIT 1`,
+    [paperclipIssueId]
+  );
+  const first = rows[0];
+  return first ? toRow2(first) : null;
+}
 async function upsertReviewRecord(db, row) {
   await db.execute(
     `INSERT INTO ${qualified(db)}
@@ -11358,6 +11378,76 @@ async function upsertReviewRecord(db, row) {
        updated_at = $6`,
     [row.githubRepo, row.prNumber, row.reviewer, row.headSha, row.paperclipIssueId, row.updatedAt]
   );
+}
+
+// src/pr-signoff.ts
+async function handleReviewSignoff(deps, input) {
+  const { db, logger, getIssue } = deps;
+  const record = await getReviewRecordByIssueId(db, input.issueId);
+  if (!record) return;
+  const triggerIssue = await getIssue(input.issueId, input.companyId);
+  if (!triggerIssue) {
+    logger.warn("signoff: review issue not readable; skipping", { issueId: input.issueId });
+    return;
+  }
+  if (triggerIssue.status !== "done") return;
+  const aliceRow = await getReviewRecord(db, record.githubRepo, record.prNumber, "alice");
+  const irisRow = await getReviewRecord(db, record.githubRepo, record.prNumber, "iris");
+  const aliceDone = aliceRow ? await isIssueDone(deps, aliceRow, input.companyId) : false;
+  const irisDone = irisRow ? await isIssueDone(deps, irisRow, input.companyId) : false;
+  const greenlit = evaluateSignoffGate({ aliceDone, irisPresent: irisRow !== null, irisDone });
+  if (greenlit.length === 0) {
+    logger.info("signoff: gate not yet green; no check-run posted", {
+      repo: record.githubRepo,
+      prNumber: record.prNumber,
+      aliceDone,
+      irisPresent: irisRow !== null,
+      irisDone
+    });
+    return;
+  }
+  for (const reviewer of greenlit) {
+    const row = reviewer === "alice" ? aliceRow : irisRow;
+    if (!row) continue;
+    await postSignoffCheck(deps, row, reviewer);
+  }
+}
+async function isIssueDone(deps, row, companyId) {
+  const issue = await deps.getIssue(row.paperclipIssueId, companyId);
+  return issue?.status === "done";
+}
+async function postSignoffCheck(deps, row, reviewer) {
+  const { github, config, logger } = deps;
+  const res = await github.createCheckRun(config.githubRepo, {
+    name: CHECK_CONTEXT[reviewer],
+    headSha: row.headSha,
+    conclusion: "success",
+    title: `Agent review complete (${reviewer})`,
+    summary: `${reviewer} signed off ${row.githubRepo}#${row.prNumber} @ \`${shortSha(row.headSha)}\` (GOL-186).`
+  });
+  if (!res.ok) {
+    logger.error("signoff: check-run completion failed", {
+      repo: row.githubRepo,
+      prNumber: row.prNumber,
+      reviewer,
+      headSha: row.headSha,
+      error: res.error
+    });
+    await deps.postOpsPing?.(
+      buildPipelineErrorPing(
+        `sign-off check-run failed for ${row.githubRepo}#${row.prNumber} (${reviewer}): ${res.error}`
+      )
+    );
+    return;
+  }
+  logger.info("signoff: posted green check-run", {
+    repo: row.githubRepo,
+    prNumber: row.prNumber,
+    reviewer,
+    headSha: row.headSha,
+    checkRunId: res.data.id
+  });
+  await deps.postOpsPing?.(buildSignoffPing(reviewer, row.githubRepo, row.prNumber));
 }
 
 // src/worker.ts
@@ -11858,7 +11948,8 @@ var plugin = definePlugin({
           syncMarkerGithub: bridge.syncMarkerGithub
         },
         logger: ctx.logger,
-        getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId)
+        getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId),
+        postOpsPing: (content) => postOpsPing(ctx, cfg.opsWebhookUrl, content)
       });
       ctx.logger.info("bridge active", {
         repo: `${bridge.githubOrg}/${bridge.githubRepo}`,
@@ -11872,6 +11963,7 @@ var plugin = definePlugin({
     }
     ctx.events.on("issue.created", makeDispatch(ctx, depsByProject, handleIssueCreated, "issue.created"));
     ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleIssueUpdated, "issue.updated"));
+    ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleReviewSignoff, "issue.updated:signoff"));
     ctx.logger.info("github sync listening", {
       projects: Array.from(depsByProject.keys())
     });

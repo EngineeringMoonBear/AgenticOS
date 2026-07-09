@@ -39,6 +39,7 @@ import {
   type Reviewer,
 } from "./pr-review.js";
 import { getReviewRecord, upsertReviewRecord } from "./pr-review-store.js";
+import { handleReviewSignoff } from "./pr-signoff.js";
 
 /** Manifest-declared inbound webhook endpoint keys (GitHub → Paperclip). */
 /** Custom Actions-workflow path: a signed {repo,number,title,body,url} payload. */
@@ -786,8 +787,8 @@ async function processReviewer(
  * Seed/reset a pending `agent-review/*` check-run on the PR head SHA. Best-effort:
  * a failure (e.g. the App lacks `checks:write` during the Phase 2 soak) is logged
  * but never blocks review-issue creation, and — to keep the ops channel low-noise
- * during rollout — is NOT pinged. The reviewing agent's own sign-off tooling posts
- * the success/failure check-run and the ✅/❌ pings.
+ * during rollout — is NOT pinged. The check is completed to success later by
+ * handleReviewSignoff (pr-signoff.ts, GOL-186) when the review issue closes `done`.
  */
 async function seedPendingCheck(
   ctx: PluginContext,
@@ -862,6 +863,7 @@ const plugin = definePlugin({
         },
         logger: ctx.logger,
         getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId),
+        postOpsPing: (content) => postOpsPing(ctx, cfg.opsWebhookUrl, content),
       });
 
       ctx.logger.info("bridge active", {
@@ -880,6 +882,11 @@ const plugin = definePlugin({
     // to the bridge for the issue's project (or drops it if not a synced project).
     ctx.events.on("issue.created", makeDispatch(ctx, depsByProject, handleIssueCreated, "issue.created"));
     ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleIssueUpdated, "issue.updated"));
+    // Second issue.updated dispatch: complete the agent-review check-run when a PR
+    // review issue closes `done` (GOL-186). Independent of the mirror path above —
+    // it early-returns on issues with no github_pr_review row, and the mirror path
+    // early-returns on unmapped review issues, so they never collide.
+    ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleReviewSignoff, "issue.updated:signoff"));
 
     ctx.logger.info("github sync listening", {
       projects: Array.from(depsByProject.keys()),

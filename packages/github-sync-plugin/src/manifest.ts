@@ -6,7 +6,12 @@ const manifest: PaperclipPluginManifestV1 = {
   // Bump on ANY manifest change — a stale stored manifest silently masks changes
   // (spec gotcha; see #228). 0.6.0 = discipline label routing (GOL-150).
   // 0.7.0 = agent PR review pipeline (GOL-158, Phase 2): `github-pr` webhook.
-  version: "0.7.0",
+  // 0.7.1 = plugin-side agent-review sign-off completion (GOL-186): an
+  //   issue.updated dispatch completes the `agent-review/*` check-run to success
+  //   when the review issue closes `done` (Phase 3 prerequisite). No new
+  //   capabilities/webhooks — reuses issues.read + http.outbound (checks:write is
+  //   an App-side grant, GOL-175), so the manifest surface is unchanged bar version.
+  version: "0.7.1",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",
