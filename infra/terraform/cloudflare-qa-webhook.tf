@@ -139,3 +139,41 @@ resource "cloudflare_zero_trust_access_policy" "paperclip_github_app_webhook_byp
     everyone = true
   }
 }
+
+# --- Native GitHub App pull_request webhook (PR review pipeline, GOL-158) ------
+# The agent PR review pipeline (github-sync-plugin v0.7.0) adds a THIRD inbound
+# endpoint, `…/webhooks/github-pr`, fed by the App's `pull_request` events. Like
+# the github-app issues webhook, GitHub can only attach an HMAC signature — it
+# cannot send Cloudflare Access service-token headers — so without a more-specific
+# Bypass app the service-token app above 403s every delivery at the edge.
+#
+# Same trust model as github-app: a MORE specific Access application scoped to
+# exactly this endpoint with a Bypass policy. Cloudflare matches most-specific:
+#   /api/plugins/<id>/webhooks/github-pr   → this app (Bypass — GitHub can POST)
+#   /api/plugins/<id>/webhooks/github-app  → the issues bypass app (unchanged)
+#   /api/plugins/<id>/webhooks/*           → service-token app (unchanged)
+# Authentication is the plugin's job: onWebhook verifies X-Hub-Signature-256
+# against config.appWebhookSecret (the SAME secret as github-app) and drops
+# anything unsigned/invalid.
+resource "cloudflare_zero_trust_access_application" "paperclip_github_pr_webhook" {
+  account_id = var.cloudflare_account_id
+  name       = "AgenticOS Paperclip — GitHub App pull_request webhook (HMAC, bypass)"
+  domain     = "${var.paperclip_domain}/api/plugins/${var.github_sync_plugin_id}/webhooks/github-pr"
+  type       = "self_hosted"
+  # Machine endpoint: no sessions, hidden from the app launcher.
+  session_duration           = "0s"
+  app_launcher_visible       = false
+  http_only_cookie_attribute = true
+}
+
+resource "cloudflare_zero_trust_access_policy" "paperclip_github_pr_webhook_bypass" {
+  account_id     = var.cloudflare_account_id
+  application_id = cloudflare_zero_trust_access_application.paperclip_github_pr_webhook.id
+  name           = "Bypass — GitHub App pull_request deliveries (HMAC-verified by the plugin)"
+  precedence     = 1
+  decision       = "bypass"
+
+  include {
+    everyone = true
+  }
+}

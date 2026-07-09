@@ -115,6 +115,77 @@ describe("GitHubClient with a getToken provider (broker mode)", () => {
   });
 });
 
+describe("GitHubClient.listPullFiles", () => {
+  it("returns filenames from a single page (not truncated)", async () => {
+    const fetchMock = mockFetch([{ filename: "a.ts" }, { filename: "apps/dashboard/x.tsx" }]);
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new GitHubClient({ token: "t", org: "o" });
+    const res = await client.listPullFiles("r", 12);
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.files).toEqual(["a.ts", "apps/dashboard/x.tsx"]);
+      expect(res.data.truncated).toBe(false);
+    }
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://api.github.com/repos/o/r/pulls/12/files?per_page=100&page=1");
+    // A short page stops pagination — exactly one request.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates an API error Result", async () => {
+    vi.stubGlobal("fetch", mockFetch({ message: "Not Found" }, false, 404));
+    const client = new GitHubClient({ token: "t", org: "o" });
+    const res = await client.listPullFiles("r", 12);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toBe("Not Found");
+  });
+});
+
+describe("GitHubClient.createCheckRun", () => {
+  it("POSTs a pending (in_progress) run when no conclusion is given", async () => {
+    const fetchMock = mockFetch({ id: 999 });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new GitHubClient({ token: "t", org: "o" });
+    const res = await client.createCheckRun("r", {
+      name: "agent-review/alice",
+      headSha: "sha1",
+      title: "pending",
+      summary: "waiting",
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.id).toBe(999);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("https://api.github.com/repos/o/r/check-runs");
+    const body = JSON.parse(init.body as string);
+    expect(body).toMatchObject({ name: "agent-review/alice", head_sha: "sha1", status: "in_progress" });
+    expect(body.conclusion).toBeUndefined();
+  });
+
+  it("POSTs a completed run with the conclusion when given", async () => {
+    const fetchMock = mockFetch({ id: 1 });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new GitHubClient({ token: "t", org: "o" });
+    await client.createCheckRun("r", { name: "agent-review/iris", headSha: "s", conclusion: "failure", title: "x", summary: "y" });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.status).toBe("completed");
+    expect(body.conclusion).toBe("failure");
+    expect(typeof body.completed_at).toBe("string");
+  });
+});
+
+describe("GitHubClient.createIssueComment", () => {
+  it("POSTs the comment body to the issues comments endpoint", async () => {
+    const fetchMock = mockFetch({ id: 5 });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new GitHubClient({ token: "t", org: "o" });
+    const res = await client.createIssueComment("r", 260, "changes requested: ...");
+    expect(res.ok).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("https://api.github.com/repos/o/r/issues/260/comments");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ body: "changes requested: ..." });
+  });
+});
+
 describe("GitHubClient.getIssue", () => {
   it("GETs the issue by number", async () => {
     const fetchMock = mockFetch({
