@@ -18,12 +18,32 @@ import {
   type SyncDeps,
 } from "./sync.js";
 import { resolveRouting, type LabelRouting } from "./routing.js";
+import {
+  anyFrontendMatch,
+  buildNewCommitsNote,
+  buildPipelineErrorPing,
+  buildReReviewPing,
+  buildReviewIssueBody,
+  buildReviewIssueTitle,
+  buildReviewIssuesCreatedPing,
+  CHECK_CONTEXT,
+  decideReviewAction,
+  DEFAULT_FRONTEND_PATHS,
+  isActionablePrAction,
+  parseGithubPrEvent,
+  shortSha,
+  type GithubPrEvent,
+  type Reviewer,
+} from "./pr-review.js";
+import { getReviewRecord, upsertReviewRecord } from "./pr-review-store.js";
 
 /** Manifest-declared inbound webhook endpoint keys (GitHub → Paperclip). */
 /** Custom Actions-workflow path: a signed {repo,number,title,body,url} payload. */
 const INBOUND_ENDPOINT_KEY = "github-issue";
 /** Native GitHub App path: GitHub's own signed `issues` event, one App webhook for all repos. */
 const APP_WEBHOOK_ENDPOINT_KEY = "github-app";
+/** GitHub App `pull_request` event path: the agent PR review pipeline (GOL-158). */
+const PR_WEBHOOK_ENDPOINT_KEY = "github-pr";
 
 /** Captured in setup() so onWebhook (which only receives `input`) can reach ctx. */
 let currentContext: PluginContext | null = null;
@@ -89,6 +109,12 @@ interface GithubSyncConfig {
    * never silent (GOL-80). A failed ping never blocks mirror creation.
    */
   opsWebhookUrl?: string;
+  /** PR review pipeline (GOL-158): agent that always reviews. Unset → pipeline off. */
+  prReviewAliceAgentId?: string;
+  /** PR review pipeline: agent that additionally reviews when frontend paths change. */
+  prReviewIrisAgentId?: string;
+  /** Changed-file globs that trigger the frontend (Iris) review. Defaults applied at use. */
+  prReviewFrontendPaths?: string[];
 }
 
 function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
@@ -135,6 +161,11 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
     inboundWebhookSecret: raw.inboundWebhookSecret ? String(raw.inboundWebhookSecret) : undefined,
     appWebhookSecret: raw.appWebhookSecret ? String(raw.appWebhookSecret) : undefined,
     opsWebhookUrl: raw.opsWebhookUrl ? String(raw.opsWebhookUrl) : undefined,
+    prReviewAliceAgentId: raw.prReviewAliceAgentId ? String(raw.prReviewAliceAgentId) : undefined,
+    prReviewIrisAgentId: raw.prReviewIrisAgentId ? String(raw.prReviewIrisAgentId) : undefined,
+    prReviewFrontendPaths: Array.isArray(raw.prReviewFrontendPaths)
+      ? raw.prReviewFrontendPaths.filter((p): p is string => typeof p === "string" && p.length > 0)
+      : undefined,
   };
 }
 
@@ -393,6 +424,264 @@ async function handleAppInbound(
   await createMirrorIssue(ctx, cfg, bridge, event.payload, event.labels);
 }
 
+/**
+ * Build a write-capable GitHubClient for one bridge, preferring the gh-token-broker
+ * (repo-scoped App tokens, cross-org) and falling back to a static PAT. Returns
+ * null when no auth is available. Used by the PR pipeline's onWebhook path, which
+ * (unlike setup) has no prebuilt per-project client to hand.
+ */
+function makeBridgeGithubClient(cfg: GithubSyncConfig, bridge: BridgeConfig): GitHubClient | null {
+  const brokerUrl = cfg.tokenBrokerUrl || process.env.GH_TOKEN_BROKER_URL || "";
+  if (brokerUrl) {
+    return new GitHubClient({ org: bridge.githubOrg, getToken: makeBrokerTokenProvider(brokerUrl, bridge.githubOrg) });
+  }
+  if (cfg.githubToken) {
+    return new GitHubClient({ org: bridge.githubOrg, getToken: staticTokenProvider(cfg.githubToken) });
+  }
+  return null;
+}
+
+/** Outcome of processing one reviewer for a PR event, for ping aggregation. */
+type ReviewOutcome = "created" | "reopened" | "noop";
+
+/**
+ * Native GitHub App `pull_request` endpoint (`github-pr`): the agent PR review
+ * pipeline (GOL-158, spec System 2). Verifies the App webhook secret, filters to
+ * non-draft actionable actions, fetches the PR's changed files via the broker
+ * token, then per reviewer (Alice always; Iris when a changed path matches the
+ * frontend globs):
+ *   - creates a review issue in the matched bridge's project (first time), or
+ *   - reopens it with a "new commits" note when the head SHA changed, and
+ *   - seeds/resets a pending `agent-review/*` check-run on the head SHA (best-effort).
+ * Idempotent per (repo, PR, head SHA) via the github_pr_review store.
+ */
+async function handlePrInbound(
+  ctx: PluginContext,
+  cfg: GithubSyncConfig,
+  input: PluginWebhookInput,
+): Promise<void> {
+  if (!cfg.appWebhookSecret) {
+    ctx.logger.error("pr webhook: no appWebhookSecret configured — rejecting");
+    return;
+  }
+  if (!verifyGithubSignature(input.rawBody, cfg.appWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
+    ctx.logger.warn("pr webhook: signature verification failed");
+    await postOpsPing(ctx, cfg.opsWebhookUrl, buildPipelineErrorPing("HMAC verification failed on a github-pr delivery"));
+    return;
+  }
+
+  // GitHub sets X-GitHub-Event; ignore anything but `pull_request`. Lenient if absent.
+  const eventType = getHeader(input.headers, "x-github-event");
+  if (eventType && eventType !== "pull_request") {
+    ctx.logger.info("pr webhook: ignoring non-pull_request event", { eventType });
+    return;
+  }
+
+  const ev = parseGithubPrEvent(input.parsedBody ?? safeJson(input.rawBody));
+  if (!ev) {
+    ctx.logger.warn("pr webhook: unparseable/invalid pull_request payload");
+    return;
+  }
+  if (ev.draft) {
+    ctx.logger.info("pr webhook: skipping draft PR", { repo: ev.repo, number: ev.number });
+    return; // silent on drafts (spec System 3)
+  }
+  if (!isActionablePrAction(ev.action)) {
+    ctx.logger.info("pr webhook: ignoring PR action", { action: ev.action, repo: ev.repo, number: ev.number });
+    return;
+  }
+
+  const bridge = matchBridge(cfg, ev.repo);
+  if (!bridge) {
+    ctx.logger.info("pr webhook: repo not in a synced bridge; ignoring", { repo: ev.repo });
+    return;
+  }
+  if (!cfg.companyId) {
+    ctx.logger.error("pr webhook: companyId not configured — cannot create review issues");
+    return;
+  }
+  if (!cfg.prReviewAliceAgentId) {
+    ctx.logger.info("pr webhook: PR review pipeline disabled (no prReviewAliceAgentId configured)");
+    return;
+  }
+
+  const github = makeBridgeGithubClient(cfg, bridge);
+  if (!github) {
+    ctx.logger.warn("pr webhook: no auth for bridge — cannot fetch PR files", { repo: ev.repo });
+    return;
+  }
+
+  const filesRes = await github.listPullFiles(bridge.githubRepo, ev.number);
+  if (!filesRes.ok) {
+    ctx.logger.error("pr webhook: failed to fetch PR changed files", { repo: ev.repo, number: ev.number, error: filesRes.error });
+    await postOpsPing(
+      ctx,
+      cfg.opsWebhookUrl,
+      buildPipelineErrorPing(`could not list files for ${ev.repo}#${ev.number}: ${filesRes.error}`),
+    );
+    return;
+  }
+  const { files, truncated } = filesRes.data;
+  if (truncated) {
+    ctx.logger.warn("pr webhook: changed-file list truncated at the page cap — frontend match may under-report", {
+      repo: ev.repo,
+      number: ev.number,
+    });
+  }
+
+  // Decide reviewers: Alice always; Iris when a changed path matches the frontend globs.
+  const frontendPaths = cfg.prReviewFrontendPaths?.length ? cfg.prReviewFrontendPaths : DEFAULT_FRONTEND_PATHS;
+  const isFrontend = anyFrontendMatch(files, frontendPaths);
+  const reviewers: Array<{ reviewer: Reviewer; agentId: string }> = [
+    { reviewer: "alice", agentId: cfg.prReviewAliceAgentId },
+  ];
+  if (isFrontend && cfg.prReviewIrisAgentId) {
+    reviewers.push({ reviewer: "iris", agentId: cfg.prReviewIrisAgentId });
+  }
+
+  const created: Reviewer[] = [];
+  const reopened: Reviewer[] = [];
+  for (const { reviewer, agentId } of reviewers) {
+    try {
+      const outcome = await processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, agentId);
+      if (outcome === "created") created.push(reviewer);
+      else if (outcome === "reopened") reopened.push(reviewer);
+    } catch (err) {
+      ctx.logger.error("pr webhook: reviewer processing failed", {
+        repo: ev.repo,
+        number: ev.number,
+        reviewer,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await postOpsPing(
+        ctx,
+        cfg.opsWebhookUrl,
+        buildPipelineErrorPing(`review-issue handling failed for ${ev.repo}#${ev.number} (${reviewer})`),
+      );
+    }
+  }
+
+  // Low-noise, state-change-only pings (spec System 3): one per PR per transition.
+  if (created.length) {
+    await postOpsPing(ctx, cfg.opsWebhookUrl, buildReviewIssuesCreatedPing(ev, created));
+  }
+  if (reopened.length) {
+    await postOpsPing(ctx, cfg.opsWebhookUrl, buildReReviewPing(ev, reopened));
+  }
+}
+
+/**
+ * Create-or-reopen the review issue for one reviewer, seeding/resetting the
+ * pending check-run. Idempotent per head SHA (see github_pr_review):
+ *   - no record            → create the review issue
+ *   - record, same headSha → redelivery, no-op
+ *   - record, new headSha  → reopen (todo) + "new commits" note (synchronize)
+ */
+async function processReviewer(
+  ctx: PluginContext,
+  cfg: GithubSyncConfig,
+  bridge: BridgeConfig,
+  github: GitHubClient,
+  ev: GithubPrEvent,
+  files: readonly string[],
+  reviewer: Reviewer,
+  agentId: string,
+): Promise<ReviewOutcome> {
+  const existing = await getReviewRecord(ctx.db, ev.repo, ev.number, reviewer);
+  const action = decideReviewAction(existing ? existing.headSha : null, ev.headSha);
+  if (action === "noop") {
+    ctx.logger.info("pr webhook: already reviewed at this head SHA; skipping", {
+      repo: ev.repo,
+      number: ev.number,
+      reviewer,
+      headSha: ev.headSha,
+    });
+    return "noop";
+  }
+
+  const now = new Date().toISOString();
+  if (action === "create" || !existing) {
+    const issue = await ctx.issues.create({
+      companyId: cfg.companyId!,
+      projectId: bridge.paperclipProjectId,
+      title: buildReviewIssueTitle(reviewer, ev),
+      description: buildReviewIssueBody(reviewer, ev, files),
+      status: "todo",
+      priority: bridge.defaultPriority ?? "medium",
+      assigneeAgentId: agentId,
+    });
+    await upsertReviewRecord(ctx.db, {
+      githubRepo: ev.repo,
+      prNumber: ev.number,
+      reviewer,
+      headSha: ev.headSha,
+      paperclipIssueId: issue.id,
+      updatedAt: now,
+    });
+    ctx.logger.info("pr webhook: created review issue", {
+      repo: ev.repo,
+      number: ev.number,
+      reviewer,
+      issueId: issue.id,
+      assigneeAgentId: agentId,
+    });
+    await seedPendingCheck(ctx, github, bridge, ev, reviewer);
+    return "created";
+  }
+
+  // New head SHA on an existing review: reopen + note, reset the pending check.
+  await ctx.issues.update(existing.paperclipIssueId, { status: "todo" }, cfg.companyId!);
+  await ctx.issues.createComment(existing.paperclipIssueId, buildNewCommitsNote(reviewer, ev), cfg.companyId!);
+  await upsertReviewRecord(ctx.db, {
+    githubRepo: ev.repo,
+    prNumber: ev.number,
+    reviewer,
+    headSha: ev.headSha,
+    paperclipIssueId: existing.paperclipIssueId,
+    updatedAt: now,
+  });
+  ctx.logger.info("pr webhook: reopened review issue for new commits", {
+    repo: ev.repo,
+    number: ev.number,
+    reviewer,
+    issueId: existing.paperclipIssueId,
+    headSha: ev.headSha,
+  });
+  await seedPendingCheck(ctx, github, bridge, ev, reviewer);
+  return "reopened";
+}
+
+/**
+ * Seed/reset a pending `agent-review/*` check-run on the PR head SHA. Best-effort:
+ * a failure (e.g. the App lacks `checks:write` during the Phase 2 soak) is logged
+ * but never blocks review-issue creation, and — to keep the ops channel low-noise
+ * during rollout — is NOT pinged. The reviewing agent's own sign-off tooling posts
+ * the success/failure check-run and the ✅/❌ pings.
+ */
+async function seedPendingCheck(
+  ctx: PluginContext,
+  github: GitHubClient,
+  bridge: BridgeConfig,
+  ev: GithubPrEvent,
+  reviewer: Reviewer,
+): Promise<void> {
+  const res = await github.createCheckRun(bridge.githubRepo, {
+    name: CHECK_CONTEXT[reviewer],
+    headSha: ev.headSha,
+    title: `Agent review pending (${reviewer})`,
+    summary: `Awaiting ${reviewer}'s review of ${ev.repo}#${ev.number} @ \`${shortSha(ev.headSha)}\`. Non-required during Phase 2 soak (GOL-158).`,
+    detailsUrl: ev.url || undefined,
+  });
+  if (!res.ok) {
+    ctx.logger.warn("pr webhook: pending check-run seed failed (needs App checks:write?)", {
+      repo: ev.repo,
+      number: ev.number,
+      reviewer,
+      error: res.error,
+    });
+  }
+}
+
 const plugin = definePlugin({
   async setup(ctx) {
     ctx.logger.info("GitHub Sync plugin starting");
@@ -467,11 +756,12 @@ const plugin = definePlugin({
   },
 
   /**
-   * Inbound leg (GitHub → Paperclip). The host routes two public endpoints here:
-   *   - `POST …/webhooks/github-issue` → a custom Actions-workflow payload, or
-   *   - `POST …/webhooks/github-app`   → GitHub's native `issues` App-webhook event.
+   * Inbound leg (GitHub → Paperclip). The host routes three public endpoints here:
+   *   - `POST …/webhooks/github-issue` → a custom Actions-workflow payload,
+   *   - `POST …/webhooks/github-app`   → GitHub's native `issues` App-webhook event, or
+   *   - `POST …/webhooks/github-pr`    → GitHub's native `pull_request` event (review pipeline).
    * Each verifies its own HMAC (the plugin's responsibility) then creates the
-   * mirror issue directly — routines can't, since every routine run needs an agent.
+   * mirror/review issue directly — routines can't, since every routine run needs an agent.
    */
   async onWebhook(input: PluginWebhookInput): Promise<void> {
     const ctx = currentContext;
@@ -483,6 +773,8 @@ const plugin = definePlugin({
         await handleCustomInbound(ctx, cfg, input);
       } else if (input.endpointKey === APP_WEBHOOK_ENDPOINT_KEY) {
         await handleAppInbound(ctx, cfg, input);
+      } else if (input.endpointKey === PR_WEBHOOK_ENDPOINT_KEY) {
+        await handlePrInbound(ctx, cfg, input);
       } else {
         ctx.logger.warn("inbound webhook: unknown endpoint", { endpointKey: input.endpointKey });
       }

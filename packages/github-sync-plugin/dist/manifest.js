@@ -4,7 +4,8 @@ var manifest = {
   apiVersion: 1,
   // Bump on ANY manifest change — a stale stored manifest silently masks changes
   // (spec gotcha; see #228). 0.6.0 = discipline label routing (GOL-150).
-  version: "0.6.0",
+  // 0.7.0 = agent PR review pipeline (GOL-158, Phase 2): `github-pr` webhook.
+  version: "0.7.0",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",
@@ -30,11 +31,16 @@ var manifest = {
   //   run requires an agent ("Default agent required"), so they dispatch work rather
   //   than mirror. The plugin webhook auth-route mode is disabled on this host, but
   //   manifest-declared webhooks (webhooks.receive) are the supported public path.
+  // issues.update + issue.comments.create: the PR review pipeline (GOL-158) reopens
+  //   (`todo`) an existing review issue on `synchronize` and posts a "new commits"
+  //   note comment. Both are gated behind these capabilities.
   capabilities: [
     "events.subscribe",
     "http.outbound",
     "issues.read",
     "issues.create",
+    "issues.update",
+    "issue.comments.create",
     "webhooks.receive",
     "database.namespace.read",
     "database.namespace.write",
@@ -52,6 +58,11 @@ var manifest = {
       endpointKey: "github-app",
       displayName: "GitHub App issues event \u2192 Paperclip mirror (no per-repo setup)",
       description: "Point the AgenticOS Developer GitHub App's webhook here and subscribe it to `issues` events. GitHub then delivers a native, signed `issues` payload for EVERY installed repo \u2014 the plugin mirrors `opened` issues into a matching bridge's project. Verified with appWebhookSecret; no per-repo Actions workflow or repo secret needed."
+    },
+    {
+      endpointKey: "github-pr",
+      displayName: "GitHub App pull_request event \u2192 agent review pipeline (GOL-158)",
+      description: "Subscribe the AgenticOS Developer GitHub App to `pull_request` events and point them here. For each non-draft PR (opened/reopened/ready_for_review/synchronize) the plugin creates review issue(s) in the matching bridge's project \u2014 Alice always, Iris when a changed path matches `prReviewFrontendPaths` \u2014 and seeds a pending `agent-review/*` check-run on the head SHA. Verified with appWebhookSecret (same as `github-app`). Needs the App's `checks:write` permission for check-runs."
     }
   ],
   // Declaring `database` is REQUIRED for the host to provision + activate the
@@ -170,7 +181,23 @@ var manifest = {
       opsWebhookUrl: {
         type: "string",
         title: "Ops webhook URL (Discord)",
-        description: "Optional Discord (or Discord-compatible) webhook URL. When set, the plugin posts a best-effort `{content}` ping on every inbound mirror creation so triage is never silent \u2014 including a loud warning when the mirror landed unassigned. A failed ping never blocks mirror creation."
+        description: "Optional Discord (or Discord-compatible) webhook URL. When set, the plugin posts a best-effort `{content}` ping on every inbound mirror creation so triage is never silent \u2014 including a loud warning when the mirror landed unassigned. A failed ping never blocks mirror creation. Also carries the PR-review state-change pings (System 3): review-issues-created, re-review-on-new-commits, and pipeline errors."
+      },
+      prReviewAliceAgentId: {
+        type: "string",
+        title: "PR review \u2014 Alice agent ID (GOL-158)",
+        description: "Agent UUID that ALWAYS reviews every non-draft PR (spec System 2). Leave empty to disable the PR review pipeline (the `github-pr` webhook then no-ops). Company-global \u2014 the review issue is created in the matched bridge's project."
+      },
+      prReviewIrisAgentId: {
+        type: "string",
+        title: "PR review \u2014 Iris agent ID (frontend, GOL-158)",
+        description: "Agent UUID that ADDITIONALLY reviews a PR when any changed path matches prReviewFrontendPaths. Leave empty to skip frontend review even when frontend paths change."
+      },
+      prReviewFrontendPaths: {
+        type: "array",
+        title: "PR review \u2014 frontend path globs (GOL-158)",
+        description: 'Changed-file globs that trigger a second (Iris) frontend review. Supports `*` (within a segment) and `**` (across segments). Defaults to ["apps/dashboard/**", "**/*.tsx", "**/*.css"] when empty.',
+        items: { type: "string" }
       }
     },
     required: ["bridges"]
