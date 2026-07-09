@@ -152,6 +152,122 @@ write_files:
       Restart=always
       RestartSec=5
 
+  # --- Disk hygiene (GOL-131) ---------------------------------------------
+  # The 77G droplet hit 87-89% because ~57G accreted host-side under
+  # /var/lib/docker (image layers + BuildKit cache from every CI
+  # `docker compose up -d --build`) with no reclaim policy. These units codify
+  # the reclaim so a rebuilt droplet inherits it — no snowflake click-ops.
+  # Keep in sync with infra/scripts/install-disk-hygiene.sh (the running-box
+  # install path). The scripts referenced below ship in the repo clone at
+  # /opt/agenticos/repo/infra/scripts/.
+  - path: /etc/systemd/system/agenticos-docker-prune.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=AgenticOS weekly Docker reclaim (system prune + builder prune, no volumes)
+      After=network-online.target docker.service
+      Wants=network-online.target
+      Requires=docker.service
+
+      [Service]
+      Type=oneshot
+      User=root
+      WorkingDirectory=/opt/agenticos/repo
+      ExecStart=/bin/bash -lc '/opt/agenticos/repo/infra/scripts/docker-prune.sh'
+      StandardOutput=append:/var/log/agenticos/docker-prune.log
+      StandardError=append:/var/log/agenticos/docker-prune.log
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/agenticos-docker-prune.timer
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Run AgenticOS Docker reclaim weekly (Sun 02:30 local)
+
+      [Timer]
+      OnCalendar=Sun *-*-* 02:30:00
+      Persistent=true
+      RandomizedDelaySec=300
+      Unit=agenticos-docker-prune.service
+
+      [Install]
+      WantedBy=timers.target
+
+  - path: /etc/systemd/system/agenticos-disk-guard.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=AgenticOS disk-guard (root FS check + Discord alert + reclaim at >=80%)
+      After=network-online.target docker.service
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      User=root
+      WorkingDirectory=/opt/agenticos/repo
+      ExecStart=/bin/bash -lc '/opt/agenticos/repo/infra/scripts/disk-guard.sh'
+      StandardOutput=append:/var/log/agenticos/disk-guard.log
+      StandardError=append:/var/log/agenticos/disk-guard.log
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/agenticos-disk-guard.timer
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Run AgenticOS disk-guard daily (05:00 local)
+
+      [Timer]
+      OnCalendar=*-*-* 05:00:00
+      Persistent=true
+      RandomizedDelaySec=300
+      Unit=agenticos-disk-guard.service
+
+      [Install]
+      WantedBy=timers.target
+
+  # journald cap: bound /var/log/journal so it never balloons the root FS.
+  - path: /etc/systemd/journald.conf.d/10-agenticos-cap.conf
+    permissions: "0644"
+    content: |
+      [Journal]
+      SystemMaxUse=200M
+      SystemKeepFree=500M
+      SystemMaxFileSize=50M
+      RuntimeMaxUse=50M
+      MaxRetentionSec=1month
+
+  # logrotate: cap app logs (the timers append here) + Docker container
+  # json-file logs (compose sets no per-container limit in this deployment).
+  - path: /etc/logrotate.d/agenticos
+    permissions: "0644"
+    content: |
+      /var/log/agenticos/*.log {
+          weekly
+          rotate 4
+          missingok
+          notifempty
+          compress
+          delaycompress
+          copytruncate
+          su root root
+      }
+
+      /var/lib/docker/containers/*/*-json.log {
+          daily
+          rotate 3
+          maxsize 50M
+          missingok
+          notifempty
+          compress
+          delaycompress
+          copytruncate
+          su root root
+      }
+
 runcmd:
   # --- Swap file (GOL-53): OOM safety net so a RAM spike degrades to swap
   #     instead of hard-crashing the stack. 4G, low swappiness. Idempotent. ---
@@ -474,6 +590,15 @@ runcmd:
 
   # --- OpenViking memory backup timer (daily pack/backup → /opt/backups) ---
   - systemctl enable --now agenticos-viking-backup.timer
+
+  # --- Disk hygiene (GOL-131): weekly docker reclaim + daily disk-guard ---
+  # Ensure the reclaim scripts are executable, apply the journald cap now
+  # (config alone only bounds FUTURE growth), then enable the timers.
+  - chmod +x /opt/agenticos/repo/infra/scripts/docker-prune.sh /opt/agenticos/repo/infra/scripts/disk-guard.sh
+  - systemctl restart systemd-journald
+  - journalctl --vacuum-size=200M || true
+  - systemctl enable --now agenticos-docker-prune.timer
+  - systemctl enable --now agenticos-disk-guard.timer
 
   # --- Unattended security upgrades ---
   - echo 'APT::Periodic::Unattended-Upgrade "1";' > /etc/apt/apt.conf.d/20auto-upgrades
