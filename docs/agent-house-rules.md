@@ -49,6 +49,20 @@ Goldberry-Playground, …).
   A human reviews and marks the PR "ready for review" before it merges — you
   propose the fix; you do not ship it. Put your reasoning (what's wrong, why this
   fix) in the PR body so the diff can be reviewed in context.
+- **Close your issue on merge — put `Closes #<github-issue-number>` in the PR
+  body.** Issues must close automatically when the PR *merges* (GitHub's closing
+  keywords fire on merge, never on PR open), so nothing is left open by hand.
+  - The number is the PR repo's **GitHub** issue number — the twin of your
+    Paperclip issue, not the `GOL-N` id. Every synced Paperclip issue has a
+    GitHub mirror; the `github_sync_plugin` closure leg then flips the Paperclip
+    mirror to `done` within one sync cycle. To find the twin, read the mapping
+    (`github_sync_mapping`: `paperclip_issue_id ↔ repo#number`) or the mirror
+    issue's `synced-from-github`/`synced-from-paperclip` marker.
+  - **Keep the `GOL-N` id too**, on its own line, for the human trace — e.g.
+    `Closes #142` plus `Paperclip: GOL-149`. The `Closes` line does the closing;
+    the `GOL-N` line keeps the board legible.
+  - Use `Closes`/`Fixes`/`Resolves` (all merge-time keywords). One per issue the
+    PR fully resolves; list several if it closes more than one.
 - **For `gh` or raw GitHub API calls**, mint a token for the **specific repo**
   first (pass `owner/repo`, not just `owner`, so the token is scoped to that one
   repo — least privilege):

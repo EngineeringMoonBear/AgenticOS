@@ -15,6 +15,7 @@ import {
 import {
   handleIssueCreated,
   handleIssueUpdated,
+  resolveMirrorClosureStatus,
   type SyncDeps,
 } from "./sync.js";
 
@@ -302,9 +303,83 @@ async function handleCustomInbound(
 }
 
 /**
+ * Inbound closure propagation (GitHub → Paperclip). When an agent PR merges with
+ * a `Closes #N` keyword, GitHub natively closes issue #N and fires an `issues`
+ * `closed` App-webhook event; `reopened` is the inverse. We look up the mirror
+ * mapping and, when the mirror's status actually needs to change, write the new
+ * Paperclip status. Unlike the `opened` path this deliberately DOES act on
+ * Paperclip-origin issues — the whole point is to close the mirror of an issue
+ * whose GitHub twin we created outbound.
+ *
+ * Loop safety: `resolveMirrorClosureStatus` returns null when the mirror already
+ * matches, so the outbound-close → GitHub-`closed`-echo → inbound path is a no-op
+ * and never bounces. We do not create a mirror on close/reopen — an unmapped
+ * GitHub issue has no Paperclip twin to propagate to.
+ */
+async function handleAppClosure(
+  ctx: PluginContext,
+  cfg: GithubSyncConfig,
+  event: { action: string; payload: InboundPayload },
+): Promise<void> {
+  const bridge = matchBridge(cfg, event.payload.repo);
+  if (!bridge) {
+    ctx.logger.info("app webhook: closure for repo not in a synced bridge; ignoring", {
+      repo: event.payload.repo,
+    });
+    return;
+  }
+  if (!cfg.companyId) {
+    ctx.logger.error("app webhook: companyId not configured — cannot propagate closure");
+    return;
+  }
+
+  const mapping = await getByRepoNumber(ctx.db, event.payload.repo, event.payload.number);
+  if (!mapping) {
+    // No mirror exists — nothing to propagate. (We only mirror on `opened`.)
+    ctx.logger.info("app webhook: closure for unmapped issue; nothing to propagate", {
+      repo: event.payload.repo,
+      number: event.payload.number,
+      action: event.action,
+    });
+    return;
+  }
+
+  const issue = await ctx.issues.get(mapping.paperclipIssueId, cfg.companyId);
+  if (!issue) {
+    ctx.logger.warn("app webhook: mirror issue not readable; skipping closure", {
+      issueId: mapping.paperclipIssueId,
+    });
+    return;
+  }
+
+  const target = resolveMirrorClosureStatus(event.action, issue.status);
+  if (!target) {
+    // Already in sync — the loop guard. No update, no bounce.
+    ctx.logger.info("app webhook: mirror already in sync; skipping (loop guard)", {
+      issueId: issue.id,
+      action: event.action,
+      status: issue.status,
+    });
+    return;
+  }
+
+  await ctx.issues.update(issue.id, { status: target }, cfg.companyId);
+  await upsert(ctx.db, { ...mapping, lastSyncedAt: new Date().toISOString() });
+
+  ctx.logger.info("app webhook: propagated GitHub closure to Paperclip mirror", {
+    issueId: issue.id,
+    repo: event.payload.repo,
+    number: event.payload.number,
+    action: event.action,
+    status: target,
+  });
+}
+
+/**
  * Native GitHub App endpoint (`github-app`): GitHub delivers its own signed
  * `issues` event for EVERY installed repo. We verify the App webhook secret,
- * mirror only `opened` issues, and skip Paperclip-origin issues (label guard).
+ * mirror `opened` issues (skipping Paperclip-origin via the label guard), and
+ * propagate `closed`/`reopened` onto an existing mirror (closure propagation).
  */
 async function handleAppInbound(
   ctx: PluginContext,
@@ -330,6 +405,14 @@ async function handleAppInbound(
   const event = parseGithubAppIssueEvent(input.parsedBody ?? safeJson(input.rawBody));
   if (!event) {
     ctx.logger.warn("app webhook: unparseable/invalid issues payload");
+    return;
+  }
+
+  // Closure propagation (GitHub → Paperclip): a merged `Closes #N` PR closes the
+  // GitHub issue → `closed`; `reopened` is the inverse. Handled before the
+  // opened-only guard, and intentionally without the Paperclip-origin label skip.
+  if (event.action === "closed" || event.action === "reopened") {
+    await handleAppClosure(ctx, cfg, event);
     return;
   }
   if (event.action !== "opened") {
