@@ -4,6 +4,9 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// src/worker.ts
+import { AsyncResource } from "node:async_hooks";
+
 // ../../node_modules/.pnpm/@paperclipai+plugin-sdk@2026.707.0_react@19.2.7/node_modules/@paperclipai/plugin-sdk/dist/define-plugin.js
 function definePlugin(definition) {
   return Object.freeze({ definition });
@@ -11314,6 +11317,10 @@ function buildReReviewPing(ev, reviewers) {
 function buildPipelineErrorPing(detail) {
   return `\u{1F525} PR review pipeline error: ${detail}`;
 }
+function isNullBodyStatusError(err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /invalid response status code (204|205|304)/i.test(msg);
+}
 
 // src/pr-review-store.ts
 var PR_REVIEW_TABLE = "github_pr_review";
@@ -11414,6 +11421,7 @@ async function postOpsPing(ctx, webhookUrl, content) {
       ctx.logger.warn("ops webhook ping failed", { status: res.status });
     }
   } catch (err) {
+    if (isNullBodyStatusError(err)) return;
     ctx.logger.warn("ops webhook ping error", {
       error: err instanceof Error ? err.message : String(err)
     });
@@ -11630,6 +11638,9 @@ function makeBridgeGithubClient(cfg, bridge) {
   }
   return null;
 }
+function captureInvocationScope() {
+  return AsyncResource.bind((fn) => fn());
+}
 async function handlePrInbound(ctx, cfg, input) {
   if (!cfg.appWebhookSecret) {
     ctx.logger.error("pr webhook: no appWebhookSecret configured \u2014 rejecting");
@@ -11676,6 +11687,7 @@ async function handlePrInbound(ctx, cfg, input) {
     ctx.logger.warn("pr webhook: no auth for bridge \u2014 cannot fetch PR files", { repo: ev.repo });
     return;
   }
+  const runInScope = captureInvocationScope();
   const filesRes = await github.listPullFiles(bridge.githubRepo, ev.number);
   if (!filesRes.ok) {
     ctx.logger.error("pr webhook: failed to fetch PR changed files", { repo: ev.repo, number: ev.number, error: filesRes.error });
@@ -11705,7 +11717,7 @@ async function handlePrInbound(ctx, cfg, input) {
   const reopened = [];
   for (const { reviewer, agentId } of reviewers) {
     try {
-      const outcome = await processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, agentId);
+      const outcome = await processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, agentId, runInScope);
       if (outcome === "created") created.push(reviewer);
       else if (outcome === "reopened") reopened.push(reviewer);
     } catch (err) {
@@ -11729,7 +11741,7 @@ async function handlePrInbound(ctx, cfg, input) {
     await postOpsPing(ctx, cfg.opsWebhookUrl, buildReReviewPing(ev, reopened));
   }
 }
-async function processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, agentId) {
+async function processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, agentId, runInScope) {
   const existing = await getReviewRecord(ctx.db, ev.repo, ev.number, reviewer);
   const action = decideReviewAction(existing ? existing.headSha : null, ev.headSha);
   if (action === "noop") {
@@ -11743,15 +11755,17 @@ async function processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, ag
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
   if (action === "create" || !existing) {
-    const issue = await ctx.issues.create({
-      companyId: cfg.companyId,
-      projectId: bridge.paperclipProjectId,
-      title: buildReviewIssueTitle(reviewer, ev),
-      description: buildReviewIssueBody(reviewer, ev, files),
-      status: "todo",
-      priority: bridge.defaultPriority ?? "medium",
-      assigneeAgentId: agentId
-    });
+    const issue = await runInScope(
+      () => ctx.issues.create({
+        companyId: cfg.companyId,
+        projectId: bridge.paperclipProjectId,
+        title: buildReviewIssueTitle(reviewer, ev),
+        description: buildReviewIssueBody(reviewer, ev, files),
+        status: "todo",
+        priority: bridge.defaultPriority ?? "medium",
+        assigneeAgentId: agentId
+      })
+    );
     await upsertReviewRecord(ctx.db, {
       githubRepo: ev.repo,
       prNumber: ev.number,
@@ -11770,8 +11784,10 @@ async function processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, ag
     await seedPendingCheck(ctx, github, bridge, ev, reviewer);
     return "created";
   }
-  await ctx.issues.update(existing.paperclipIssueId, { status: "todo" }, cfg.companyId);
-  await ctx.issues.createComment(existing.paperclipIssueId, buildNewCommitsNote(reviewer, ev), cfg.companyId);
+  await runInScope(() => ctx.issues.update(existing.paperclipIssueId, { status: "todo" }, cfg.companyId));
+  await runInScope(
+    () => ctx.issues.createComment(existing.paperclipIssueId, buildNewCommitsNote(reviewer, ev), cfg.companyId)
+  );
   await upsertReviewRecord(ctx.db, {
     githubRepo: ev.repo,
     prNumber: ev.number,

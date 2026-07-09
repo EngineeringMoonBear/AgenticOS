@@ -1,3 +1,4 @@
+import { AsyncResource } from "node:async_hooks";
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import type { PluginContext, PluginEvent, PluginWebhookInput } from "@paperclipai/plugin-sdk";
 import { GitHubClient } from "./github-client.js";
@@ -31,6 +32,7 @@ import {
   decideReviewAction,
   DEFAULT_FRONTEND_PATHS,
   isActionablePrAction,
+  isNullBodyStatusError,
   parseGithubPrEvent,
   shortSha,
   type GithubPrEvent,
@@ -187,6 +189,12 @@ async function postOpsPing(ctx: PluginContext, webhookUrl: string | undefined, c
       ctx.logger.warn("ops webhook ping failed", { status: res.status });
     }
   } catch (err) {
+    // Discord acks a successful webhook post with 204 No Content, which the SDK's
+    // http.fetch surfaces as a thrown "Invalid response status code 204" (the
+    // WHATWG Response constructor rejects a body on a null-body status). Treat
+    // that as success — otherwise every ops ping looks like it failed, which is
+    // why pipeline errors were invisible for weeks (GOL-179).
+    if (isNullBodyStatusError(err)) return;
     ctx.logger.warn("ops webhook ping error", {
       error: err instanceof Error ? err.message : String(err),
     });
@@ -538,6 +546,36 @@ type ReviewOutcome = "created" | "reopened" | "noop";
  *   - seeds/resets a pending `agent-review/*` check-run on the head SHA (best-effort).
  * Idempotent per (repo, PR, head SHA) via the github_pr_review store.
  */
+/**
+ * Runs a thunk inside a previously-captured async context. See
+ * {@link captureInvocationScope}.
+ */
+type InvocationScopeRunner = <T>(fn: () => Promise<T>) => Promise<T>;
+
+/**
+ * Snapshot the current async execution context so privileged `ctx.issues.*`
+ * calls made *after* an outbound fetch still carry the host invocation scope.
+ *
+ * WHY: the SDK attaches the per-invocation scope to a privileged host call only
+ * when its AsyncLocalStorage store is present (worker-rpc-host sends
+ * `paperclipInvocationId` iff `getStore()` is truthy). The PR path must call
+ * `github.listPullFiles()` first — an outbound undici `fetch` (github-client +
+ * broker use the global `fetch`, not `ctx.http.fetch`) that drops the async
+ * context. By the time we reach `ctx.issues.create` the store is gone and the
+ * host rejects the write: "not allowed to perform issues.create: missing,
+ * expired, or unknown invocation scope" (GOL-179, root-caused in GOL-178).
+ *
+ * We can't simply reorder the writes before the fetch: both the Iris reviewer
+ * decision and the issue body need the fetched file list. Instead we capture the
+ * context while it's still valid (before any outbound fetch) and re-enter it for
+ * each privileged write. `ctx.http.fetch`/`ctx.logger` don't need the scope, so
+ * the ops pings that run after the fetch are unaffected — and so is `ctx.db`,
+ * whose namespace calls the host authorizes without the invocation scope.
+ */
+function captureInvocationScope(): InvocationScopeRunner {
+  return AsyncResource.bind(<T>(fn: () => Promise<T>): Promise<T> => fn());
+}
+
 async function handlePrInbound(
   ctx: PluginContext,
   cfg: GithubSyncConfig,
@@ -594,6 +632,11 @@ async function handlePrInbound(
     return;
   }
 
+  // Capture the invocation scope BEFORE listPullFiles' outbound fetch drops the
+  // async context; every privileged ctx.issues.* write below is re-entered into
+  // it via `runInScope`. See captureInvocationScope (GOL-179).
+  const runInScope = captureInvocationScope();
+
   const filesRes = await github.listPullFiles(bridge.githubRepo, ev.number);
   if (!filesRes.ok) {
     ctx.logger.error("pr webhook: failed to fetch PR changed files", { repo: ev.repo, number: ev.number, error: filesRes.error });
@@ -626,7 +669,7 @@ async function handlePrInbound(
   const reopened: Reviewer[] = [];
   for (const { reviewer, agentId } of reviewers) {
     try {
-      const outcome = await processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, agentId);
+      const outcome = await processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, agentId, runInScope);
       if (outcome === "created") created.push(reviewer);
       else if (outcome === "reopened") reopened.push(reviewer);
     } catch (err) {
@@ -669,6 +712,7 @@ async function processReviewer(
   files: readonly string[],
   reviewer: Reviewer,
   agentId: string,
+  runInScope: InvocationScopeRunner,
 ): Promise<ReviewOutcome> {
   const existing = await getReviewRecord(ctx.db, ev.repo, ev.number, reviewer);
   const action = decideReviewAction(existing ? existing.headSha : null, ev.headSha);
@@ -684,15 +728,17 @@ async function processReviewer(
 
   const now = new Date().toISOString();
   if (action === "create" || !existing) {
-    const issue = await ctx.issues.create({
-      companyId: cfg.companyId!,
-      projectId: bridge.paperclipProjectId,
-      title: buildReviewIssueTitle(reviewer, ev),
-      description: buildReviewIssueBody(reviewer, ev, files),
-      status: "todo",
-      priority: bridge.defaultPriority ?? "medium",
-      assigneeAgentId: agentId,
-    });
+    const issue = await runInScope(() =>
+      ctx.issues.create({
+        companyId: cfg.companyId!,
+        projectId: bridge.paperclipProjectId,
+        title: buildReviewIssueTitle(reviewer, ev),
+        description: buildReviewIssueBody(reviewer, ev, files),
+        status: "todo",
+        priority: bridge.defaultPriority ?? "medium",
+        assigneeAgentId: agentId,
+      }),
+    );
     await upsertReviewRecord(ctx.db, {
       githubRepo: ev.repo,
       prNumber: ev.number,
@@ -713,8 +759,10 @@ async function processReviewer(
   }
 
   // New head SHA on an existing review: reopen + note, reset the pending check.
-  await ctx.issues.update(existing.paperclipIssueId, { status: "todo" }, cfg.companyId!);
-  await ctx.issues.createComment(existing.paperclipIssueId, buildNewCommitsNote(reviewer, ev), cfg.companyId!);
+  await runInScope(() => ctx.issues.update(existing.paperclipIssueId, { status: "todo" }, cfg.companyId!));
+  await runInScope(() =>
+    ctx.issues.createComment(existing.paperclipIssueId, buildNewCommitsNote(reviewer, ev), cfg.companyId!),
+  );
   await upsertReviewRecord(ctx.db, {
     githubRepo: ev.repo,
     prNumber: ev.number,

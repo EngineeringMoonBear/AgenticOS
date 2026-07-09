@@ -12,6 +12,7 @@ import {
   DEFAULT_FRONTEND_PATHS,
   globToRegExp,
   isActionablePrAction,
+  isNullBodyStatusError,
   parseGithubPrEvent,
   prReviewMarker,
   shortSha,
@@ -181,5 +182,21 @@ describe("state-change pings", () => {
   it("sign-off + changes-requested pings name the context/reviewer", () => {
     expect(buildSignoffPing("alice", "org/repo", 7)).toContain("agent-review/alice");
     expect(buildChangesRequestedPing("iris", "org/repo", 7)).toContain("Iris requested changes");
+  });
+});
+
+describe("isNullBodyStatusError (GOL-179 ops-ping 204 handling)", () => {
+  it("treats a 204 No Content Response-constructor throw as success", () => {
+    // The exact shape the SDK's http.fetch throws when Discord acks with 204.
+    expect(isNullBodyStatusError(new Error("Response constructor: Invalid response status code 204"))).toBe(true);
+  });
+  it("also covers the other null-body statuses (205, 304)", () => {
+    expect(isNullBodyStatusError(new Error("Invalid response status code 205"))).toBe(true);
+    expect(isNullBodyStatusError(new Error("Invalid response status code 304"))).toBe(true);
+  });
+  it("does not swallow real failures", () => {
+    expect(isNullBodyStatusError(new Error("fetch failed: ECONNREFUSED"))).toBe(false);
+    expect(isNullBodyStatusError(new Error("Invalid response status code 500"))).toBe(false);
+    expect(isNullBodyStatusError("timeout")).toBe(false);
   });
 });
