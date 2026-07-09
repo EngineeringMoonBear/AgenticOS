@@ -10814,6 +10814,71 @@ var GitHubClient = class {
     if (!res.ok) return res;
     return { ok: true, data: this.parseIssue(res.data) };
   }
+  /**
+   * List a PR's changed-file paths (GOL-158). Paginated at 100/page, capped at
+   * MAX_FILE_PAGES to bound cost; the `truncated` flag says whether the cap was
+   * hit so the caller can log it (frontendPaths matching stays correct — a match
+   * in the first pages is enough; a giant PR that only touches frontend beyond
+   * page N is the rare miss we accept for a bounded request budget).
+   */
+  async listPullFiles(repo, num) {
+    const MAX_FILE_PAGES = 10;
+    const PER_PAGE = 100;
+    const files = [];
+    for (let page = 1; page <= MAX_FILE_PAGES; page++) {
+      const res = await this.request(
+        "GET",
+        repo,
+        `/repos/${this.org}/${repo}/pulls/${num}/files?per_page=${PER_PAGE}&page=${page}`
+      );
+      if (!res.ok) return res;
+      const batch = Array.isArray(res.data) ? res.data : [];
+      for (const f of batch) {
+        if (f && typeof f.filename === "string") files.push(f.filename);
+      }
+      if (batch.length < PER_PAGE) return { ok: true, data: { files, truncated: false } };
+    }
+    return { ok: true, data: { files, truncated: true } };
+  }
+  /**
+   * Create a check-run on `headSha` (GOL-158 sign-off mechanism). Pass no
+   * `conclusion` to seed/reset a pending run (`status: "in_progress"`); pass a
+   * conclusion to complete it. Requires the App's `checks:write` permission.
+   */
+  async createCheckRun(repo, input) {
+    const body = {
+      name: input.name,
+      head_sha: input.headSha,
+      output: { title: input.title, summary: input.summary },
+      ...input.detailsUrl ? { details_url: input.detailsUrl } : {}
+    };
+    if (input.conclusion) {
+      body.status = "completed";
+      body.conclusion = input.conclusion;
+      body.completed_at = (/* @__PURE__ */ new Date()).toISOString();
+    } else {
+      body.status = "in_progress";
+    }
+    const res = await this.request(
+      "POST",
+      repo,
+      `/repos/${this.org}/${repo}/check-runs`,
+      body
+    );
+    if (!res.ok) return res;
+    return { ok: true, data: { id: Number(res.data.id) } };
+  }
+  /** Comment on an issue or PR (PRs share the issues comments endpoint). */
+  async createIssueComment(repo, num, body) {
+    const res = await this.request(
+      "POST",
+      repo,
+      `/repos/${this.org}/${repo}/issues/${num}/comments`,
+      { body }
+    );
+    if (!res.ok) return res;
+    return { ok: true, data: { id: Number(res.data.id) } };
+  }
 };
 
 // src/broker.ts
@@ -11121,9 +11186,163 @@ function resolveRouting(cfg, labels) {
   return { reason: "none" };
 }
 
+// src/pr-review.ts
+var CHECK_CONTEXT = {
+  alice: "agent-review/alice",
+  iris: "agent-review/iris"
+};
+var REVIEWER_NAME = { alice: "Alice", iris: "Iris" };
+var PR_ACTIONS = ["opened", "reopened", "ready_for_review", "synchronize"];
+var DEFAULT_FRONTEND_PATHS = ["apps/dashboard/**", "**/*.tsx", "**/*.css"];
+function isActionablePrAction(action) {
+  return PR_ACTIONS.includes(action);
+}
+function parseGithubPrEvent(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw;
+  const action = typeof o.action === "string" ? o.action : "";
+  const repository = o.repository ?? {};
+  const pr = o.pull_request ?? {};
+  const head = pr.head ?? {};
+  const repo = typeof repository.full_name === "string" ? repository.full_name : "";
+  const rawNumber = pr.number ?? o.number;
+  const number = typeof rawNumber === "number" ? rawNumber : Number(rawNumber);
+  const title = typeof pr.title === "string" ? pr.title : "";
+  const headSha = typeof head.sha === "string" ? head.sha : "";
+  if (!repo || !Number.isFinite(number) || number <= 0 || !headSha) return null;
+  return {
+    action,
+    draft: pr.draft === true,
+    repo,
+    number,
+    title,
+    headSha,
+    url: typeof pr.html_url === "string" ? pr.html_url : ""
+  };
+}
+function shortSha(sha) {
+  return sha.length > 7 ? sha.slice(0, 7) : sha;
+}
+function decideReviewAction(priorHeadSha, newHeadSha) {
+  if (priorHeadSha === null) return "create";
+  return priorHeadSha === newHeadSha ? "noop" : "reopen";
+}
+function globToRegExp(glob) {
+  let re = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "*") {
+      if (glob[i + 1] === "*") {
+        i++;
+        if (glob[i + 1] === "/") {
+          i++;
+          re += "(?:.*/)?";
+        } else {
+          re += ".*";
+        }
+      } else {
+        re += "[^/]*";
+      }
+    } else if (/[.+?^${}()|[\]\\]/.test(c)) {
+      re += "\\" + c;
+    } else {
+      re += c;
+    }
+  }
+  return new RegExp("^" + re + "$");
+}
+function anyFrontendMatch(files, globs) {
+  const res = globs.map(globToRegExp);
+  return files.some((f) => res.some((r) => r.test(f)));
+}
+function prReviewMarker(repo, num, sha) {
+  return `<!-- pr-review: ${repo}#${num}@${sha} -->`;
+}
+function buildReviewIssueTitle(reviewer, ev) {
+  const scope = reviewer === "iris" ? " (frontend)" : "";
+  return `Review PR ${ev.repo}#${ev.number}${scope} \u2014 ${ev.title}`;
+}
+function buildReviewIssueBody(reviewer, ev, files) {
+  const shown = files.slice(0, 50);
+  const fileLines = shown.length ? shown.map((f) => `- \`${f}\``).join("\n") + (files.length > shown.length ? `
+- \u2026and ${files.length - shown.length} more` : "") : "- _(no files reported)_";
+  const context = CHECK_CONTEXT[reviewer];
+  return [
+    prReviewMarker(ev.repo, ev.number, ev.headSha),
+    "",
+    `**PR:** ${ev.url || `${ev.repo}#${ev.number}`}`,
+    `**Head SHA:** \`${ev.headSha}\``,
+    `**Reviewer:** ${REVIEWER_NAME[reviewer]} (\`${context}\`)`,
+    "",
+    `### Changed files (${files.length})`,
+    fileLines,
+    "",
+    "### Review checklist",
+    "- [ ] Correctness \u2014 logic, edge cases, error handling",
+    reviewer === "iris" ? "- [ ] Frontend \u2014 accessibility, responsive layout, design-system reuse" : "- [ ] Reuse/simplification, tests, security-sensitive changes flagged",
+    "- [ ] Sign off: post check-run `" + context + "` on the head SHA (success), or failure + a PR comment with requested changes.",
+    "",
+    "_Non-required check during Phase 2 soak (GOL-158). Merge gate flips in Phase 3._"
+  ].join("\n");
+}
+function buildNewCommitsNote(reviewer, ev) {
+  return `\u{1F501} New commits pushed \u2014 head is now \`${ev.headSha}\` (${ev.url || `${ev.repo}#${ev.number}`}). Re-review against the new head SHA and re-post the \`${CHECK_CONTEXT[reviewer]}\` check-run (previous sign-off is stale).`;
+}
+function reviewerList(reviewers) {
+  return reviewers.map((r) => REVIEWER_NAME[r]).join(" + ") || "\u2014";
+}
+function buildReviewIssuesCreatedPing(ev, reviewers) {
+  return `\u{1F50D} PR ${ev.repo}#${ev.number} \u2192 review: ${reviewerList(reviewers)} \u2014 <${ev.url || ev.repo}>`;
+}
+function buildReReviewPing(ev, reviewers) {
+  return `\u{1F501} PR ${ev.repo}#${ev.number} new commits (\`${shortSha(ev.headSha)}\`) \u2192 re-review: ${reviewerList(reviewers)}`;
+}
+function buildPipelineErrorPing(detail) {
+  return `\u{1F525} PR review pipeline error: ${detail}`;
+}
+
+// src/pr-review-store.ts
+var PR_REVIEW_TABLE = "github_pr_review";
+function qualified(db) {
+  return `${db.namespace}.${PR_REVIEW_TABLE}`;
+}
+function toRow2(raw) {
+  return {
+    githubRepo: String(raw.github_repo),
+    prNumber: Number(raw.pr_number),
+    reviewer: String(raw.reviewer),
+    headSha: String(raw.head_sha),
+    paperclipIssueId: String(raw.paperclip_issue_id),
+    updatedAt: String(raw.updated_at)
+  };
+}
+async function getReviewRecord(db, githubRepo, prNumber, reviewer) {
+  const rows = await db.query(
+    `SELECT github_repo, pr_number, reviewer, head_sha, paperclip_issue_id, updated_at
+       FROM ${qualified(db)}
+      WHERE github_repo = $1 AND pr_number = $2 AND reviewer = $3`,
+    [githubRepo, prNumber, reviewer]
+  );
+  const first = rows[0];
+  return first ? toRow2(first) : null;
+}
+async function upsertReviewRecord(db, row) {
+  await db.execute(
+    `INSERT INTO ${qualified(db)}
+       (github_repo, pr_number, reviewer, head_sha, paperclip_issue_id, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (github_repo, pr_number, reviewer) DO UPDATE SET
+       head_sha = $4,
+       paperclip_issue_id = $5,
+       updated_at = $6`,
+    [row.githubRepo, row.prNumber, row.reviewer, row.headSha, row.paperclipIssueId, row.updatedAt]
+  );
+}
+
 // src/worker.ts
 var INBOUND_ENDPOINT_KEY = "github-issue";
 var APP_WEBHOOK_ENDPOINT_KEY = "github-app";
+var PR_WEBHOOK_ENDPOINT_KEY = "github-pr";
 var currentContext = null;
 function safeJson(raw) {
   try {
@@ -11163,7 +11382,10 @@ function readConfig(raw) {
     companyId: raw.companyId ? String(raw.companyId) : void 0,
     inboundWebhookSecret: raw.inboundWebhookSecret ? String(raw.inboundWebhookSecret) : void 0,
     appWebhookSecret: raw.appWebhookSecret ? String(raw.appWebhookSecret) : void 0,
-    opsWebhookUrl: raw.opsWebhookUrl ? String(raw.opsWebhookUrl) : void 0
+    opsWebhookUrl: raw.opsWebhookUrl ? String(raw.opsWebhookUrl) : void 0,
+    prReviewAliceAgentId: raw.prReviewAliceAgentId ? String(raw.prReviewAliceAgentId) : void 0,
+    prReviewIrisAgentId: raw.prReviewIrisAgentId ? String(raw.prReviewIrisAgentId) : void 0,
+    prReviewFrontendPaths: Array.isArray(raw.prReviewFrontendPaths) ? raw.prReviewFrontendPaths.filter((p) => typeof p === "string" && p.length > 0) : void 0
   };
 }
 async function postOpsPing(ctx, webhookUrl, content) {
@@ -11333,6 +11555,193 @@ async function handleAppInbound(ctx, cfg, input) {
   }
   await createMirrorIssue(ctx, cfg, bridge, event.payload, event.labels);
 }
+function makeBridgeGithubClient(cfg, bridge) {
+  const brokerUrl = cfg.tokenBrokerUrl || process.env.GH_TOKEN_BROKER_URL || "";
+  if (brokerUrl) {
+    return new GitHubClient({ org: bridge.githubOrg, getToken: makeBrokerTokenProvider(brokerUrl, bridge.githubOrg) });
+  }
+  if (cfg.githubToken) {
+    return new GitHubClient({ org: bridge.githubOrg, getToken: staticTokenProvider(cfg.githubToken) });
+  }
+  return null;
+}
+async function handlePrInbound(ctx, cfg, input) {
+  if (!cfg.appWebhookSecret) {
+    ctx.logger.error("pr webhook: no appWebhookSecret configured \u2014 rejecting");
+    return;
+  }
+  if (!verifyGithubSignature(input.rawBody, cfg.appWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
+    ctx.logger.warn("pr webhook: signature verification failed");
+    await postOpsPing(ctx, cfg.opsWebhookUrl, buildPipelineErrorPing("HMAC verification failed on a github-pr delivery"));
+    return;
+  }
+  const eventType = getHeader(input.headers, "x-github-event");
+  if (eventType && eventType !== "pull_request") {
+    ctx.logger.info("pr webhook: ignoring non-pull_request event", { eventType });
+    return;
+  }
+  const ev = parseGithubPrEvent(input.parsedBody ?? safeJson(input.rawBody));
+  if (!ev) {
+    ctx.logger.warn("pr webhook: unparseable/invalid pull_request payload");
+    return;
+  }
+  if (ev.draft) {
+    ctx.logger.info("pr webhook: skipping draft PR", { repo: ev.repo, number: ev.number });
+    return;
+  }
+  if (!isActionablePrAction(ev.action)) {
+    ctx.logger.info("pr webhook: ignoring PR action", { action: ev.action, repo: ev.repo, number: ev.number });
+    return;
+  }
+  const bridge = matchBridge(cfg, ev.repo);
+  if (!bridge) {
+    ctx.logger.info("pr webhook: repo not in a synced bridge; ignoring", { repo: ev.repo });
+    return;
+  }
+  if (!cfg.companyId) {
+    ctx.logger.error("pr webhook: companyId not configured \u2014 cannot create review issues");
+    return;
+  }
+  if (!cfg.prReviewAliceAgentId) {
+    ctx.logger.info("pr webhook: PR review pipeline disabled (no prReviewAliceAgentId configured)");
+    return;
+  }
+  const github = makeBridgeGithubClient(cfg, bridge);
+  if (!github) {
+    ctx.logger.warn("pr webhook: no auth for bridge \u2014 cannot fetch PR files", { repo: ev.repo });
+    return;
+  }
+  const filesRes = await github.listPullFiles(bridge.githubRepo, ev.number);
+  if (!filesRes.ok) {
+    ctx.logger.error("pr webhook: failed to fetch PR changed files", { repo: ev.repo, number: ev.number, error: filesRes.error });
+    await postOpsPing(
+      ctx,
+      cfg.opsWebhookUrl,
+      buildPipelineErrorPing(`could not list files for ${ev.repo}#${ev.number}: ${filesRes.error}`)
+    );
+    return;
+  }
+  const { files, truncated } = filesRes.data;
+  if (truncated) {
+    ctx.logger.warn("pr webhook: changed-file list truncated at the page cap \u2014 frontend match may under-report", {
+      repo: ev.repo,
+      number: ev.number
+    });
+  }
+  const frontendPaths = cfg.prReviewFrontendPaths?.length ? cfg.prReviewFrontendPaths : DEFAULT_FRONTEND_PATHS;
+  const isFrontend = anyFrontendMatch(files, frontendPaths);
+  const reviewers = [
+    { reviewer: "alice", agentId: cfg.prReviewAliceAgentId }
+  ];
+  if (isFrontend && cfg.prReviewIrisAgentId) {
+    reviewers.push({ reviewer: "iris", agentId: cfg.prReviewIrisAgentId });
+  }
+  const created = [];
+  const reopened = [];
+  for (const { reviewer, agentId } of reviewers) {
+    try {
+      const outcome = await processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, agentId);
+      if (outcome === "created") created.push(reviewer);
+      else if (outcome === "reopened") reopened.push(reviewer);
+    } catch (err) {
+      ctx.logger.error("pr webhook: reviewer processing failed", {
+        repo: ev.repo,
+        number: ev.number,
+        reviewer,
+        error: err instanceof Error ? err.message : String(err)
+      });
+      await postOpsPing(
+        ctx,
+        cfg.opsWebhookUrl,
+        buildPipelineErrorPing(`review-issue handling failed for ${ev.repo}#${ev.number} (${reviewer})`)
+      );
+    }
+  }
+  if (created.length) {
+    await postOpsPing(ctx, cfg.opsWebhookUrl, buildReviewIssuesCreatedPing(ev, created));
+  }
+  if (reopened.length) {
+    await postOpsPing(ctx, cfg.opsWebhookUrl, buildReReviewPing(ev, reopened));
+  }
+}
+async function processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, agentId) {
+  const existing = await getReviewRecord(ctx.db, ev.repo, ev.number, reviewer);
+  const action = decideReviewAction(existing ? existing.headSha : null, ev.headSha);
+  if (action === "noop") {
+    ctx.logger.info("pr webhook: already reviewed at this head SHA; skipping", {
+      repo: ev.repo,
+      number: ev.number,
+      reviewer,
+      headSha: ev.headSha
+    });
+    return "noop";
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  if (action === "create" || !existing) {
+    const issue = await ctx.issues.create({
+      companyId: cfg.companyId,
+      projectId: bridge.paperclipProjectId,
+      title: buildReviewIssueTitle(reviewer, ev),
+      description: buildReviewIssueBody(reviewer, ev, files),
+      status: "todo",
+      priority: bridge.defaultPriority ?? "medium",
+      assigneeAgentId: agentId
+    });
+    await upsertReviewRecord(ctx.db, {
+      githubRepo: ev.repo,
+      prNumber: ev.number,
+      reviewer,
+      headSha: ev.headSha,
+      paperclipIssueId: issue.id,
+      updatedAt: now
+    });
+    ctx.logger.info("pr webhook: created review issue", {
+      repo: ev.repo,
+      number: ev.number,
+      reviewer,
+      issueId: issue.id,
+      assigneeAgentId: agentId
+    });
+    await seedPendingCheck(ctx, github, bridge, ev, reviewer);
+    return "created";
+  }
+  await ctx.issues.update(existing.paperclipIssueId, { status: "todo" }, cfg.companyId);
+  await ctx.issues.createComment(existing.paperclipIssueId, buildNewCommitsNote(reviewer, ev), cfg.companyId);
+  await upsertReviewRecord(ctx.db, {
+    githubRepo: ev.repo,
+    prNumber: ev.number,
+    reviewer,
+    headSha: ev.headSha,
+    paperclipIssueId: existing.paperclipIssueId,
+    updatedAt: now
+  });
+  ctx.logger.info("pr webhook: reopened review issue for new commits", {
+    repo: ev.repo,
+    number: ev.number,
+    reviewer,
+    issueId: existing.paperclipIssueId,
+    headSha: ev.headSha
+  });
+  await seedPendingCheck(ctx, github, bridge, ev, reviewer);
+  return "reopened";
+}
+async function seedPendingCheck(ctx, github, bridge, ev, reviewer) {
+  const res = await github.createCheckRun(bridge.githubRepo, {
+    name: CHECK_CONTEXT[reviewer],
+    headSha: ev.headSha,
+    title: `Agent review pending (${reviewer})`,
+    summary: `Awaiting ${reviewer}'s review of ${ev.repo}#${ev.number} @ \`${shortSha(ev.headSha)}\`. Non-required during Phase 2 soak (GOL-158).`,
+    detailsUrl: ev.url || void 0
+  });
+  if (!res.ok) {
+    ctx.logger.warn("pr webhook: pending check-run seed failed (needs App checks:write?)", {
+      repo: ev.repo,
+      number: ev.number,
+      reviewer,
+      error: res.error
+    });
+  }
+}
 var plugin = definePlugin({
   async setup(ctx) {
     ctx.logger.info("GitHub Sync plugin starting");
@@ -11387,11 +11796,12 @@ var plugin = definePlugin({
     });
   },
   /**
-   * Inbound leg (GitHub → Paperclip). The host routes two public endpoints here:
-   *   - `POST …/webhooks/github-issue` → a custom Actions-workflow payload, or
-   *   - `POST …/webhooks/github-app`   → GitHub's native `issues` App-webhook event.
+   * Inbound leg (GitHub → Paperclip). The host routes three public endpoints here:
+   *   - `POST …/webhooks/github-issue` → a custom Actions-workflow payload,
+   *   - `POST …/webhooks/github-app`   → GitHub's native `issues` App-webhook event, or
+   *   - `POST …/webhooks/github-pr`    → GitHub's native `pull_request` event (review pipeline).
    * Each verifies its own HMAC (the plugin's responsibility) then creates the
-   * mirror issue directly — routines can't, since every routine run needs an agent.
+   * mirror/review issue directly — routines can't, since every routine run needs an agent.
    */
   async onWebhook(input) {
     const ctx = currentContext;
@@ -11402,6 +11812,8 @@ var plugin = definePlugin({
         await handleCustomInbound(ctx, cfg, input);
       } else if (input.endpointKey === APP_WEBHOOK_ENDPOINT_KEY) {
         await handleAppInbound(ctx, cfg, input);
+      } else if (input.endpointKey === PR_WEBHOOK_ENDPOINT_KEY) {
+        await handlePrInbound(ctx, cfg, input);
       } else {
         ctx.logger.warn("inbound webhook: unknown endpoint", { endpointKey: input.endpointKey });
       }

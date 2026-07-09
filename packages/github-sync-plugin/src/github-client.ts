@@ -168,4 +168,85 @@ export class GitHubClient {
     if (!res.ok) return res;
     return { ok: true, data: this.parseIssue(res.data) };
   }
+
+  /**
+   * List a PR's changed-file paths (GOL-158). Paginated at 100/page, capped at
+   * MAX_FILE_PAGES to bound cost; the `truncated` flag says whether the cap was
+   * hit so the caller can log it (frontendPaths matching stays correct — a match
+   * in the first pages is enough; a giant PR that only touches frontend beyond
+   * page N is the rare miss we accept for a bounded request budget).
+   */
+  async listPullFiles(
+    repo: string,
+    num: number,
+  ): Promise<Result<{ files: string[]; truncated: boolean }>> {
+    const MAX_FILE_PAGES = 10; // 10 * 100 = up to 1000 files
+    const PER_PAGE = 100;
+    const files: string[] = [];
+    for (let page = 1; page <= MAX_FILE_PAGES; page++) {
+      const res = await this.request<Array<Record<string, any>>>(
+        "GET",
+        repo,
+        `/repos/${this.org}/${repo}/pulls/${num}/files?per_page=${PER_PAGE}&page=${page}`,
+      );
+      if (!res.ok) return res;
+      const batch = Array.isArray(res.data) ? res.data : [];
+      for (const f of batch) {
+        if (f && typeof f.filename === "string") files.push(f.filename);
+      }
+      if (batch.length < PER_PAGE) return { ok: true, data: { files, truncated: false } };
+    }
+    return { ok: true, data: { files, truncated: true } };
+  }
+
+  /**
+   * Create a check-run on `headSha` (GOL-158 sign-off mechanism). Pass no
+   * `conclusion` to seed/reset a pending run (`status: "in_progress"`); pass a
+   * conclusion to complete it. Requires the App's `checks:write` permission.
+   */
+  async createCheckRun(
+    repo: string,
+    input: {
+      name: string;
+      headSha: string;
+      conclusion?: "success" | "failure" | "neutral";
+      title: string;
+      summary: string;
+      detailsUrl?: string;
+    },
+  ): Promise<Result<{ id: number }>> {
+    const body: Record<string, unknown> = {
+      name: input.name,
+      head_sha: input.headSha,
+      output: { title: input.title, summary: input.summary },
+      ...(input.detailsUrl ? { details_url: input.detailsUrl } : {}),
+    };
+    if (input.conclusion) {
+      body.status = "completed";
+      body.conclusion = input.conclusion;
+      body.completed_at = new Date().toISOString();
+    } else {
+      body.status = "in_progress";
+    }
+    const res = await this.request<Record<string, any>>(
+      "POST",
+      repo,
+      `/repos/${this.org}/${repo}/check-runs`,
+      body,
+    );
+    if (!res.ok) return res;
+    return { ok: true, data: { id: Number(res.data.id) } };
+  }
+
+  /** Comment on an issue or PR (PRs share the issues comments endpoint). */
+  async createIssueComment(repo: string, num: number, body: string): Promise<Result<{ id: number }>> {
+    const res = await this.request<Record<string, any>>(
+      "POST",
+      repo,
+      `/repos/${this.org}/${repo}/issues/${num}/comments`,
+      { body },
+    );
+    if (!res.ok) return res;
+    return { ok: true, data: { id: Number(res.data.id) } };
+  }
 }
