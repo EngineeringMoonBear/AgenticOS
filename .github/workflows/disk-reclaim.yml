@@ -1,0 +1,77 @@
+name: Droplet Disk Reclaim
+
+# Manually/agent-triggerable host Docker reclaim for agenticos-droplet
+# (GOL-124 / GOL-131). Clears the /var/lib/docker accretion — dangling image
+# layers, stopped containers, unused images, and the BuildKit build cache —
+# that drives the recurring DigitalOcean disk alert (root FS climbs to ~88% as
+# every CI deploy leaves the previous image + build cache behind).
+#
+# Why this workflow exists: in-container Paperclip agents structurally cannot
+# reach the host filesystem or the host Docker socket, and the CEO directive on
+# GOL-124 (Option A) explicitly ruled out injecting the deploy SSH key / host
+# root into any autonomous agent. This job runs the reclaim as the CI `deploy`
+# user, which is already in the docker group (no sudo, no host root) — so the
+# reclaim is triggerable on demand (`gh workflow run disk-reclaim.yml`) with NO
+# new standing credential held by any agent. The durable self-healing path is
+# the host systemd timers (agenticos-docker-prune/disk-guard); this is the
+# on-demand button for the urgent reclaim before those timers are installed.
+#
+# Safety: NEVER prunes volumes. Named volumes on this droplet hold LIVE state
+# (agenticos-db Postgres, OpenViking memory, vault) — a volume prune here would
+# be data loss. Mirrors infra/scripts/docker-prune.sh, inlined so the reclaim
+# works even before that script has shipped to the box.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Share the deploy lock so a reclaim never races a deploy mid-`compose build`
+# (which is actively creating the layers a prune would otherwise remove).
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+jobs:
+  reclaim:
+    name: Host Docker reclaim (no volumes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.DROPLET_SSH_KEY }}
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Reclaim host Docker space (system prune + builder prune, no volumes)
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+        run: |
+          # `deploy` is in the docker group — no sudo (sudo would block on a
+          # password prompt and hang the job). `docker system prune -af` removes
+          # all stopped containers, unused networks, dangling AND unused images,
+          # and the build cache; RUNNING containers and their in-use images are
+          # NOT touched, so live services stay up. NO --volumes.
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" '
+            set -euo pipefail
+            ts() { date "+%Y-%m-%dT%H:%M:%S%z"; }
+            echo "[$(ts)] disk BEFORE:"; df -h /
+            docker system df || true
+            echo "[$(ts)] docker system prune -af (keeps running containers + in-use images; no --volumes)"
+            docker system prune -af
+            echo "[$(ts)] docker builder prune -af (BuildKit cache)"
+            docker builder prune -af
+            echo "[$(ts)] disk AFTER:"; df -h /
+            docker system df || true
+            USE=$(df --output=pcent / | tail -1 | tr -dc "0-9")
+            echo "[$(ts)] root FS now at ${USE}%"
+            if [ "${USE:-100}" -ge 85 ]; then
+              echo "::warning::agenticos-droplet root FS still >=${USE}% after reclaim — needs a human look (volumes / logs / non-Docker growth)"
+            fi'
