@@ -1,6 +1,6 @@
 name: Droplet Disk Reclaim
 
-# Manually/agent-triggerable host Docker reclaim for agenticos-droplet
+# Scheduled + manually/agent-triggerable host Docker reclaim for agenticos-droplet
 # (GOL-124 / GOL-131). Clears the /var/lib/docker accretion — dangling image
 # layers, stopped containers, unused images, and the BuildKit build cache —
 # that drives the recurring DigitalOcean disk alert (root FS climbs to ~88% as
@@ -12,9 +12,12 @@ name: Droplet Disk Reclaim
 # root into any autonomous agent. This job runs the reclaim as the CI `deploy`
 # user, which is already in the docker group (no sudo, no host root) — so the
 # reclaim is triggerable on demand (`gh workflow run disk-reclaim.yml`) with NO
-# new standing credential held by any agent. The durable self-healing path is
-# the host systemd timers (agenticos-docker-prune/disk-guard); this is the
-# on-demand button for the urgent reclaim before those timers are installed.
+# new standing credential held by any agent. It ALSO runs on a daily schedule as
+# a threshold-gated safety net (see GUARD_THRESHOLD below): the scheduled run
+# only prunes when the root FS is actually under pressure, so it self-heals the
+# box with no host root and no manual trigger, covering the gap until — or as
+# defense-in-depth alongside — the host systemd timers
+# (agenticos-docker-prune/disk-guard). A manual dispatch always prunes now.
 #
 # Safety: NEVER prunes volumes. Named volumes on this droplet hold LIVE state
 # (agenticos-db Postgres, OpenViking memory, vault) — a volume prune here would
@@ -23,6 +26,12 @@ name: Droplet Disk Reclaim
 
 on:
   workflow_dispatch:
+  schedule:
+    # Daily 08:17 UTC. Threshold-gated (GUARD_THRESHOLD) so a healthy box is a
+    # no-op — an unconditional nightly prune would nuke the BuildKit cache every
+    # day and force a cold rebuild on the next deploy. Self-healing safety net
+    # with no host root and no standing agent credential (GOL-131).
+    - cron: "17 8 * * *"
 
 permissions:
   contents: read
@@ -53,15 +62,28 @@ jobs:
         env:
           HOST: ${{ secrets.DROPLET_HOST }}
           USER: ${{ secrets.DROPLET_USER }}
+          EVENT: ${{ github.event_name }}
+          # Scheduled runs only prune once the root FS reaches this %; a manual
+          # workflow_dispatch ignores the guard and always prunes.
+          GUARD_THRESHOLD: "75"
         run: |
           # `deploy` is in the docker group — no sudo (sudo would block on a
           # password prompt and hang the job). `docker system prune -af` removes
           # all stopped containers, unused networks, dangling AND unused images,
           # and the build cache; RUNNING containers and their in-use images are
           # NOT touched, so live services stay up. NO --volumes.
-          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" '
+          # EVENT/GUARD_THRESHOLD are passed to the remote shell on the command
+          # line; the heredoc is single-quoted so only the remote bash expands it.
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" \
+            "EVENT='${EVENT}' GUARD_THRESHOLD='${GUARD_THRESHOLD}' bash -s" <<'REMOTE'
             set -euo pipefail
             ts() { date "+%Y-%m-%dT%H:%M:%S%z"; }
+            USE_NOW=$(df --output=pcent / | tail -1 | tr -dc "0-9")
+            echo "[$(ts)] event=${EVENT:-manual} root FS at ${USE_NOW}% (schedule guard ${GUARD_THRESHOLD:-75}%)"
+            if [ "${EVENT:-workflow_dispatch}" = "schedule" ] && [ "${USE_NOW:-100}" -lt "${GUARD_THRESHOLD:-75}" ]; then
+              echo "[$(ts)] scheduled run and under guard threshold — nothing to reclaim, exiting clean."
+              exit 0
+            fi
             echo "[$(ts)] disk BEFORE:"; df -h /
             docker system df || true
             echo "[$(ts)] docker system prune -af (keeps running containers + in-use images; no --volumes)"
@@ -74,4 +96,5 @@ jobs:
             echo "[$(ts)] root FS now at ${USE}%"
             if [ "${USE:-100}" -ge 85 ]; then
               echo "::warning::agenticos-droplet root FS still >=${USE}% after reclaim — needs a human look (volumes / logs / non-Docker growth)"
-            fi'
+            fi
+          REMOTE
