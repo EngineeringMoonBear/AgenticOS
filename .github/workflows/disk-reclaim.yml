@@ -23,6 +23,20 @@ name: Droplet Disk Reclaim
 
 on:
   workflow_dispatch:
+  # Agent-triggerable WITHOUT host root or GitHub `actions: write`: an
+  # in-container Paperclip agent mints a repo-scoped gh-token-broker token
+  # (contents:write) and POSTs /repos/<owner>/<repo>/dispatches with
+  # {"event_type":"disk-reclaim"} to fire this on demand. This is the reclaim
+  # button that needs NO standing credential injected into any agent and NO
+  # Actions-write permission on the broker App (GOL-141).
+  repository_dispatch:
+    types: [disk-reclaim]
+  # Durable self-healing on a CI timer — NO host root, NO systemd, NO Josh.
+  # A weekly docker-group prune keeps /var/lib/docker from re-accreting to the
+  # 85% DigitalOcean alert between CI deploys (GOL-124 recurrence guard).
+  # Mondays 08:00 UTC (~03:00-04:00 ET) — low farm/market traffic.
+  schedule:
+    - cron: "0 8 * * 1"
 
 permissions:
   contents: read
