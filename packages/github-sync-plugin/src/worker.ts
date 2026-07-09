@@ -18,6 +18,7 @@ import {
   resolveMirrorClosureStatus,
   type SyncDeps,
 } from "./sync.js";
+import { resolveRouting, type LabelRouting } from "./routing.js";
 
 /** Manifest-declared inbound webhook endpoint keys (GitHub → Paperclip). */
 /** Custom Actions-workflow path: a signed {repo,number,title,body,url} payload. */
@@ -52,8 +53,21 @@ interface BridgeConfig {
    * created ASSIGNED to this agent so they enter its heartbeat automatically —
    * without this a mirror lands unassigned and Paperclip agents never pick up
    * unassigned work (heartbeat rule #1), so GitHub issues pile up unowned.
+   * Superseded by labelRouting/fallbackAssigneeAgentId (v0.6.0) when those are
+   * set; kept as the backward-compatible last resort.
    */
   defaultAssigneeAgentId?: string;
+  /**
+   * Discipline routing by GitHub label (v0.6.0, GOL-150). label name → agent id.
+   * Precedence infra=bug=alert > frontend > feature (see routing.ts). A matched
+   * label assigns the mirror to that discipline's owner.
+   */
+  labelRouting?: LabelRouting;
+  /**
+   * Assignee when no routing label matches (v0.6.0 triage owner, e.g. CEO). Takes
+   * precedence over defaultAssigneeAgentId for the no-label case.
+   */
+  fallbackAssigneeAgentId?: string;
   /** Priority for mirror issues from this bridge. Defaults to "medium". */
   defaultPriority?: IssuePriority;
 }
@@ -85,6 +99,17 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
       const o = (b ?? {}) as Record<string, unknown>;
       const rawPriority = typeof o.defaultPriority === "string" ? o.defaultPriority.toLowerCase() : "";
       const defaultAssigneeAgentId = o.defaultAssigneeAgentId ? String(o.defaultAssigneeAgentId) : undefined;
+      const fallbackAssigneeAgentId = o.fallbackAssigneeAgentId ? String(o.fallbackAssigneeAgentId) : undefined;
+      // labelRouting: keep only string→non-empty-string entries. An empty/invalid
+      // map is dropped (undefined) so resolveRouting falls straight to fallback.
+      const labelRouting =
+        o.labelRouting && typeof o.labelRouting === "object" && !Array.isArray(o.labelRouting)
+          ? Object.fromEntries(
+              Object.entries(o.labelRouting as Record<string, unknown>)
+                .filter(([, v]) => typeof v === "string" && v)
+                .map(([k, v]) => [k, String(v)]),
+            )
+          : undefined;
       return {
         githubOrg: String(o.githubOrg ?? "EngineeringMoonBear"),
         githubRepo: String(o.githubRepo ?? ""),
@@ -92,6 +117,8 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
         syncLabelPaperclip: String(o.syncLabelPaperclip ?? "synced-from-paperclip"),
         syncMarkerGithub: String(o.syncMarkerGithub ?? "synced-from-github"),
         defaultAssigneeAgentId,
+        fallbackAssigneeAgentId,
+        ...(labelRouting && Object.keys(labelRouting).length > 0 ? { labelRouting } : {}),
         // Invalid/absent priority silently falls back to "medium" at create time.
         defaultPriority: (PRIORITIES as readonly string[]).includes(rawPriority)
           ? (rawPriority as IssuePriority)
@@ -198,6 +225,7 @@ async function createMirrorIssue(
   cfg: GithubSyncConfig,
   bridge: BridgeConfig,
   payload: InboundPayload,
+  labels: readonly string[] = [],
 ): Promise<void> {
   if (!cfg.companyId) {
     ctx.logger.error("inbound webhook: companyId not configured — cannot create issue");
@@ -215,10 +243,12 @@ async function createMirrorIssue(
     return;
   }
 
-  // Deterministic default routing (GOL-80): assign the mirror to the bridge's
-  // configured owner so it enters an agent heartbeat automatically. Without an
-  // assignee the mirror lands unowned and no agent ever picks it up.
-  const assigneeAgentId = bridge.defaultAssigneeAgentId;
+  // Discipline routing (GOL-150, v0.6.0): resolve the assignee from the issue's
+  // GitHub labels, falling back to the triage owner, then the legacy default
+  // (GOL-80). Without an assignee the mirror lands unowned and no agent ever picks
+  // it up (heartbeat rule #1), so an unresolved routing is surfaced loudly below.
+  const routing = resolveRouting(bridge, labels);
+  const assigneeAgentId = routing.assigneeAgentId;
   const issue = await ctx.issues.create({
     companyId: cfg.companyId,
     projectId: bridge.paperclipProjectId,
@@ -243,18 +273,21 @@ async function createMirrorIssue(
     projectId: bridge.paperclipProjectId,
     issueId: issue.id,
     assigneeAgentId: assigneeAgentId ?? null,
+    routing: routing.reason,
+    routedByLabel: routing.matchedLabel ?? null,
   });
 
   if (!assigneeAgentId) {
     // Surface the misconfiguration loudly: an unassigned mirror is the exact
     // silent-pileup failure GOL-80 exists to close.
     ctx.logger.warn(
-      "inbound: mirror created UNASSIGNED — set the bridge's defaultAssigneeAgentId so it enters an agent heartbeat",
+      "inbound: mirror created UNASSIGNED — configure the bridge's labelRouting/fallbackAssigneeAgentId (or defaultAssigneeAgentId) so it enters an agent heartbeat",
       { repo: payload.repo, number: payload.number, projectId: bridge.paperclipProjectId },
     );
   }
 
-  // Ops visibility: best-effort ping so inbound triage is never silent.
+  // Ops visibility: best-effort ping so inbound triage is never silent, and the
+  // routing decision (which discipline label matched, or fallback) is visible.
   await postOpsPing(
     ctx,
     cfg.opsWebhookUrl,
@@ -266,6 +299,8 @@ async function createMirrorIssue(
       projectId: bridge.paperclipProjectId,
       issueId: issue.id,
       assigneeAgentId,
+      routedByLabel: routing.matchedLabel,
+      routedByFallback: routing.reason === "fallback" || routing.reason === "default",
     }),
   );
 }
@@ -437,7 +472,8 @@ async function handleAppInbound(
     return;
   }
 
-  await createMirrorIssue(ctx, cfg, bridge, event.payload);
+  // Pass the issue's labels so discipline routing (v0.6.0) can pick the assignee.
+  await createMirrorIssue(ctx, cfg, bridge, event.payload, event.labels);
 }
 
 const plugin = definePlugin({

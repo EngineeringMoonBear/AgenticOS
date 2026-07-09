@@ -139,6 +139,13 @@ export interface MirrorOpsInfo {
   issueId: string;
   /** The agent the mirror was assigned to, if default routing was configured. */
   assigneeAgentId?: string;
+  /**
+   * The label that routed this mirror (v0.6.0 `labelRouting`), if any. Makes the
+   * routing decision visible in the ops channel (spec System 3: state-change pings).
+   */
+  routedByLabel?: string;
+  /** True when the mirror fell back to the triage owner (no routing label matched). */
+  routedByFallback?: boolean;
 }
 
 /**
@@ -146,11 +153,20 @@ export interface MirrorOpsInfo {
  * Pure (no I/O) so it is unit-testable. When no assignee is configured we make
  * the gap loud — an unassigned mirror never enters an agent heartbeat (heartbeat
  * rule #1), which is exactly the silent-pileup failure GOL-80 exists to close.
+ *
+ * When the mirror was routed by a discipline label (v0.6.0) the message names the
+ * label; when it fell back to triage it says so — a low-noise, state-change-only
+ * ping (spec System 3).
  */
 export function buildMirrorOpsMessage(info: MirrorOpsInfo): string {
+  const via = info.routedByLabel
+    ? ` via label \`${info.routedByLabel}\``
+    : info.routedByFallback
+      ? " (fallback triage — no routing label)"
+      : "";
   const who = info.assigneeAgentId
-    ? `assigned → \`${info.assigneeAgentId}\``
-    : "⚠️ UNASSIGNED — set the bridge's `defaultAssigneeAgentId` so it gets picked up";
+    ? `assigned → \`${info.assigneeAgentId}\`${via}`
+    : "⚠️ UNASSIGNED — set the bridge's `labelRouting`/`fallbackAssigneeAgentId` (or `defaultAssigneeAgentId`) so it gets picked up";
   const link = info.url ? ` (<${info.url}>)` : "";
   return (
     `🔁 GitHub → Paperclip mirror created: **${info.title}** ` +
