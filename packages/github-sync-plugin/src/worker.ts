@@ -841,8 +841,10 @@ const plugin = definePlugin({
   /**
    * Inbound leg (GitHub → Paperclip). The host routes three public endpoints here:
    *   - `POST …/webhooks/github-issue` → a custom Actions-workflow payload,
-   *   - `POST …/webhooks/github-app`   → GitHub's native `issues` App-webhook event, or
-   *   - `POST …/webhooks/github-pr`    → GitHub's native `pull_request` event (review pipeline).
+   *   - `POST …/webhooks/github-app`   → the App's single webhook URL: `issues` and
+   *       `pull_request` both arrive here and are fanned out by X-GitHub-Event, or
+   *   - `POST …/webhooks/github-pr`    → GitHub's native `pull_request` event (review
+   *       pipeline) via a direct-ingress path (e.g. Terra's CF bypass).
    * Each verifies its own HMAC (the plugin's responsibility) then creates the
    * mirror/review issue directly — routines can't, since every routine run needs an agent.
    */
@@ -855,7 +857,18 @@ const plugin = definePlugin({
       if (input.endpointKey === INBOUND_ENDPOINT_KEY) {
         await handleCustomInbound(ctx, cfg, input);
       } else if (input.endpointKey === APP_WEBHOOK_ENDPOINT_KEY) {
-        await handleAppInbound(ctx, cfg, input);
+        // A GitHub App has a single webhook URL, so once the App is subscribed to
+        // `pull_request` those deliveries also land on `github-app` (not the separate
+        // `github-pr` endpoint, which the App can't point a second event type at).
+        // Fan out by X-GitHub-Event: `pull_request` → the review pipeline, everything
+        // else → the issues-mirror handler (which self-filters to `issues`). The
+        // dedicated `github-pr` endpoint remains a valid direct-ingress path; each
+        // handler verifies the same appWebhookSecret, so both routes are equivalent.
+        if (getHeader(input.headers, "x-github-event") === "pull_request") {
+          await handlePrInbound(ctx, cfg, input);
+        } else {
+          await handleAppInbound(ctx, cfg, input);
+        }
       } else if (input.endpointKey === PR_WEBHOOK_ENDPOINT_KEY) {
         await handlePrInbound(ctx, cfg, input);
       } else {
