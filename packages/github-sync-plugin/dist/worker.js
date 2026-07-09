@@ -11169,38 +11169,52 @@ async function handleIssueUpdated(deps, input) {
   });
 }
 
-// src/routing.ts
-var PRECEDENCE_TIERS = [
-  ["infra", "bug", "alert"],
-  ["frontend"],
-  ["feature"]
-];
-function tierRank(label) {
-  const l = label.toLowerCase();
-  for (let i = 0; i < PRECEDENCE_TIERS.length; i++) {
-    const tier = PRECEDENCE_TIERS[i];
-    if (tier && tier.includes(l)) return i;
-  }
-  return PRECEDENCE_TIERS.length;
+// src/pr-review-store.ts
+var PR_REVIEW_TABLE = "github_pr_review";
+function qualified(db) {
+  return `${db.namespace}.${PR_REVIEW_TABLE}`;
 }
-function resolveRouting(cfg, labels) {
-  const routing = cfg.labelRouting;
-  if (routing) {
-    const present = new Set(labels.map((l) => l.toLowerCase()));
-    const candidates = Object.keys(routing).filter((k) => present.has(k.toLowerCase()));
-    candidates.sort((a, b) => tierRank(a) - tierRank(b));
-    const key = candidates[0];
-    if (key !== void 0) {
-      return { assigneeAgentId: routing[key], matchedLabel: key, reason: "label" };
-    }
-  }
-  if (cfg.fallbackAssigneeAgentId) {
-    return { assigneeAgentId: cfg.fallbackAssigneeAgentId, reason: "fallback" };
-  }
-  if (cfg.defaultAssigneeAgentId) {
-    return { assigneeAgentId: cfg.defaultAssigneeAgentId, reason: "default" };
-  }
-  return { reason: "none" };
+function toRow2(raw) {
+  return {
+    githubRepo: String(raw.github_repo),
+    prNumber: Number(raw.pr_number),
+    reviewer: String(raw.reviewer),
+    headSha: String(raw.head_sha),
+    paperclipIssueId: String(raw.paperclip_issue_id),
+    updatedAt: String(raw.updated_at)
+  };
+}
+async function getReviewRecord(db, githubRepo, prNumber, reviewer) {
+  const rows = await db.query(
+    `SELECT github_repo, pr_number, reviewer, head_sha, paperclip_issue_id, updated_at
+       FROM ${qualified(db)}
+      WHERE github_repo = $1 AND pr_number = $2 AND reviewer = $3`,
+    [githubRepo, prNumber, reviewer]
+  );
+  const first = rows[0];
+  return first ? toRow2(first) : null;
+}
+async function getReviewRecordByIssueId(db, paperclipIssueId) {
+  const rows = await db.query(
+    `SELECT github_repo, pr_number, reviewer, head_sha, paperclip_issue_id, updated_at
+       FROM ${qualified(db)}
+      WHERE paperclip_issue_id = $1`,
+    [paperclipIssueId]
+  );
+  const first = rows[0];
+  return first ? toRow2(first) : null;
+}
+async function upsertReviewRecord(db, row) {
+  await db.execute(
+    `INSERT INTO ${qualified(db)}
+       (github_repo, pr_number, reviewer, head_sha, paperclip_issue_id, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (github_repo, pr_number, reviewer) DO UPDATE SET
+       head_sha = $4,
+       paperclip_issue_id = $5,
+       updated_at = $6`,
+    [row.githubRepo, row.prNumber, row.reviewer, row.headSha, row.paperclipIssueId, row.updatedAt]
+  );
 }
 
 // src/pr-review.ts
@@ -11314,6 +11328,9 @@ function buildReviewIssuesCreatedPing(ev, reviewers) {
 function buildReReviewPing(ev, reviewers) {
   return `\u{1F501} PR ${ev.repo}#${ev.number} new commits (\`${shortSha(ev.headSha)}\`) \u2192 re-review: ${reviewerList(reviewers)}`;
 }
+function buildSignoffPing(reviewer, repo, prNumber) {
+  return `\u2705 PR ${repo}#${prNumber} ${CHECK_CONTEXT[reviewer]} \u2014 green`;
+}
 function buildPipelineErrorPing(detail) {
   return `\u{1F525} PR review pipeline error: ${detail}`;
 }
@@ -11322,42 +11339,110 @@ function isNullBodyStatusError(err) {
   return /invalid response status code (204|205|304)/i.test(msg);
 }
 
-// src/pr-review-store.ts
-var PR_REVIEW_TABLE = "github_pr_review";
-function qualified(db) {
-  return `${db.namespace}.${PR_REVIEW_TABLE}`;
+// src/pr-signoff.ts
+function evaluateSignoff(state) {
+  const actions = [];
+  const { alice, iris } = state;
+  if (iris && iris.done) {
+    actions.push({ reviewer: "iris", headSha: iris.row.headSha, prNumber: iris.row.prNumber });
+  }
+  if (alice && alice.done) {
+    const irisSatisfied = !iris || iris.done;
+    const headsAligned = !iris || iris.row.headSha === alice.row.headSha;
+    if (irisSatisfied && headsAligned) {
+      actions.push({ reviewer: "alice", headSha: alice.row.headSha, prNumber: alice.row.prNumber });
+    }
+  }
+  return actions;
 }
-function toRow2(raw) {
-  return {
-    githubRepo: String(raw.github_repo),
-    prNumber: Number(raw.pr_number),
-    reviewer: String(raw.reviewer),
-    headSha: String(raw.head_sha),
-    paperclipIssueId: String(raw.paperclip_issue_id),
-    updatedAt: String(raw.updated_at)
+async function completeCheck(deps, github, repo, action) {
+  const context = CHECK_CONTEXT[action.reviewer];
+  const res = await github.createCheckRun(repo, {
+    name: context,
+    headSha: action.headSha,
+    conclusion: "success",
+    title: `Agent review: ${action.reviewer} signed off`,
+    summary: `${action.reviewer} approved ${repo}#${action.prNumber} @ \`${shortSha(action.headSha)}\` (review issue done).`
+  });
+  if (!res.ok) {
+    deps.logger.error("pr sign-off: failed to post success check-run", {
+      repo,
+      reviewer: action.reviewer,
+      prNumber: action.prNumber,
+      error: res.error
+    });
+    return;
+  }
+  deps.logger.info("pr sign-off: posted success check-run", {
+    repo,
+    reviewer: action.reviewer,
+    prNumber: action.prNumber,
+    context
+  });
+  await deps.opsPing?.(buildSignoffPing(action.reviewer, repo, action.prNumber));
+}
+async function handleReviewSignoff(deps, input) {
+  const { db, github, logger } = deps;
+  const row = await getReviewRecordByIssueId(db, input.issueId);
+  if (!row) return;
+  const triggering = await deps.getIssue(input.issueId, input.companyId);
+  if (!triggering) {
+    logger.warn("pr sign-off: review issue not readable; skipping", { issueId: input.issueId });
+    return;
+  }
+  if (triggering.status !== "done") return;
+  const [aliceRow, irisRow] = await Promise.all([
+    getReviewRecord(db, row.githubRepo, row.prNumber, "alice"),
+    getReviewRecord(db, row.githubRepo, row.prNumber, "iris")
+  ]);
+  const doneOf = async (r) => {
+    if (!r) return false;
+    if (r.paperclipIssueId === input.issueId) return triggering.status === "done";
+    const issue = await deps.getIssue(r.paperclipIssueId, input.companyId);
+    return issue?.status === "done";
   };
+  const [aliceDone, irisDone] = await Promise.all([doneOf(aliceRow), doneOf(irisRow)]);
+  const actions = evaluateSignoff({
+    alice: aliceRow ? { row: aliceRow, done: aliceDone } : null,
+    iris: irisRow ? { row: irisRow, done: irisDone } : null
+  });
+  for (const action of actions) {
+    await completeCheck(deps, github, row.githubRepo, action);
+  }
 }
-async function getReviewRecord(db, githubRepo, prNumber, reviewer) {
-  const rows = await db.query(
-    `SELECT github_repo, pr_number, reviewer, head_sha, paperclip_issue_id, updated_at
-       FROM ${qualified(db)}
-      WHERE github_repo = $1 AND pr_number = $2 AND reviewer = $3`,
-    [githubRepo, prNumber, reviewer]
-  );
-  const first = rows[0];
-  return first ? toRow2(first) : null;
+
+// src/routing.ts
+var PRECEDENCE_TIERS = [
+  ["infra", "bug", "alert"],
+  ["frontend"],
+  ["feature"]
+];
+function tierRank(label) {
+  const l = label.toLowerCase();
+  for (let i = 0; i < PRECEDENCE_TIERS.length; i++) {
+    const tier = PRECEDENCE_TIERS[i];
+    if (tier && tier.includes(l)) return i;
+  }
+  return PRECEDENCE_TIERS.length;
 }
-async function upsertReviewRecord(db, row) {
-  await db.execute(
-    `INSERT INTO ${qualified(db)}
-       (github_repo, pr_number, reviewer, head_sha, paperclip_issue_id, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (github_repo, pr_number, reviewer) DO UPDATE SET
-       head_sha = $4,
-       paperclip_issue_id = $5,
-       updated_at = $6`,
-    [row.githubRepo, row.prNumber, row.reviewer, row.headSha, row.paperclipIssueId, row.updatedAt]
-  );
+function resolveRouting(cfg, labels) {
+  const routing = cfg.labelRouting;
+  if (routing) {
+    const present = new Set(labels.map((l) => l.toLowerCase()));
+    const candidates = Object.keys(routing).filter((k) => present.has(k.toLowerCase()));
+    candidates.sort((a, b) => tierRank(a) - tierRank(b));
+    const key = candidates[0];
+    if (key !== void 0) {
+      return { assigneeAgentId: routing[key], matchedLabel: key, reason: "label" };
+    }
+  }
+  if (cfg.fallbackAssigneeAgentId) {
+    return { assigneeAgentId: cfg.fallbackAssigneeAgentId, reason: "fallback" };
+  }
+  if (cfg.defaultAssigneeAgentId) {
+    return { assigneeAgentId: cfg.defaultAssigneeAgentId, reason: "default" };
+  }
+  return { reason: "none" };
 }
 
 // src/worker.ts
@@ -11858,7 +11943,8 @@ var plugin = definePlugin({
           syncMarkerGithub: bridge.syncMarkerGithub
         },
         logger: ctx.logger,
-        getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId)
+        getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId),
+        opsPing: (content) => postOpsPing(ctx, cfg.opsWebhookUrl, content)
       });
       ctx.logger.info("bridge active", {
         repo: `${bridge.githubOrg}/${bridge.githubRepo}`,
@@ -11872,6 +11958,7 @@ var plugin = definePlugin({
     }
     ctx.events.on("issue.created", makeDispatch(ctx, depsByProject, handleIssueCreated, "issue.created"));
     ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleIssueUpdated, "issue.updated"));
+    ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleReviewSignoff, "issue.updated.signoff"));
     ctx.logger.info("github sync listening", {
       projects: Array.from(depsByProject.keys())
     });
