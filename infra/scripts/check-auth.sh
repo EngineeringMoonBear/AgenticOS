@@ -51,40 +51,36 @@ heading() {
 }
 
 # ───── DigitalOcean ─────
-# GOL-75: the DO token is least-privilege scoped (droplet r+w + monitoring r+w
-# ONLY). We must NOT validate it against /v2/account — a scoped token 403s there
-# by design. Instead we prove the two in-scope surfaces (droplet + monitoring)
-# AND assert that account access is denied, so an accidentally full-privilege
-# token is caught here rather than silently widening blast radius.
+# GOL-75: the DO token is least-privilege scoped to the FIVE resource types the
+# root Terraform manages — droplet, app, ssh_key, vpc, monitoring (each r+w). We
+# must NOT validate against /v2/account — a scoped token 403s there by design.
+# Instead we prove all five in-scope READ surfaces work AND assert account access
+# is denied, catching BOTH an under-scoped token (missing e.g. app/vpc/ssh_key,
+# which would 403 the next `terraform plan/apply` when it refreshes those) and an
+# accidentally full-privilege token — here, rather than downstream.
 DO_DROPLET_ID="${AGENTICOS_DROPLET_ID:-572389418}"
-heading "DigitalOcean (scoped: droplet + monitoring)"
+heading "DigitalOcean (scoped: droplet + app + ssh_key + vpc + monitoring)"
 
-# 1) droplet:read must work
-http_get "https://api.digitalocean.com/v2/droplets/$DO_DROPLET_ID" "Authorization: Bearer $TF_VAR_do_token"
-if [ "$HTTP_CODE" = "200" ]; then
-    name="$(jq -r '.droplet.name // "?"' < "$BODY")"
-    region="$(jq -r '.droplet.region.slug // "?"' < "$BODY")"
-    green "✓ DO droplet:read ok (droplet $DO_DROPLET_ID)"
-    echo "    name:   $name"
-    echo "    region: $region"
-else
-    red "✗ DO droplet:read returned HTTP $HTTP_CODE (expected 200 for droplet $DO_DROPLET_ID)"
-    head -5 "$BODY"
-    FAILED=$((FAILED+1))
-fi
+# Each required read scope → the endpoint Terraform hits to refresh that resource.
+# ssh_key lives at /v2/account/keys but is governed by the ssh_key scope (not the
+# account scope), so it succeeds on a correctly-scoped token.
+do_scope_check() { # $1 label  $2 url
+    http_get "$2" "Authorization: Bearer $TF_VAR_do_token"
+    if [ "$HTTP_CODE" = "200" ]; then
+        green "✓ DO $1 ok"
+    else
+        red "✗ DO $1 returned HTTP $HTTP_CODE (expected 200 — token is missing this scope)"
+        head -3 "$BODY"
+        FAILED=$((FAILED+1))
+    fi
+}
+do_scope_check "droplet:read"    "https://api.digitalocean.com/v2/droplets/$DO_DROPLET_ID"
+do_scope_check "app:read"        "https://api.digitalocean.com/v2/apps?per_page=1"
+do_scope_check "ssh_key:read"    "https://api.digitalocean.com/v2/account/keys?per_page=1"
+do_scope_check "vpc:read"        "https://api.digitalocean.com/v2/vpcs?per_page=1"
+do_scope_check "monitoring:read" "https://api.digitalocean.com/v2/monitoring/alerts"
 
-# 2) monitoring:read must work
-http_get "https://api.digitalocean.com/v2/monitoring/alerts" "Authorization: Bearer $TF_VAR_do_token"
-if [ "$HTTP_CODE" = "200" ]; then
-    n="$(jq -r '.policies | length' < "$BODY" 2>/dev/null || echo "?")"
-    green "✓ DO monitoring:read ok ($n alert policies)"
-else
-    red "✗ DO monitoring:read returned HTTP $HTTP_CODE (expected 200)"
-    head -5 "$BODY"
-    FAILED=$((FAILED+1))
-fi
-
-# 3) account access MUST be denied — proves the token is least-privilege
+# account access MUST be denied — proves the token is least-privilege
 http_get "https://api.digitalocean.com/v2/account" "Authorization: Bearer $TF_VAR_do_token"
 if [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "401" ]; then
     green "✓ DO /v2/account denied (HTTP $HTTP_CODE) — token is correctly scoped"

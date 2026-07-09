@@ -28,12 +28,15 @@ _agenticos_load_1password() {
     fi
 
     # Each field in the 1Password item maps to a TF_VAR_* env var.
-    # GOL-75: DO token is least-privilege scoped (droplet r+w + monitoring r+w
-    # ONLY). It lives as `do_token_scoped` in the canonical `GoldberryGrove
-    # Infra` item (NOT AgenticOS Infra), so it is read explicitly rather than
-    # via ${op_item}. The old full-privilege `do_token` is intentionally no
-    # longer on the runtime path. Override with AGENTICOS_DO_TOKEN_REF if needed.
-    export TF_VAR_do_token="$(op read "${AGENTICOS_DO_TOKEN_REF:-op://${op_vault}/GoldberryGrove Infra/do_token_scoped}" 2>/dev/null)"
+    # GOL-75: DO token is least-privilege scoped. The root config manages five DO
+    # resource types (digitalocean_droplet / app / ssh_key / vpc / monitor_alert),
+    # so the token needs read+write on ALL FIVE scopes: droplet, app, ssh_key,
+    # vpc, monitoring. (droplet+monitoring alone 403s on every plan/apply — TF
+    # refreshes the App Platform app, VPC, and SSH key too.) It lives as
+    # `do_token_scoped` on the `Grove Infra` item (NOT AgenticOS Infra), read
+    # explicitly rather than via ${op_item}. The old full-privilege `do_token` is
+    # intentionally off the runtime path. Override with AGENTICOS_DO_TOKEN_REF.
+    export TF_VAR_do_token="$(op read "${AGENTICOS_DO_TOKEN_REF:-op://${op_vault}/Grove Infra/do_token_scoped}" 2>/dev/null)"
     export TF_VAR_tailscale_api_key="$(op read "op://${op_vault}/${op_item}/tailscale_api_key" 2>/dev/null)"
     export TF_VAR_tailscale_tailnet="$(op read "op://${op_vault}/${op_item}/tailscale_tailnet" 2>/dev/null)"
     # Account-owned Cloudflare token (Zero Trust / Access edit). The old user
