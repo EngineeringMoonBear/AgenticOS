@@ -138,4 +138,17 @@ describe("buildMirrorOpsMessage", () => {
     const msg = buildMirrorOpsMessage({ ...base, url: "", assigneeAgentId: "agent-9" });
     expect(msg).not.toContain("(<");
   });
+
+  it("names the routing label when the mirror was routed by discipline (v0.6.0)", () => {
+    const msg = buildMirrorOpsMessage({ ...base, assigneeAgentId: "iris-id", routedByLabel: "frontend" });
+    expect(msg).toContain("iris-id");
+    expect(msg).toContain("via label `frontend`");
+    expect(msg).not.toContain("fallback");
+  });
+
+  it("marks a fallback-routed mirror as triage", () => {
+    const msg = buildMirrorOpsMessage({ ...base, assigneeAgentId: "rick-id", routedByFallback: true });
+    expect(msg).toContain("fallback triage");
+    expect(msg).not.toContain("via label");
+  });
 });

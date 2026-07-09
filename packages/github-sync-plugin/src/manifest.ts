@@ -3,7 +3,9 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const manifest: PaperclipPluginManifestV1 = {
   id: "agenticos.github-sync-plugin",
   apiVersion: 1,
-  version: "0.5.1",
+  // Bump on ANY manifest change — a stale stored manifest silently masks changes
+  // (spec gotcha; see #228). 0.6.0 = discipline label routing (GOL-150).
+  version: "0.6.0",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",
@@ -108,7 +110,20 @@ const manifest: PaperclipPluginManifestV1 = {
               type: "string",
               title: "Default assignee agent ID (inbound routing)",
               description:
-                "Agent UUID that inbound mirror issues from this repo are assigned to. REQUIRED to close the auto-pickup loop: Paperclip agents never pick up unassigned work, so a mirror created without an assignee sits unowned forever. Set this to the owner for the bridge (e.g. the Founding Engineer for AgenticOS infra issues) and new GitHub issues enter that agent's heartbeat automatically.",
+                "Agent UUID that inbound mirror issues from this repo are assigned to. Backward-compatible last resort: used only when no labelRouting label matches AND no fallbackAssigneeAgentId is set. Paperclip agents never pick up unassigned work, so leaving all three empty means mirrors sit unowned forever.",
+            },
+            labelRouting: {
+              type: "object",
+              title: "Discipline label routing (v0.6.0)",
+              description:
+                "Map of GitHub label name → assignee agent UUID. An inbound issue is assigned to the owner of its highest-precedence matching label. Fixed precedence: infra = bug = alert > frontend > feature (first match by precedence wins). Example: {\"frontend\":\"<Iris>\",\"feature\":\"<Alice>\",\"bug\":\"<Terra>\",\"infra\":\"<Terra>\",\"alert\":\"<Terra>\"}. No match → fallbackAssigneeAgentId → defaultAssigneeAgentId.",
+              additionalProperties: { type: "string" },
+            },
+            fallbackAssigneeAgentId: {
+              type: "string",
+              title: "Fallback assignee agent ID (unlabeled triage)",
+              description:
+                "Agent UUID assigned when no labelRouting label matches — the triage owner (e.g. the CEO). Takes precedence over defaultAssigneeAgentId for the no-label case so unlabeled GitHub issues still enter a heartbeat instead of piling up unowned.",
             },
             defaultPriority: {
               type: "string",
