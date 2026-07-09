@@ -26,6 +26,16 @@ name: Droplet Disk Reclaim
 
 on:
   workflow_dispatch:
+  # Agent-triggerable on-demand reclaim WITHOUT host root or GitHub `actions:
+  # write`: an in-container Paperclip agent mints a contents:write
+  # gh-token-broker token and POSTs /repos/<owner>/<repo>/dispatches with
+  # {"event_type":"disk-reclaim"}. repository_dispatch is NOT a schedule event,
+  # so it bypasses the GUARD_THRESHOLD gate and always prunes now — the reclaim
+  # button that needs NO actions:write on the broker App and NO key injected
+  # into any agent (GOL-141). The broker App lacks actions:write, so the
+  # workflow_dispatch REST API is 403 for agents; repository_dispatch is not.
+  repository_dispatch:
+    types: [disk-reclaim]
   schedule:
     # Daily 08:17 UTC. Threshold-gated (GUARD_THRESHOLD) so a healthy box is a
     # no-op — an unconditional nightly prune would nuke the BuildKit cache every
