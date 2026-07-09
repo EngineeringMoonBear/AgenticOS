@@ -91,6 +91,12 @@ export interface SyncDeps {
   logger: SyncLogger;
   /** Reads the full issue back (delta event payloads omit description). */
   getIssue: (issueId: string, companyId: string) => Promise<Issue | null>;
+  /**
+   * Best-effort Discord ops ping (bound to ctx + opsWebhookUrl at wiring time).
+   * Used by the sign-off path (GOL-186) for the ✅ green ping; undefined when no
+   * ops webhook is configured. Never throws into the caller.
+   */
+  opsPing?: (content: string) => Promise<void>;
 }
 
 /**

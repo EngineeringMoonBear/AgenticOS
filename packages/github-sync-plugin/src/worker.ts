@@ -19,6 +19,7 @@ import {
   resolveMirrorClosureStatus,
   type SyncDeps,
 } from "./sync.js";
+import { handleReviewSignoff } from "./pr-signoff.js";
 import { resolveRouting, type LabelRouting } from "./routing.js";
 import {
   anyFrontendMatch,
@@ -862,6 +863,7 @@ const plugin = definePlugin({
         },
         logger: ctx.logger,
         getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId),
+        opsPing: (content) => postOpsPing(ctx, cfg.opsWebhookUrl, content),
       });
 
       ctx.logger.info("bridge active", {
@@ -880,6 +882,10 @@ const plugin = definePlugin({
     // to the bridge for the issue's project (or drops it if not a synced project).
     ctx.events.on("issue.created", makeDispatch(ctx, depsByProject, handleIssueCreated, "issue.created"));
     ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleIssueUpdated, "issue.updated"));
+    // Second issue.updated subscription: when a review issue reaches `done`, post
+    // the terminal `agent-review/*` success check-run (GOL-186). Independent of the
+    // mirror-sync handler above, which early-returns on unmapped (review) issues.
+    ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleReviewSignoff, "issue.updated.signoff"));
 
     ctx.logger.info("github sync listening", {
       projects: Array.from(depsByProject.keys()),

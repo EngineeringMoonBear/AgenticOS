@@ -54,6 +54,25 @@ export async function getReviewRecord(
   return first ? toRow(first) : null;
 }
 
+/**
+ * The review record for a Paperclip review-issue id, or null if none. Reverse
+ * lookup used by the sign-off path (GOL-186): an `issue.updated` event carries
+ * the Paperclip issue id, and we need to find which (repo, PR, reviewer) it is.
+ */
+export async function getReviewRecordByIssueId(
+  db: MappingDb,
+  paperclipIssueId: string,
+): Promise<PrReviewRow | null> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT github_repo, pr_number, reviewer, head_sha, paperclip_issue_id, updated_at
+       FROM ${qualified(db)}
+      WHERE paperclip_issue_id = $1`,
+    [paperclipIssueId],
+  );
+  const first = rows[0];
+  return first ? toRow(first) : null;
+}
+
 /** Create or update the review record (upsert by the composite PK). */
 export async function upsertReviewRecord(db: MappingDb, row: PrReviewRow): Promise<void> {
   await db.execute(
