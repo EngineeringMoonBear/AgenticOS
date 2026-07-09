@@ -91,6 +91,11 @@ export interface SyncDeps {
   logger: SyncLogger;
   /** Reads the full issue back (delta event payloads omit description). */
   getIssue: (issueId: string, companyId: string) => Promise<Issue | null>;
+  /**
+   * Best-effort ops-channel ping (Discord). Optional — the mirror-sync path
+   * doesn't use it; the PR sign-off path (GOL-186) pings on green / API failure.
+   */
+  postOpsPing?: (content: string) => Promise<void>;
 }
 
 /**
