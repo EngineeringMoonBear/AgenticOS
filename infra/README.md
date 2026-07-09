@@ -401,6 +401,51 @@ gunzip < agenticos-<UTC>.sql.gz | \
   ssh deploy@$DROPLET 'docker compose -f /opt/agenticos/docker-compose.yml exec -T agenticos-db psql -U agenticos agenticos'
 ```
 
+## Disk hygiene (GOL-131)
+
+> Reclaim policy for the host-side accretion that filled the 77G Droplet to
+> 87-89% (GOL-124). ~57G lived under `/var/lib/docker` — old image layers and
+> BuildKit cache left behind by every CI `docker compose up -d --build`, with
+> nothing reclaiming it.
+
+Codified as host units (single source of truth: inline in the cloud-init
+template, mirrored by `infra/scripts/install-disk-hygiene.sh` for running boxes
+— same pattern as the backup timers):
+
+- **Docker reclaim** — `infra/scripts/docker-prune.sh` runs
+  `docker system prune -af` + `docker builder prune -af` (running containers +
+  in-use images kept; **never `--volumes`** — named volumes hold live Postgres /
+  OpenViking / vault state). `agenticos-docker-prune.timer`, weekly **Sun 02:30**.
+- **disk-guard** — `infra/scripts/disk-guard.sh` checks root FS daily
+  (`agenticos-disk-guard.timer`, **05:00**); at ≥80% it posts to the Discord ops
+  webhook (`DISCORD_OPS_WEBHOOK_URL` in `/opt/agenticos/.env`) and runs the
+  reclaim, catching disk pressure before the DO monitor fires at 85%. Runs as a
+  host timer because in-container Paperclip agents can't read host disk or reach
+  the host Docker socket.
+- **journald cap** — `/etc/systemd/journald.conf.d/10-agenticos-cap.conf` sets
+  `SystemMaxUse=200M` (+ per-file / retention ceilings); cloud-init also runs
+  `journalctl --vacuum-size=200M` once to apply it immediately.
+- **logrotate** — `/etc/logrotate.d/agenticos` rotates `/var/log/agenticos/*.log`
+  and the Docker container `*-json.log` files (compose sets no per-container log
+  limit in this deployment).
+
+Fresh Droplets get all of this from cloud-init. On an **already-running box**,
+install as root (same access model as the backup timers):
+
+```bash
+# 1. Refresh the repo clone so the scripts are present (as deploy)
+ssh deploy@$DROPLET 'cd /opt/agenticos/repo && git fetch origin && git checkout -B main origin/main'
+
+# 2. As ROOT (console or ssh root@): install units + journald cap + logrotate
+bash /opt/agenticos/repo/infra/scripts/install-disk-hygiene.sh
+
+# 3. Smoke-test reclaim + confirm root FS under ~70%
+ssh deploy@$DROPLET '/opt/agenticos/repo/infra/scripts/docker-prune.sh && df -h /'
+```
+
+`install-disk-hygiene.sh` is idempotent and keeps its unit/config bodies in sync
+with the inline copies in the cloud-init template.
+
 ## Credentials hygiene
 
 - `terraform.tfvars` is gitignored — never commit it
