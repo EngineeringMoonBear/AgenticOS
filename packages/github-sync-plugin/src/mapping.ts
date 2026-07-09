@@ -56,9 +56,24 @@ export async function getByPaperclipId(
   return first ? toRow(first) : null;
 }
 
+/** Strip any leading `owner/` so `org/repo` and a bare `repo` compare equal. */
+export function bareRepoName(githubRepo: string): string {
+  const slash = githubRepo.lastIndexOf("/");
+  return slash >= 0 ? githubRepo.slice(slash + 1) : githubRepo;
+}
+
 /**
  * Look up the mapping for a GitHub issue (`<repo>#<number>`), or null.
- * Used by the inbound webhook to dedupe redeliveries before creating a mirror.
+ * Used by the inbound webhook to dedupe redeliveries before creating a mirror,
+ * and by closure propagation to find the mirror of a just-closed GitHub issue.
+ *
+ * Repo matching is normalised to the bare repo name on both sides: outbound
+ * (Paperclip-origin) rows record `github_repo` as the bare name from the bridge
+ * config (e.g. `grove-sites`), while GitHub's native App webhook reports the
+ * fully-qualified `owner/repo` (e.g. `Goldberry-Playground/grove-sites`). A raw
+ * `github_repo = $1` compare would miss those rows and closure would never
+ * propagate — issue numbers are already scoped per repo so the bare-name match
+ * is unambiguous within a bridge.
  */
 export async function getByRepoNumber(
   db: MappingDb,
@@ -67,8 +82,10 @@ export async function getByRepoNumber(
 ): Promise<MappingRow | null> {
   const rows = await db.query<Record<string, unknown>>(
     `SELECT paperclip_issue_id, github_repo, github_issue_number, last_synced_at, origin
-       FROM ${qualifiedTable(db)} WHERE github_repo = $1 AND github_issue_number = $2`,
-    [githubRepo, githubIssueNumber],
+       FROM ${qualifiedTable(db)}
+      WHERE github_issue_number = $1
+        AND lower(regexp_replace(github_repo, '^[^/]+/', '')) = lower($2)`,
+    [githubIssueNumber, bareRepoName(githubRepo)],
   );
   const first = rows[0];
   return first ? toRow(first) : null;

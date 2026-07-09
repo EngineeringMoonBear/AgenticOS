@@ -28,6 +28,35 @@ export function statusToGithubState(status: Issue["status"]): "open" | "closed" 
   return status === "done" || status === "cancelled" ? "closed" : "open";
 }
 
+/** A Paperclip status is "closed" from GitHub's point of view when terminal. */
+export function isTerminalStatus(status: Issue["status"]): boolean {
+  return status === "done" || status === "cancelled";
+}
+
+/**
+ * Inbound closure propagation (GitHub → Paperclip). Given a GitHub `issues`
+ * action and the mirror's CURRENT Paperclip status, decide the status to write —
+ * or `null` when no change is needed.
+ *
+ * - `closed`   → `done`, unless the mirror is already terminal.
+ * - `reopened` → `todo`, only when the mirror is currently terminal.
+ * - anything else → `null` (not a state-changing action).
+ *
+ * Returning `null` when the mirror already matches is the loop guard. An outbound
+ * close (Paperclip → GitHub) echoes back as a GitHub `closed` App-webhook event;
+ * finding the mirror already `done`, we make no update, so no `issue.updated`
+ * fires and the two sides settle in one cycle with no bounce. This is the same
+ * marker/mapping-based idempotency the outbound leg relies on, applied inbound.
+ */
+export function resolveMirrorClosureStatus(
+  action: string,
+  currentStatus: Issue["status"],
+): Issue["status"] | null {
+  if (action === "closed") return isTerminalStatus(currentStatus) ? null : "done";
+  if (action === "reopened") return isTerminalStatus(currentStatus) ? "todo" : null;
+  return null;
+}
+
 /**
  * Detect the inbound (GitHub → Paperclip) marker an inbound routine embeds in a
  * native Paperclip issue's description: `<!-- synced-from-github: <repo>#<number> -->`.
