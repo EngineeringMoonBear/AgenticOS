@@ -10937,11 +10937,17 @@ async function getByPaperclipId(db, paperclipIssueId) {
   const first = rows[0];
   return first ? toRow(first) : null;
 }
+function bareRepoName(githubRepo) {
+  const slash = githubRepo.lastIndexOf("/");
+  return slash >= 0 ? githubRepo.slice(slash + 1) : githubRepo;
+}
 async function getByRepoNumber(db, githubRepo, githubIssueNumber) {
   const rows = await db.query(
     `SELECT paperclip_issue_id, github_repo, github_issue_number, last_synced_at, origin
-       FROM ${qualifiedTable(db)} WHERE github_repo = $1 AND github_issue_number = $2`,
-    [githubRepo, githubIssueNumber]
+       FROM ${qualifiedTable(db)}
+      WHERE github_issue_number = $1
+        AND lower(regexp_replace(github_repo, '^[^/]+/', '')) = lower($2)`,
+    [githubIssueNumber, bareRepoName(githubRepo)]
   );
   const first = rows[0];
   return first ? toRow(first) : null;
@@ -11043,6 +11049,14 @@ function buildMirrorOpsMessage(info) {
 var GITHUB_MARKER_RE = /<!--\s*synced-from-github:\s*([^\s#]+)#(\d+)\s*-->/i;
 function statusToGithubState(status) {
   return status === "done" || status === "cancelled" ? "closed" : "open";
+}
+function isTerminalStatus(status) {
+  return status === "done" || status === "cancelled";
+}
+function resolveMirrorClosureStatus(action, currentStatus) {
+  if (action === "closed") return isTerminalStatus(currentStatus) ? null : "done";
+  if (action === "reopened") return isTerminalStatus(currentStatus) ? "todo" : null;
+  return null;
 }
 function detectGithubMarker(description) {
   if (!description) return null;
@@ -11518,6 +11532,53 @@ async function handleCustomInbound(ctx, cfg, input) {
   }
   await createMirrorIssue(ctx, cfg, bridge, payload);
 }
+async function handleAppClosure(ctx, cfg, event) {
+  const bridge = matchBridge(cfg, event.payload.repo);
+  if (!bridge) {
+    ctx.logger.info("app webhook: closure for repo not in a synced bridge; ignoring", {
+      repo: event.payload.repo
+    });
+    return;
+  }
+  if (!cfg.companyId) {
+    ctx.logger.error("app webhook: companyId not configured \u2014 cannot propagate closure");
+    return;
+  }
+  const mapping = await getByRepoNumber(ctx.db, event.payload.repo, event.payload.number);
+  if (!mapping) {
+    ctx.logger.info("app webhook: closure for unmapped issue; nothing to propagate", {
+      repo: event.payload.repo,
+      number: event.payload.number,
+      action: event.action
+    });
+    return;
+  }
+  const issue = await ctx.issues.get(mapping.paperclipIssueId, cfg.companyId);
+  if (!issue) {
+    ctx.logger.warn("app webhook: mirror issue not readable; skipping closure", {
+      issueId: mapping.paperclipIssueId
+    });
+    return;
+  }
+  const target = resolveMirrorClosureStatus(event.action, issue.status);
+  if (!target) {
+    ctx.logger.info("app webhook: mirror already in sync; skipping (loop guard)", {
+      issueId: issue.id,
+      action: event.action,
+      status: issue.status
+    });
+    return;
+  }
+  await ctx.issues.update(issue.id, { status: target }, cfg.companyId);
+  await upsert(ctx.db, { ...mapping, lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString() });
+  ctx.logger.info("app webhook: propagated GitHub closure to Paperclip mirror", {
+    issueId: issue.id,
+    repo: event.payload.repo,
+    number: event.payload.number,
+    action: event.action,
+    status: target
+  });
+}
 async function handleAppInbound(ctx, cfg, input) {
   if (!cfg.appWebhookSecret) {
     ctx.logger.error("app webhook: no appWebhookSecret configured \u2014 rejecting");
@@ -11535,6 +11596,10 @@ async function handleAppInbound(ctx, cfg, input) {
   const event = parseGithubAppIssueEvent(input.parsedBody ?? safeJson(input.rawBody));
   if (!event) {
     ctx.logger.warn("app webhook: unparseable/invalid issues payload");
+    return;
+  }
+  if (event.action === "closed" || event.action === "reopened") {
+    await handleAppClosure(ctx, cfg, event);
     return;
   }
   if (event.action !== "opened") {
@@ -11798,8 +11863,10 @@ var plugin = definePlugin({
   /**
    * Inbound leg (GitHub → Paperclip). The host routes three public endpoints here:
    *   - `POST …/webhooks/github-issue` → a custom Actions-workflow payload,
-   *   - `POST …/webhooks/github-app`   → GitHub's native `issues` App-webhook event, or
-   *   - `POST …/webhooks/github-pr`    → GitHub's native `pull_request` event (review pipeline).
+   *   - `POST …/webhooks/github-app`   → the App's single webhook URL: `issues` and
+   *       `pull_request` both arrive here and are fanned out by X-GitHub-Event, or
+   *   - `POST …/webhooks/github-pr`    → GitHub's native `pull_request` event (review
+   *       pipeline) via a direct-ingress path (e.g. Terra's CF bypass).
    * Each verifies its own HMAC (the plugin's responsibility) then creates the
    * mirror/review issue directly — routines can't, since every routine run needs an agent.
    */
@@ -11811,7 +11878,11 @@ var plugin = definePlugin({
       if (input.endpointKey === INBOUND_ENDPOINT_KEY) {
         await handleCustomInbound(ctx, cfg, input);
       } else if (input.endpointKey === APP_WEBHOOK_ENDPOINT_KEY) {
-        await handleAppInbound(ctx, cfg, input);
+        if (getHeader(input.headers, "x-github-event") === "pull_request") {
+          await handlePrInbound(ctx, cfg, input);
+        } else {
+          await handleAppInbound(ctx, cfg, input);
+        }
       } else if (input.endpointKey === PR_WEBHOOK_ENDPOINT_KEY) {
         await handlePrInbound(ctx, cfg, input);
       } else {
