@@ -11311,7 +11311,7 @@ function buildReviewIssueBody(reviewer, ev, files) {
     "### Review checklist",
     "- [ ] Correctness \u2014 logic, edge cases, error handling",
     reviewer === "iris" ? "- [ ] Frontend \u2014 accessibility, responsive layout, design-system reuse" : "- [ ] Reuse/simplification, tests, security-sensitive changes flagged",
-    "- [ ] Sign off: post check-run `" + context + "` on the head SHA (success), or failure + a PR comment with requested changes.",
+    "- [ ] Sign off: close this issue `done` \u2014 the plugin then posts `" + context + "` = success on the head SHA. To request changes, comment on the PR and leave this open (the check stays pending).",
     "",
     "_Non-required check during Phase 2 soak (GOL-158). Merge gate flips in Phase 3._"
   ].join("\n");

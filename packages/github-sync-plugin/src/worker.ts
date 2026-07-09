@@ -787,8 +787,8 @@ async function processReviewer(
  * Seed/reset a pending `agent-review/*` check-run on the PR head SHA. Best-effort:
  * a failure (e.g. the App lacks `checks:write` during the Phase 2 soak) is logged
  * but never blocks review-issue creation, and — to keep the ops channel low-noise
- * during rollout — is NOT pinged. The reviewing agent's own sign-off tooling posts
- * the success/failure check-run and the ✅/❌ pings.
+ * during rollout — is NOT pinged. The check is completed to success later by
+ * handleReviewSignoff (pr-signoff.ts, GOL-186) when the review issue closes `done`.
  */
 async function seedPendingCheck(
   ctx: PluginContext,
