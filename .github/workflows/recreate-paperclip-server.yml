@@ -1,0 +1,104 @@
+name: Recreate paperclip-server
+
+# Force-recreate the paperclip-server container to RE-RESOLVE its plugin bind
+# mounts, on demand, WITHOUT host root and WITHOUT GitHub `actions: write`.
+#
+# Why this exists (GOL-165 / GOL-166): each plugin is a per-container bind mount
+# `./packages/<plugin> -> /paperclip/plugins/<plugin>`. A bind mount pins to the
+# host directory's INODE at container-start. deploy-droplet-plugins.yml does
+# `git reset --hard origin/main` on /opt/agenticos/repo, which REPLACES those
+# dir inodes — so a long-lived paperclip-server keeps reading the OLD inode and
+# the mount goes stale (`Missing package.json at /paperclip/plugins/<plugin>`),
+# even while the worker still serves `ready` from memory. The ONLY fix is to
+# recreate the container so the mount re-resolves to the current inode.
+#
+# deploy-droplet.yml already does this force-recreate, but ONLY as part of a
+# full vault-server deploy on push/workflow_dispatch. In-container Paperclip
+# agents cannot reach the host Docker socket or SSH the droplet, and the
+# gh-token-broker App has NO `actions: write` — so the workflow_dispatch REST
+# API is 403 for agents. This workflow adds a `repository_dispatch` trigger
+# (exactly like disk-reclaim.yml, GOL-141): an agent mints a `contents: write`
+# broker token and POSTs /repos/<owner>/<repo>/dispatches with
+# {"event_type":"recreate-paperclip-server"}. No new standing credential is
+# held by any agent, and no host root is injected.
+#
+# Surgical by design: recreates ONLY paperclip-server (no vault rebuild, no tree
+# ship). OAuth/login/plugin state survives — it lives on the paperclip-data
+# volume, not the container layer. Verifies every plugin mount re-resolved
+# before reporting success.
+
+on:
+  workflow_dispatch:
+  # Agent-triggerable on-demand recreate WITHOUT host root or `actions: write`.
+  # The broker App lacks actions:write, so workflow_dispatch is 403 for agents;
+  # repository_dispatch is not. See disk-reclaim.yml for the same pattern.
+  repository_dispatch:
+    types: [recreate-paperclip-server]
+
+permissions:
+  contents: read
+
+# Share the Droplet deploy lock so a recreate never races a deploy or reclaim
+# mid-`compose build`/`up`.
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+jobs:
+  recreate:
+    name: Force-recreate paperclip-server (re-resolve plugin mounts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.DROPLET_SSH_KEY }}
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Force-recreate paperclip-server
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+        run: |
+          # `deploy` is in the docker group — no sudo (sudo would block on a
+          # password prompt and hang the job). Force-recreate re-resolves the
+          # plugin bind mounts to the current host inode; state survives on the
+          # paperclip-data volume.
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" '
+            set -euo pipefail
+            cd /opt/agenticos
+            docker compose up -d --force-recreate paperclip-server
+            docker compose ps paperclip-server'
+
+      - name: Verify plugin mounts re-resolved
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+        run: |
+          # Success condition (GOL-166): every plugin dir must present a
+          # non-empty package.json INSIDE the freshly recreated container — the
+          # same probe scripts/deploy-plugin.sh recreate_guard uses. Retry while
+          # the container boots and the plugin-loader settles.
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" '
+            set -euo pipefail
+            cd /opt/agenticos
+            plugins="vault-plugin openviking-plugin github-plugin github-sync-plugin discord-plugin"
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              missing=""
+              for p in $plugins; do
+                if ! docker compose exec -T paperclip-server \
+                       test -s "/paperclip/plugins/$p/package.json" >/dev/null 2>&1; then
+                  missing="$missing $p"
+                fi
+              done
+              if [ -z "$missing" ]; then
+                echo "all plugin mounts re-resolved:$plugins"; exit 0
+              fi
+              echo "waiting for mounts ($i) — still missing:$missing"; sleep 3
+            done
+            echo "::error::plugin mount(s) still missing after recreate:$missing"; exit 1'
