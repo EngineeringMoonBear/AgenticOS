@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { Issue } from "@paperclipai/plugin-sdk";
 import {
   statusToGithubState,
+  resolveMirrorClosureStatus,
   detectGithubMarker,
   paperclipMarker,
   buildGithubBody,
@@ -89,6 +90,37 @@ describe("statusToGithubState", () => {
     expect(statusToGithubState("backlog")).toBe("open");
     expect(statusToGithubState("in_review")).toBe("open");
     expect(statusToGithubState("blocked")).toBe("open");
+  });
+});
+
+describe("resolveMirrorClosureStatus — inbound closure propagation + loop guard", () => {
+  it("closes an open mirror on GitHub `closed`", () => {
+    expect(resolveMirrorClosureStatus("closed", "todo")).toBe("done");
+    expect(resolveMirrorClosureStatus("closed", "in_progress")).toBe("done");
+    expect(resolveMirrorClosureStatus("closed", "in_review")).toBe("done");
+    expect(resolveMirrorClosureStatus("closed", "blocked")).toBe("done");
+    expect(resolveMirrorClosureStatus("closed", "backlog")).toBe("done");
+  });
+
+  it("no-ops on `closed` when the mirror is already terminal (loop guard, no bounce)", () => {
+    expect(resolveMirrorClosureStatus("closed", "done")).toBeNull();
+    expect(resolveMirrorClosureStatus("closed", "cancelled")).toBeNull();
+  });
+
+  it("reopens a terminal mirror to todo on GitHub `reopened`", () => {
+    expect(resolveMirrorClosureStatus("reopened", "done")).toBe("todo");
+    expect(resolveMirrorClosureStatus("reopened", "cancelled")).toBe("todo");
+  });
+
+  it("no-ops on `reopened` when the mirror is already open", () => {
+    expect(resolveMirrorClosureStatus("reopened", "todo")).toBeNull();
+    expect(resolveMirrorClosureStatus("reopened", "in_progress")).toBeNull();
+  });
+
+  it("ignores non-state-changing actions", () => {
+    expect(resolveMirrorClosureStatus("edited", "todo")).toBeNull();
+    expect(resolveMirrorClosureStatus("labeled", "done")).toBeNull();
+    expect(resolveMirrorClosureStatus("opened", "todo")).toBeNull();
   });
 });
 

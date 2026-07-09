@@ -36,7 +36,12 @@ _agenticos_load_1password() {
     export TF_VAR_do_token="$(op read "${AGENTICOS_DO_TOKEN_REF:-op://${op_vault}/GoldberryGrove Infra/do_token_scoped}" 2>/dev/null)"
     export TF_VAR_tailscale_api_key="$(op read "op://${op_vault}/${op_item}/tailscale_api_key" 2>/dev/null)"
     export TF_VAR_tailscale_tailnet="$(op read "op://${op_vault}/${op_item}/tailscale_tailnet" 2>/dev/null)"
-    export TF_VAR_cloudflare_api_token="$(op read "op://${op_vault}/${op_item}/cloudflare_api_token" 2>/dev/null)"
+    # Account-owned Cloudflare token (Zero Trust / Access edit). The old user
+    # tokens stored per-item as cloudflare_api_token went 401-dead and were
+    # deleted (2026-07-08); the live credential is Grove Infra's
+    # account_cloudflare_api_token. Account tokens don't answer
+    # /user/tokens/verify — probe an account endpoint to validate, not verify.
+    export TF_VAR_cloudflare_api_token="$(op read "op://${op_vault}/Grove Infra/account_cloudflare_api_token" 2>/dev/null)"
     export TF_VAR_cloudflare_zone_id="$(op read "op://${op_vault}/${op_item}/cloudflare_zone_id" 2>/dev/null)"
     export TF_VAR_cloudflare_account_id="$(op read "op://${op_vault}/${op_item}/cloudflare_account_id" 2>/dev/null)"
 
@@ -65,12 +70,19 @@ _agenticos_load_1password() {
     export TF_VAR_paperclip_tunnel_secret="$(op read "op://${op_vault}/${op_item}/paperclip_tunnel_secret" 2>/dev/null)"
 
     # Sanity check: did we get values for all six?
+    # NOTE: this file is SOURCED from the operator's interactive shell, which
+    # is often zsh. bash's ${!var} indirect expansion is a zsh syntax error
+    # that aborts the function *after* the exports above (observed as a
+    # half-silent exit 126 on 2026-07-08) — use eval-based indirection, which
+    # both shells accept.
     local missing=()
+    local _val
     for var in TF_VAR_do_token TF_VAR_tailscale_api_key TF_VAR_tailscale_tailnet \
                TF_VAR_cloudflare_api_token TF_VAR_cloudflare_zone_id TF_VAR_cloudflare_account_id; do
-        if [ -z "${!var:-}" ] || [[ "${!var}" == "PASTE_"* ]]; then
-            missing+=("${var#TF_VAR_}")
-        fi
+        eval "_val=\${${var}:-}"
+        case "$_val" in
+            ""|PASTE_*) missing+=("${var#TF_VAR_}") ;;
+        esac
     done
     if [ ${#missing[@]} -gt 0 ]; then
         echo "⚠ 1Password item '$op_item' exists in vault '$op_vault' but these fields are missing or still placeholders:" >&2

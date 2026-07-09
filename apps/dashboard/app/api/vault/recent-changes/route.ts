@@ -18,6 +18,15 @@ export interface VaultRecentChangesData {
   changes: VaultChange[];
 }
 
+/**
+ * Bound the whole round-trip to vault-server. Its own Syncthing probe is
+ * capped at 3s; 5s here gives it headroom while guaranteeing this route can
+ * never hang the dashboard panel (2026-07-08 incident: an unbounded fetch
+ * rode a long-polling/blackholed upstream into a gateway timeout, and the
+ * panel showed "Syncthing offline" while sync itself was healthy).
+ */
+const FETCH_TIMEOUT_MS = 5000;
+
 export async function GET(): Promise<NextResponse> {
   const baseUrl = process.env.VAULT_SERVER_URL;
   if (!baseUrl) {
@@ -25,7 +34,10 @@ export async function GET(): Promise<NextResponse> {
   }
 
   try {
-    const res = await fetch(`${baseUrl}/recent-changes`, { cache: "no-store" });
+    const res = await fetch(`${baseUrl}/recent-changes`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     if (!res.ok) {
       return NextResponse.json(
         { source: "syncthing", available: false, error: `HTTP ${res.status}`, changes: [] },

@@ -2,7 +2,15 @@
 var manifest = {
   id: "agenticos.github-sync-plugin",
   apiVersion: 1,
-  version: "0.5.0",
+  // Bump on ANY manifest change — a stale stored manifest silently masks changes
+  // (spec gotcha; see #228). 0.6.0 = discipline label routing (GOL-150).
+  // 0.7.0 = agent PR review pipeline (GOL-158, Phase 2): `github-pr` webhook.
+  // 0.7.1 = plugin-side agent-review sign-off completion (GOL-186): an
+  //   issue.updated dispatch completes the `agent-review/*` check-run to success
+  //   when the review issue closes `done` (Phase 3 prerequisite). No new
+  //   capabilities/webhooks — reuses issues.read + http.outbound (checks:write is
+  //   an App-side grant, GOL-175), so the manifest surface is unchanged bar version.
+  version: "0.7.1",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",
@@ -28,11 +36,16 @@ var manifest = {
   //   run requires an agent ("Default agent required"), so they dispatch work rather
   //   than mirror. The plugin webhook auth-route mode is disabled on this host, but
   //   manifest-declared webhooks (webhooks.receive) are the supported public path.
+  // issues.update + issue.comments.create: the PR review pipeline (GOL-158) reopens
+  //   (`todo`) an existing review issue on `synchronize` and posts a "new commits"
+  //   note comment. Both are gated behind these capabilities.
   capabilities: [
     "events.subscribe",
     "http.outbound",
     "issues.read",
     "issues.create",
+    "issues.update",
+    "issue.comments.create",
     "webhooks.receive",
     "database.namespace.read",
     "database.namespace.write",
@@ -50,6 +63,11 @@ var manifest = {
       endpointKey: "github-app",
       displayName: "GitHub App issues event \u2192 Paperclip mirror (no per-repo setup)",
       description: "Point the AgenticOS Developer GitHub App's webhook here and subscribe it to `issues` events. GitHub then delivers a native, signed `issues` payload for EVERY installed repo \u2014 the plugin mirrors `opened` issues into a matching bridge's project. Verified with appWebhookSecret; no per-repo Actions workflow or repo secret needed."
+    },
+    {
+      endpointKey: "github-pr",
+      displayName: "GitHub App pull_request event \u2192 agent review pipeline (GOL-158)",
+      description: "Subscribe the AgenticOS Developer GitHub App to `pull_request` events and point them here. For each non-draft PR (opened/reopened/ready_for_review/synchronize) the plugin creates review issue(s) in the matching bridge's project \u2014 Alice always, Iris when a changed path matches `prReviewFrontendPaths` \u2014 and seeds a pending `agent-review/*` check-run on the head SHA. Verified with appWebhookSecret (same as `github-app`). Needs the App's `checks:write` permission for check-runs."
     }
   ],
   // Declaring `database` is REQUIRED for the host to provision + activate the
@@ -102,7 +120,18 @@ var manifest = {
             defaultAssigneeAgentId: {
               type: "string",
               title: "Default assignee agent ID (inbound routing)",
-              description: "Agent UUID that inbound mirror issues from this repo are assigned to. REQUIRED to close the auto-pickup loop: Paperclip agents never pick up unassigned work, so a mirror created without an assignee sits unowned forever. Set this to the owner for the bridge (e.g. the Founding Engineer for AgenticOS infra issues) and new GitHub issues enter that agent's heartbeat automatically."
+              description: "Agent UUID that inbound mirror issues from this repo are assigned to. Backward-compatible last resort: used only when no labelRouting label matches AND no fallbackAssigneeAgentId is set. Paperclip agents never pick up unassigned work, so leaving all three empty means mirrors sit unowned forever."
+            },
+            labelRouting: {
+              type: "object",
+              title: "Discipline label routing (v0.6.0)",
+              description: 'Map of GitHub label name \u2192 assignee agent UUID. An inbound issue is assigned to the owner of its highest-precedence matching label. Fixed precedence: infra = bug = alert > frontend > feature (first match by precedence wins). Example: {"frontend":"<Iris>","feature":"<Alice>","bug":"<Terra>","infra":"<Terra>","alert":"<Terra>"}. No match \u2192 fallbackAssigneeAgentId \u2192 defaultAssigneeAgentId.',
+              additionalProperties: { type: "string" }
+            },
+            fallbackAssigneeAgentId: {
+              type: "string",
+              title: "Fallback assignee agent ID (unlabeled triage)",
+              description: "Agent UUID assigned when no labelRouting label matches \u2014 the triage owner (e.g. the CEO). Takes precedence over defaultAssigneeAgentId for the no-label case so unlabeled GitHub issues still enter a heartbeat instead of piling up unowned."
             },
             defaultPriority: {
               type: "string",
@@ -139,20 +168,41 @@ var manifest = {
       },
       inboundWebhookSecret: {
         type: "string",
-        format: "secret-ref",
+        // Deliberately NOT format:"secret-ref": this host strips secret-ref
+        // fields from saved config (ref resolution is disabled until
+        // company-scoped plugin config lands), so marking it meant the worker
+        // saw NO secret and rejected every inbound delivery (verified live
+        // 2026-07-08). The raw hex value is not UUID-shaped, so it passes the
+        // extractor as long as one field (githubToken) stays secret-ref.
         title: "Inbound webhook HMAC secret (custom workflow path)",
         description: "Shared secret the GitHub Actions workflow signs the inbound payload with (X-Hub-Signature-256). onWebhook verifies it before creating a mirror issue. Set the SAME value as the workflow's PAPERCLIP_ISSUE_SYNC_SECRET repo secret. Only needed for the `github-issue` endpoint; the `github-app` endpoint uses appWebhookSecret instead."
       },
       appWebhookSecret: {
         type: "string",
-        format: "secret-ref",
+        // NOT format:"secret-ref" — same reason as inboundWebhookSecret above.
         title: "GitHub App webhook secret (native issues path)",
         description: "The webhook secret configured on the AgenticOS Developer GitHub App. Verifies X-Hub-Signature-256 on native `issues` events delivered to the `github-app` endpoint. Set this to the SAME value as the App's webhook secret. Preferred over per-repo inboundWebhookSecret \u2014 one secret covers every installed repo."
       },
       opsWebhookUrl: {
         type: "string",
         title: "Ops webhook URL (Discord)",
-        description: "Optional Discord (or Discord-compatible) webhook URL. When set, the plugin posts a best-effort `{content}` ping on every inbound mirror creation so triage is never silent \u2014 including a loud warning when the mirror landed unassigned. A failed ping never blocks mirror creation."
+        description: "Optional Discord (or Discord-compatible) webhook URL. When set, the plugin posts a best-effort `{content}` ping on every inbound mirror creation so triage is never silent \u2014 including a loud warning when the mirror landed unassigned. A failed ping never blocks mirror creation. Also carries the PR-review state-change pings (System 3): review-issues-created, re-review-on-new-commits, and pipeline errors."
+      },
+      prReviewAliceAgentId: {
+        type: "string",
+        title: "PR review \u2014 Alice agent ID (GOL-158)",
+        description: "Agent UUID that ALWAYS reviews every non-draft PR (spec System 2). Leave empty to disable the PR review pipeline (the `github-pr` webhook then no-ops). Company-global \u2014 the review issue is created in the matched bridge's project."
+      },
+      prReviewIrisAgentId: {
+        type: "string",
+        title: "PR review \u2014 Iris agent ID (frontend, GOL-158)",
+        description: "Agent UUID that ADDITIONALLY reviews a PR when any changed path matches prReviewFrontendPaths. Leave empty to skip frontend review even when frontend paths change."
+      },
+      prReviewFrontendPaths: {
+        type: "array",
+        title: "PR review \u2014 frontend path globs (GOL-158)",
+        description: 'Changed-file globs that trigger a second (Iris) frontend review. Supports `*` (within a segment) and `**` (across segments). Defaults to ["apps/dashboard/**", "**/*.tsx", "**/*.css"] when empty.',
+        items: { type: "string" }
       }
     },
     required: ["bridges"]

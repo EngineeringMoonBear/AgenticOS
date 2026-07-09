@@ -4,8 +4,8 @@
   "private": true,
   "main": "index.js",
   "dependencies": {
-    "@typescript-eslint/eslint-plugin": "^8.62.0",
-    "@typescript-eslint/parser": "^8.62.0",
-    "eslint-config-next": "^16.2.9"
+    "@typescript-eslint/eslint-plugin": "^8.63.0",
+    "@typescript-eslint/parser": "^8.63.0",
+    "eslint-config-next": "^16.2.10"
   }
 }

@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   getByPaperclipId,
+  getByRepoNumber,
+  bareRepoName,
   upsert,
   type MappingDb,
   type MappingRow,
@@ -32,6 +34,24 @@ function makeFakeDb(): MappingDb & { rows: Map<string, MappingRow>; sql: string[
             github_issue_number: row.githubIssueNumber,
             last_synced_at: row.lastSyncedAt,
             origin: row.origin,
+          } as T,
+        ];
+      }
+      // getByRepoNumber: match on number + bare-repo normalisation (both sides).
+      if (/SELECT/i.test(q) && /github_issue_number = \$1/i.test(q) && /regexp_replace/i.test(q)) {
+        const num = Number(params?.[0]);
+        const bare = String(params?.[1]).toLowerCase();
+        const match = [...rows.values()].find(
+          (r) => r.githubIssueNumber === num && bareRepoName(r.githubRepo).toLowerCase() === bare,
+        );
+        if (!match) return [];
+        return [
+          {
+            paperclip_issue_id: match.paperclipIssueId,
+            github_repo: match.githubRepo,
+            github_issue_number: match.githubIssueNumber,
+            last_synced_at: match.lastSyncedAt,
+            origin: match.origin,
           } as T,
         ];
       }
@@ -111,5 +131,55 @@ describe("mapping", () => {
     row = await getByPaperclipId(db, "pi-1");
     expect(row?.lastSyncedAt).toBe("2026-02-02T00:00:00Z");
     expect(db.rows.size).toBe(1);
+  });
+});
+
+describe("bareRepoName", () => {
+  it("strips a leading owner/ and leaves bare names untouched", () => {
+    expect(bareRepoName("Goldberry-Playground/grove-sites")).toBe("grove-sites");
+    expect(bareRepoName("grove-sites")).toBe("grove-sites");
+    expect(bareRepoName("EngineeringMoonBear/AgenticOS")).toBe("AgenticOS");
+  });
+});
+
+describe("getByRepoNumber — org-qualified ↔ bare normalisation", () => {
+  it("finds a Paperclip-origin row (stored bare) from an org-qualified App-webhook repo", async () => {
+    // Outbound sync records the bare repo name from bridge config…
+    const db = makeFakeDb();
+    await upsert(db, {
+      paperclipIssueId: "pi-42",
+      githubRepo: "grove-sites",
+      githubIssueNumber: 271,
+      lastSyncedAt: "2026-07-09T00:00:00Z",
+      origin: "paperclip",
+    });
+    // …and GitHub's native `issues` webhook reports `owner/repo`. Closure lookup must still hit.
+    const found = await getByRepoNumber(db, "Goldberry-Playground/grove-sites", 271);
+    expect(found?.paperclipIssueId).toBe("pi-42");
+  });
+
+  it("finds an inbound row (stored org-qualified) from a bare repo lookup", async () => {
+    const db = makeFakeDb();
+    await upsert(db, {
+      paperclipIssueId: "pi-7",
+      githubRepo: "Goldberry-Playground/grove-sites",
+      githubIssueNumber: 8,
+      lastSyncedAt: "2026-07-09T00:00:00Z",
+      origin: "github",
+    });
+    const found = await getByRepoNumber(db, "grove-sites", 8);
+    expect(found?.paperclipIssueId).toBe("pi-7");
+  });
+
+  it("does not cross-match a different repo with the same issue number", async () => {
+    const db = makeFakeDb();
+    await upsert(db, {
+      paperclipIssueId: "pi-9",
+      githubRepo: "grove-odoo-modules",
+      githubIssueNumber: 1,
+      lastSyncedAt: "2026-07-09T00:00:00Z",
+      origin: "paperclip",
+    });
+    expect(await getByRepoNumber(db, "grove-sites", 1)).toBeNull();
   });
 });

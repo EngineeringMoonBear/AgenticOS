@@ -1,0 +1,110 @@
+name: Droplet Disk Reclaim
+
+# Scheduled + manually/agent-triggerable host Docker reclaim for agenticos-droplet
+# (GOL-124 / GOL-131). Clears the /var/lib/docker accretion — dangling image
+# layers, stopped containers, unused images, and the BuildKit build cache —
+# that drives the recurring DigitalOcean disk alert (root FS climbs to ~88% as
+# every CI deploy leaves the previous image + build cache behind).
+#
+# Why this workflow exists: in-container Paperclip agents structurally cannot
+# reach the host filesystem or the host Docker socket, and the CEO directive on
+# GOL-124 (Option A) explicitly ruled out injecting the deploy SSH key / host
+# root into any autonomous agent. This job runs the reclaim as the CI `deploy`
+# user, which is already in the docker group (no sudo, no host root) — so the
+# reclaim is triggerable on demand (`gh workflow run disk-reclaim.yml`) with NO
+# new standing credential held by any agent. It ALSO runs on a daily schedule as
+# a threshold-gated safety net (see GUARD_THRESHOLD below): the scheduled run
+# only prunes when the root FS is actually under pressure, so it self-heals the
+# box with no host root and no manual trigger, covering the gap until — or as
+# defense-in-depth alongside — the host systemd timers
+# (agenticos-docker-prune/disk-guard). A manual dispatch always prunes now.
+#
+# Safety: NEVER prunes volumes. Named volumes on this droplet hold LIVE state
+# (agenticos-db Postgres, OpenViking memory, vault) — a volume prune here would
+# be data loss. Mirrors infra/scripts/docker-prune.sh, inlined so the reclaim
+# works even before that script has shipped to the box.
+
+on:
+  workflow_dispatch:
+  # Agent-triggerable on-demand reclaim WITHOUT host root or GitHub `actions:
+  # write`: an in-container Paperclip agent mints a contents:write
+  # gh-token-broker token and POSTs /repos/<owner>/<repo>/dispatches with
+  # {"event_type":"disk-reclaim"}. repository_dispatch is NOT a schedule event,
+  # so it bypasses the GUARD_THRESHOLD gate and always prunes now — the reclaim
+  # button that needs NO actions:write on the broker App and NO key injected
+  # into any agent (GOL-141). The broker App lacks actions:write, so the
+  # workflow_dispatch REST API is 403 for agents; repository_dispatch is not.
+  repository_dispatch:
+    types: [disk-reclaim]
+  schedule:
+    # Daily 08:17 UTC. Threshold-gated (GUARD_THRESHOLD) so a healthy box is a
+    # no-op — an unconditional nightly prune would nuke the BuildKit cache every
+    # day and force a cold rebuild on the next deploy. Self-healing safety net
+    # with no host root and no standing agent credential (GOL-131).
+    - cron: "17 8 * * *"
+
+permissions:
+  contents: read
+
+# Share the deploy lock so a reclaim never races a deploy mid-`compose build`
+# (which is actively creating the layers a prune would otherwise remove).
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+jobs:
+  reclaim:
+    name: Host Docker reclaim (no volumes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.DROPLET_SSH_KEY }}
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Reclaim host Docker space (system prune + builder prune, no volumes)
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+          EVENT: ${{ github.event_name }}
+          # Scheduled runs only prune once the root FS reaches this %; a manual
+          # workflow_dispatch ignores the guard and always prunes.
+          GUARD_THRESHOLD: "75"
+        run: |
+          # `deploy` is in the docker group — no sudo (sudo would block on a
+          # password prompt and hang the job). `docker system prune -af` removes
+          # all stopped containers, unused networks, dangling AND unused images,
+          # and the build cache; RUNNING containers and their in-use images are
+          # NOT touched, so live services stay up. NO --volumes.
+          # EVENT/GUARD_THRESHOLD are passed to the remote shell on the command
+          # line; the heredoc is single-quoted so only the remote bash expands it.
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" \
+            "EVENT='${EVENT}' GUARD_THRESHOLD='${GUARD_THRESHOLD}' bash -s" <<'REMOTE'
+            set -euo pipefail
+            ts() { date "+%Y-%m-%dT%H:%M:%S%z"; }
+            USE_NOW=$(df --output=pcent / | tail -1 | tr -dc "0-9")
+            echo "[$(ts)] event=${EVENT:-manual} root FS at ${USE_NOW}% (schedule guard ${GUARD_THRESHOLD:-75}%)"
+            if [ "${EVENT:-workflow_dispatch}" = "schedule" ] && [ "${USE_NOW:-100}" -lt "${GUARD_THRESHOLD:-75}" ]; then
+              echo "[$(ts)] scheduled run and under guard threshold — nothing to reclaim, exiting clean."
+              exit 0
+            fi
+            echo "[$(ts)] disk BEFORE:"; df -h /
+            docker system df || true
+            echo "[$(ts)] docker system prune -af (keeps running containers + in-use images; no --volumes)"
+            docker system prune -af
+            echo "[$(ts)] docker builder prune -af (BuildKit cache)"
+            docker builder prune -af
+            echo "[$(ts)] disk AFTER:"; df -h /
+            docker system df || true
+            USE=$(df --output=pcent / | tail -1 | tr -dc "0-9")
+            echo "[$(ts)] root FS now at ${USE}%"
+            if [ "${USE:-100}" -ge 85 ]; then
+              echo "::warning::agenticos-droplet root FS still >=${USE}% after reclaim — needs a human look (volumes / logs / non-Docker growth)"
+            fi
+          REMOTE

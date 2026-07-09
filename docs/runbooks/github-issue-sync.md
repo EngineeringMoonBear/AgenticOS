@@ -11,8 +11,12 @@ Paperclip issue created/updated (in the synced project)
        (labeled `synced-from-paperclip`, body marker `<!-- synced-from-paperclip: <id> -->`)
 
 New GitHub issue opened
-  └─ .github/workflows/issue-sync-to-paperclip.yml → HMAC webhook (via Cloudflare Access)
-       → plugin webhook onWebhook → ctx.issues.create in the matching bridge's project
+  ├─ PRIMARY (v2, PR #228): native GitHub App `issues` webhook — ONE webhook for every
+  │    repo the App is installed on (selection: All repositories = self-extending)
+  │    → POST /api/plugins/<id>/webhooks/github-app (CF Access: Bypass — HMAC is the auth)
+  │    → onWebhook verifies X-Hub-Signature-256 (appWebhookSecret) → ctx.issues.create
+  └─ LEGACY (v1): per-repo .github/workflows/issue-sync-to-paperclip.yml → HMAC webhook
+       (via CF Access service token) → /webhooks/github-issue — kept as fallback
           (description marker `<!-- synced-from-github: <repo>#<n> -->`)
 ```
 
@@ -20,8 +24,41 @@ New GitHub issue opened
 
 | Leg | Mechanism | Where |
 |---|---|---|
-| **Paperclip → GitHub** | `github-sync-plugin` subscribes company-wide to `issue.created`/`issue.updated`, routes by the issue's project to the matching bridge, and writes the GitHub issue via the broker token | `packages/github-sync-plugin` (worker/sync) |
-| **GitHub → Paperclip** | a GitHub Actions workflow POSTs the issue payload (HMAC-signed, via CF Access) to the plugin's public webhook `POST /api/plugins/:id/webhooks/github-issue`; `onWebhook` creates the mirror issue directly (agent-free) | `packages/github-sync-plugin` (inbound/onWebhook) + `.github/workflows/issue-sync-to-paperclip.yml` |
+| **Paperclip → GitHub** | `github-sync-plugin` subscribes company-wide to `issue.created`/`issue.updated`, routes by the issue's project to the matching bridge, and writes the GitHub issue via the broker token. Status maps to state (`done`/`cancelled` → `closed`), so closing a Paperclip issue closes its GitHub twin | `packages/github-sync-plugin` (worker/sync) |
+| **GitHub → Paperclip (primary — App webhook)** | the "AgenticOS Developer" GitHub App subscribes to `issues` natively; GitHub POSTs every installed repo's issue events (HMAC `X-Hub-Signature-256` with `appWebhookSecret`) to `POST /api/plugins/:id/webhooks/github-app`; `onWebhook` verifies, then **creates** a mirror on `opened` and **propagates closure** on `closed`/`reopened` (agent-free, no per-repo setup) | `packages/github-sync-plugin` (inbound/onWebhook) + App settings |
+| **GitHub → Paperclip (legacy — workflow)** | a per-repo Actions workflow POSTs the issue payload (HMAC + CF service token) to `/webhooks/github-issue` | `.github/workflows/issue-sync-to-paperclip.yml` |
+
+## Activating the native App webhook (inbound v2) — the "always observing" checklist
+
+The v2 path only works when ALL of these hold (each was found broken 2026-07-08):
+
+1. **CF Access lets GitHub in.** GitHub cannot send CF service-token headers; the
+   `…/webhooks/github-app` path needs its own MOST-SPECIFIC Access app with a
+   **Bypass** policy (`cloudflare-qa-webhook.tf` →
+   `paperclip_github_app_webhook`). The plugin's HMAC check is the auth.
+   Symptom when broken: every delivery 403s with `cf-access-domain` header.
+2. **The droplet's STORED manifest declares the `github-app` endpoint.** #228 added
+   it WITHOUT bumping `version:` (still 0.5.0), so a pre-#228 install looks
+   current but 404s the endpoint — reinstall via `scripts/deploy-plugin.sh
+   github-sync-plugin`. (Always bump `version:` on manifest changes.)
+3. **Plugin config carries `appWebhookSecret`** (generate high-entropy, store in
+   1Password, set via config) — plus per-bridge `defaultAssigneeAgentId`
+   (GOL-80; unassigned mirrors are never picked up by heartbeat) and optional
+   `opsWebhookUrl` for a Discord ping per mirror.
+4. **App settings** (github.com → Settings → Developer settings → GitHub Apps →
+   AgenticOS Developer): Webhook **Active**, URL =
+   `https://paperclip.gatheringatthegrove.com/api/plugins/<plugin-id>/webhooks/github-app`,
+   Secret = the same `appWebhookSecret`, **Subscribe to events → Issues**.
+   Symptom when broken: `gh api orgs/<org>/installations` shows `events=[]`.
+5. **Installation coverage = All repositories on BOTH orgs**
+   (`EngineeringMoonBear` + `Goldberry-Playground`) so new repos are observed
+   automatically with zero setup.
+
+**Verify end-to-end:** open an issue in a repo with NO per-repo workflow → it
+mirrors into the bridge's project (or logs "repo not in a synced bridge" for
+unbridged repos). **Ongoing:** App → Advanced → Recent Deliveries is ground
+truth (redeliver failures; GitHub auto-disables webhooks that fail
+persistently — a broken CF policy will eventually mute the App silently).
 
 ## Loop prevention (the contract — all pieces must agree)
 
@@ -32,6 +69,36 @@ New GitHub issue opened
 - A `github_sync_mapping` table in the plugin DB (`paperclip_issue_id ↔ repo#number`, with `origin`) is the durable source of truth — an already-mapped GitHub issue is never re-created (idempotent redelivery via `getByRepoNumber`).
 
 Mirroring stays scoped to configured projects: the outbound handler drops issues whose project isn't a bridge, and `onWebhook` drops payloads whose `repo` isn't a bridge — so unrelated work (e.g. QA-triage issues in other projects) is never synced.
+
+## Closure propagation — issues close as PRs merge (GOL-149)
+
+The goal: an agent PR that merges with a `Closes #N` keyword closes the GitHub
+issue natively, and the Paperclip mirror reflects `done` within one sync cycle,
+with **no bounce**. Both directions of state are handled:
+
+- **Paperclip → GitHub**: `issue.updated` → `statusToGithubState` (`done`/`cancelled` → `closed`, else `open`). Already the outbound leg.
+- **GitHub → Paperclip**: the App webhook's `issues` `closed`/`reopened` action → `handleAppClosure`. It looks up the mirror via `getByRepoNumber`, then `resolveMirrorClosureStatus(action, currentStatus)` decides the write: `closed` → `done` (unless already terminal), `reopened` → `todo` (only if terminal). Unmapped issues are ignored — closure only touches issues that already have a mirror.
+
+**Why it doesn't loop.** `resolveMirrorClosureStatus` returns `null` when the
+mirror already matches, so the round trip settles in one cycle:
+
+1. Paperclip issue → `done` ⟶ outbound pushes GitHub `closed`.
+2. GitHub emits a `closed` App-webhook event ⟶ `handleAppClosure` finds the mirror already `done` ⟶ no update ⟶ no `issue.updated` ⟶ **stop**.
+
+The inverse (GitHub-first close of a Paperclip-origin twin) is symmetric: the
+mirror flips to `done` once; the redundant outbound PATCH to an already-`closed`
+GitHub issue is a no-op that emits no state-changing webhook.
+
+**Repo-name normalisation.** Outbound rows record `github_repo` as the bare
+bridge name (`grove-sites`) while the App webhook reports `owner/repo`
+(`Goldberry-Playground/grove-sites`). `getByRepoNumber` normalises both sides to
+the bare name (`regexp_replace(github_repo, '^[^/]+/', '')`), so a `Closes #N` on
+a Paperclip-origin twin still resolves to its mirror. Without this the closure
+lookup silently misses every outbound-created issue.
+
+**Agent contract.** Every agent PR body carries `Closes #<github-issue-number>`
+(the GitHub twin, not `GOL-N`) plus a `Paperclip: GOL-N` trace line — see
+`docs/agent-house-rules.md`.
 
 ## Setup
 
