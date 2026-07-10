@@ -18,6 +18,22 @@
 > `grove-broker-prod-ro`). The QA identity cannot read the Prod vault even if the
 > broker's policy code is wrong — defense in depth. Sections below reflect this;
 > the phased plan is updated accordingly.
+>
+> **Amendment 2026-07-10 — CI reads 1Password directly, NOT the broker.** This ADR
+> assumed *"CI authenticates to the broker via GitHub OIDC."* That does not hold:
+> the broker is deployed **internal-only** (no host port, reachable only on the
+> droplet compose network), and GitHub Actions runners are external. Exposing the
+> secrets broker at a public OIDC-gated endpoint would add real attack surface to
+> solve a problem CI does not have — CI is **external + low-frequency** (a few
+> deploys/day, well within the Families rate cap the broker's cache exists to
+> protect). So **CI uses 1Password's native GitHub Action** (`1password/load-secrets-action`)
+> with a **per-stage read-only service-account token stored in a GitHub Environment
+> secret** (`production` gated by required reviewers). The **broker remains the
+> mechanism for internal / droplet / agent / high-frequency consumers** (caching,
+> ephemeral DO tokens via the Phase 2 proxy). Phase 3's CI work therefore repoints
+> workflows to the 1Password action, not the broker. Inventory + structure (source
+> of truth): the `Grove Secrets Inventory` vault note. See spec
+> `docs/superpowers/specs/2026-07-10-phase3-p1-secret-home-design.md`.
 
 ## Context and drivers
 
