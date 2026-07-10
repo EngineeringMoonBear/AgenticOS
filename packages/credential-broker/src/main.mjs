@@ -122,7 +122,9 @@ async function main() {
       maxTtlMs: Number(process.env.DO_PROXY_MAX_TTL_S || 3600) * 1000,
       defaultTtlMs: Number(process.env.DO_PROXY_DEFAULT_TTL_S || 900) * 1000,
     });
-    console.error(`[broker] DO proxy enabled (PAT secret: ${patName})`);
+    // Do not interpolate the env-derived secret name into the log (CodeQL
+    // js/clear-text-logging). The startup line below reports doProxy on/off.
+    console.error("[broker] DO proxy enabled");
   }
 
   const handler = createRequestHandler({ brokerHandler, doProxy });
