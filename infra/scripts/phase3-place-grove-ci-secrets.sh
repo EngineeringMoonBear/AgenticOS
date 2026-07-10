@@ -24,16 +24,25 @@ DRY=0
 
 # SOURCE_REF | STAGE_VAULT | ITEM | FIELD(env-var name)
 # ── odoocker ──────────────────────────────────────────────────────────────
+# Field labels = the EXACT env-var names each workflow reads (derived from the
+# workflows, not the old Infisical note). The first 7 are what terraform-drift.yml
+# loads (Phase 3.2 pilot). ⚠ DIGITALOCEAN_TOKEN = full do_token (odoocker needs
+# Spaces scope). ODOO_API_KEYS_TF_JSON currently lives ONLY in Infisical — migrate
+# it: op item edit odoocker --vault "Grove Prod" "ODOO_API_KEYS_TF_JSON[password]=<value>".
+# The remaining rows are for later workflows (docker-odoo/release/sandbox).
 MAP=$(cat <<'ROWS'
-op://Goldberry Grove - Admin/Grove Infra/do_token_scoped | Grove Prod | odoocker | DIGITALOCEAN_TOKEN
-FILL_SOURCE_REF | Grove Prod | odoocker | DO_SPACES_ACCESS_KEY
-FILL_SOURCE_REF | Grove Prod | odoocker | DO_SPACES_SECRET_KEY
+op://Goldberry Grove - Admin/Grove Infra/do_token | Grove Prod | odoocker | DIGITALOCEAN_TOKEN
+op://Goldberry Grove - Admin/Grove Infra/spaces_bootstrap_access_key_id | Grove Prod | odoocker | SPACES_ACCESS_KEY_ID
+op://Goldberry Grove - Admin/Grove Infra/spaces_bootstrap_secret_key | Grove Prod | odoocker | SPACES_SECRET_ACCESS_KEY
+op://Goldberry Grove - Admin/Grove Infra/account_cloudflare_api_token | Grove Prod | odoocker | CLOUDFLARE_API_TOKEN
+op://Goldberry Grove - Admin/Grove Infra/grove_revalidate_secret | Grove Prod | odoocker | GROVE_REVALIDATE_SECRET
+op://Goldberry Grove - Admin/Grove Infra/discord_webhook_url | Grove Prod | odoocker | DISCORD_OPS_WEBHOOK_URL
+FILL_SOURCE_REF | Grove Prod | odoocker | ODOO_API_KEYS_TF_JSON
 FILL_SOURCE_REF | Grove Prod | odoocker | DO_SSH_KEY_ID
 FILL_SOURCE_REF | Grove Prod | odoocker | PROD_HOST
 FILL_SOURCE_REF | Grove Prod | odoocker | PROD_SSH_PRIVATE_KEY
 FILL_SOURCE_REF | Grove Prod | odoocker | SLACK_WEBHOOK_URL
-FILL_SOURCE_REF | Grove Prod | odoocker | DISCORD_OPS_WEBHOOK_URL
-FILL_SOURCE_REF | Grove QA   | odoocker | SANDBOX_SSH_PRIVATE_KEY
+op://Goldberry Grove - Admin/Grove Infra/grove_qa_ci_ssh_private_key | Grove QA | odoocker | SANDBOX_SSH_PRIVATE_KEY
 FILL_SOURCE_REF | Grove QA   | odoocker | ENV_SANDBOX
 ROWS
 )
@@ -62,15 +71,18 @@ place_row() {
     SKIP)               echo "  skip   $vault / $item / $field  (SKIP)";               skipped=$((skipped+1)); return;;
   esac
   local val
-  if ! val=$(op read "$src" 2>/dev/null); then
+  if ! val=$(op read "$src" </dev/null 2>/dev/null); then
     echo "  FAIL   $vault / $item / $field  (can't read source: $src)" >&2; failed=$((failed+1)); return
   fi
   if [ "$DRY" = 1 ]; then echo "  would  $vault / $item / $field  (len=${#val})"; placed=$((placed+1)); return; fi
   # upsert: edit adds/updates the field on an existing item; create makes it the first time.
-  if op item edit "$item" --vault "$vault" "$field[password]=$val" >/dev/null 2>&1; then
+  # </dev/null on every op call: this runs inside a `while read` loop whose stdin is
+  # the MAP here-string; without it `op item edit/create` read that as piped JSON
+  # and fail with "invalid JSON in piped input".
+  if op item edit "$item" --vault "$vault" "$field[password]=$val" </dev/null >/dev/null 2>&1; then
     echo "  ok     $vault / $item / $field  (updated)"
   else
-    op item create --category "API Credential" --title "$item" --vault "$vault" "$field[password]=$val" >/dev/null
+    op item create --category "API Credential" --title "$item" --vault "$vault" "$field[password]=$val" </dev/null >/dev/null
     echo "  ok     $vault / $item / $field  (created item)"
   fi
   placed=$((placed+1))
