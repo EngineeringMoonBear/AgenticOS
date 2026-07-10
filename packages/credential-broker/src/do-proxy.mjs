@@ -1,0 +1,68 @@
+// do-proxy.mjs — credential-broker Phase 2: scoped-capability reverse proxy for
+// DigitalOcean. Pure/injectable: signingKey, resolvePat, now, fetchImpl are all
+// passed in so this is unit-testable with no network, keys, or real clock.
+//
+// DO cannot mint short-lived scoped tokens, so instead of handing out a DO token
+// we issue an HMAC-signed short-lived capability token and proxy DO API calls,
+// injecting the real do_token_scoped PAT server-side. The PAT never leaves here.
+import { createHmac, createHash, timingSafeEqual, hkdfSync } from "node:crypto";
+
+const b64url = (buf) => Buffer.from(buf).toString("base64url");
+const fromB64url = (s) => Buffer.from(s, "base64url");
+const VALID_SCOPES = new Set(["ro", "rw"]);
+
+/** The HMAC key for capability tokens: explicit BROKER_CAPABILITY_SIGNING_KEY,
+ *  else HKDF-derived from BROKER_API_KEY so there is no hard new secret. */
+export function deriveSigningKey({ signingKey, apiKey }) {
+  if (signingKey) return Buffer.from(signingKey);
+  if (!apiKey) throw new Error("do-proxy: need signingKey or apiKey");
+  return Buffer.from(
+    hkdfSync("sha256", apiKey, Buffer.alloc(0), "credential-broker/do-capability/v1", 32),
+  );
+}
+
+export function createDoProxy({
+  apiKey,
+  resolvePat,
+  signingKey,
+  now = Date.now,
+  fetchImpl = fetch,
+  upstream = "https://api.digitalocean.com",
+  maxTtlMs = 60 * 60 * 1000,
+  defaultTtlMs = 15 * 60 * 1000,
+}) {
+  if (typeof resolvePat !== "function") throw new Error("do-proxy: resolvePat fn required");
+  const key = deriveSigningKey({ signingKey, apiKey });
+
+  function signToken(payload) {
+    const body = "v1." + b64url(JSON.stringify(payload));
+    const sig = createHmac("sha256", key).update(body).digest();
+    return body + "." + b64url(sig);
+  }
+
+  function verifyToken(str) {
+    if (typeof str !== "string") return { ok: false, error: "missing token" };
+    const parts = str.split(".");
+    if (parts.length !== 3 || parts[0] !== "v1") return { ok: false, error: "bad format" };
+    const body = parts[0] + "." + parts[1];
+    const expected = createHmac("sha256", key).update(body).digest();
+    const got = fromB64url(parts[2]);
+    if (got.length !== expected.length || !timingSafeEqual(got, expected)) {
+      return { ok: false, error: "bad signature" };
+    }
+    let payload;
+    try {
+      payload = JSON.parse(fromB64url(parts[1]).toString("utf8"));
+    } catch {
+      return { ok: false, error: "bad payload" };
+    }
+    if (typeof payload.exp !== "number" || payload.exp * 1000 <= now()) {
+      return { ok: false, error: "expired" };
+    }
+    if (!VALID_SCOPES.has(payload.scope)) return { ok: false, error: "bad scope" };
+    return { ok: true, payload };
+  }
+
+  // mint() and proxy() are added in Tasks 2 and 3.
+  return { signToken, verifyToken };
+}
