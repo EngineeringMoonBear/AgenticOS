@@ -21,6 +21,24 @@ export function deriveSigningKey({ signingKey, apiKey }) {
   );
 }
 
+function safeBearer(header, expected) {
+  const pfx = "Bearer ";
+  if (typeof header !== "string" || !header.startsWith(pfx)) return false;
+  const got = createHash("sha256").update(header.slice(pfx.length)).digest();
+  const exp = createHash("sha256").update(expected).digest();
+  return got.length === exp.length && timingSafeEqual(got, exp);
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    if (typeof req.on !== "function") return resolve(Buffer.alloc(0));
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
 export function createDoProxy({
   apiKey,
   resolvePat,
@@ -63,6 +81,29 @@ export function createDoProxy({
     return { ok: true, payload };
   }
 
-  // mint() and proxy() are added in Tasks 2 and 3.
-  return { signToken, verifyToken };
+  const send = (res, code, obj) => {
+    res.writeHead(code, { "content-type": "application/json" });
+    res.end(JSON.stringify(obj));
+  };
+
+  async function mint(req, res) {
+    if (!safeBearer(req.headers["authorization"], apiKey)) return send(res, 401, { error: "unauthorized" });
+    const url = new URL(req.url, "http://broker");
+    const params = Object.fromEntries(url.searchParams);
+    if ((req.headers["content-type"] || "").includes("application/json")) {
+      const raw = (await readBody(req)).toString("utf8");
+      if (raw) { try { Object.assign(params, JSON.parse(raw)); } catch { /* ignore */ } }
+    }
+    const scope = params.scope || "ro";
+    if (!VALID_SCOPES.has(scope)) return send(res, 400, { error: "scope must be ro or rw" });
+    let ttlMs = params.ttl ? Number(params.ttl) * 1000 : defaultTtlMs;
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) ttlMs = defaultTtlMs;
+    ttlMs = Math.min(ttlMs, maxTtlMs);
+    const exp = Math.floor((now() + ttlMs) / 1000);
+    const token = signToken({ scope, exp, iss: "agenticos-broker" });
+    return send(res, 200, { token, scope, expiresAt: new Date(exp * 1000).toISOString() });
+  }
+
+  // proxy() is added in Task 3.
+  return { signToken, verifyToken, mint };
 }
