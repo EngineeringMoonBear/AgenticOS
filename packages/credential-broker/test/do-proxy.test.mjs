@@ -95,3 +95,62 @@ test("mint: 400 on unknown scope", async () => {
   await p.mint(mkReq({ method: "POST", url: "/token/digitalocean?scope=admin", auth: "broker-key" }), res);
   assert.equal(res.statusCode, 400);
 });
+
+// Fake upstream fetch that records the request and returns a canned response.
+function mkFetch(record) {
+  return async (url, init) => {
+    record.url = url;
+    record.init = init;
+    return {
+      status: 200,
+      headers: new Map([["content-type", "application/json"]]),
+      arrayBuffer: async () => new TextEncoder().encode('{"ok":true}').buffer,
+    };
+  };
+}
+
+test("proxy: 401 when the capability token is invalid", async () => {
+  const p = createDoProxy(OPTS);
+  const res = mkRes();
+  await p.proxy(mkReq({ method: "GET", url: "/do/v2/account", auth: "garbage" }), res);
+  assert.equal(res.statusCode, 401);
+});
+
+test("proxy: ro capability blocks a write method (403)", async () => {
+  const rec = {};
+  const p = createDoProxy({ ...OPTS, fetchImpl: mkFetch(rec) });
+  const cap = p.signToken({ scope: "ro", exp: 2000, iss: "agenticos-broker" });
+  const res = mkRes();
+  await p.proxy(mkReq({ method: "POST", url: "/do/v2/droplets", auth: cap }), res);
+  assert.equal(res.statusCode, 403);
+  assert.equal(rec.url, undefined, "must not reach upstream");
+});
+
+test("proxy: injects the real PAT, strips the capability, rewrites the path", async () => {
+  const rec = {};
+  const p = createDoProxy({ ...OPTS, fetchImpl: mkFetch(rec) });
+  const cap = p.signToken({ scope: "ro", exp: 2000, iss: "agenticos-broker" });
+  const res = mkRes();
+  await p.proxy(mkReq({ method: "GET", url: "/do/v2/droplets?per_page=1", auth: cap }), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(rec.url, "https://api.digitalocean.com/v2/droplets?per_page=1");
+  assert.equal(rec.init.headers["authorization"], "Bearer dop_v1_PAT");
+});
+
+test("proxy: rw capability allows a write method", async () => {
+  const rec = {};
+  const p = createDoProxy({ ...OPTS, fetchImpl: mkFetch(rec) });
+  const cap = p.signToken({ scope: "rw", exp: 2000, iss: "agenticos-broker" });
+  const res = mkRes();
+  await p.proxy(mkReq({ method: "DELETE", url: "/do/v2/droplets/123", auth: cap }), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(rec.init.method, "DELETE");
+});
+
+test("proxy: 502 when the PAT cannot be resolved", async () => {
+  const p = createDoProxy({ ...OPTS, resolvePat: async () => { throw new Error("1password down"); } });
+  const cap = p.signToken({ scope: "ro", exp: 2000, iss: "agenticos-broker" });
+  const res = mkRes();
+  await p.proxy(mkReq({ method: "GET", url: "/do/v2/account", auth: cap }), res);
+  assert.equal(res.statusCode, 502);
+});

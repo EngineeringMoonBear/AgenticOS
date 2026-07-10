@@ -104,6 +104,42 @@ export function createDoProxy({
     return send(res, 200, { token, scope, expiresAt: new Date(exp * 1000).toISOString() });
   }
 
-  // proxy() is added in Task 3.
-  return { signToken, verifyToken, mint };
+  async function proxy(req, res) {
+    const auth = req.headers["authorization"] || "";
+    const cap = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
+    const v = verifyToken(cap);
+    if (!v.ok) return send(res, 401, { error: v.error });
+
+    const method = (req.method || "GET").toUpperCase();
+    const isWrite = !(method === "GET" || method === "HEAD");
+    if (v.payload.scope === "ro" && isWrite) return send(res, 403, { error: "capability is read-only" });
+
+    const url = new URL(req.url, "http://broker");
+    const rest = url.pathname.replace(/^\/do(?=\/|$)/, "") + url.search;
+    const target = upstream + rest;
+
+    let pat;
+    try {
+      pat = await resolvePat();
+    } catch {
+      return send(res, 502, { error: "PAT unavailable" });
+    }
+
+    const headers = { authorization: `Bearer ${pat}` };
+    if (req.headers["content-type"]) headers["content-type"] = req.headers["content-type"];
+    const body = isWrite ? await readBody(req) : undefined;
+
+    let up;
+    try {
+      up = await fetchImpl(target, { method, headers, body: body && body.length ? body : undefined });
+    } catch {
+      return send(res, 502, { error: "upstream request failed" });
+    }
+    const buf = Buffer.from(await up.arrayBuffer());
+    const ct = (up.headers.get ? up.headers.get("content-type") : up.headers["content-type"]) || "application/json";
+    res.writeHead(up.status, { "content-type": ct });
+    res.end(buf);
+  }
+
+  return { signToken, verifyToken, mint, proxy };
 }
