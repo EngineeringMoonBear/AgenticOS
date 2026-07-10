@@ -24,7 +24,16 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 const DEFAULT_TTL_MS = 60 * 60 * 1000; // 1h — re-read at most hourly per secret
 
-/** Constant-time compare of two strings (avoids API-key timing leaks). */
+/**
+ * Constant-time compare of two strings (avoids API-key timing leaks).
+ *
+ * The sha256 here is NOT password hashing (nothing is stored) — it is the
+ * standard trick of digesting both sides to fixed, equal lengths so
+ * timingSafeEqual can run without leaking length. The compared values are
+ * high-entropy machine tokens, so a slow KDF (scrypt/bcrypt) would add
+ * per-request CPU for zero security gain. CodeQL js/insufficient-password-hash
+ * flags this pattern; dismissed as false positive with this rationale.
+ */
 function safeEqual(a, b) {
   const ha = createHash("sha256").update(String(a)).digest();
   const hb = createHash("sha256").update(String(b)).digest();
@@ -71,9 +80,12 @@ export function createBroker({ resolve, secretsMap, apiKey, ttlMs = DEFAULT_TTL_
   }
 
   function authed(req) {
-    const h = req.headers["authorization"] || "";
-    const m = /^Bearer\s+(.+)$/.exec(h);
-    return m ? safeEqual(m[1], apiKey) : false;
+    // No regex: /^Bearer\s+(.+)$/ on an attacker-controlled header is a
+    // polynomial-ReDoS ("Bearer" + many spaces backtracks). Linear parse.
+    const h = String(req.headers["authorization"] || "");
+    if (!h.startsWith("Bearer ")) return false;
+    const token = h.slice(7).trim();
+    return token ? safeEqual(token, apiKey) : false;
   }
 
   /** Node http handler. */

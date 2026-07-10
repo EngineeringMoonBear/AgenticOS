@@ -136,3 +136,26 @@ test("constructor validates required args", () => {
   assert.throws(() => createBroker({ resolve: async () => "x", apiKey: "k" }), /secretsMap/);
   assert.throws(() => createBroker({ secretsMap: MAP, apiKey: "k" }), /resolve/);
 });
+
+test("bearer parsing is linear and strict (ReDoS regression, CodeQL js/polynomial-redos)", async () => {
+  const handler = createBroker({ resolve: async () => "x", secretsMap: MAP, apiKey: API_KEY });
+  // raw-header helper: bypass call()'s `Bearer ${auth}` template
+  const raw = async (authorization) => {
+    let status;
+    const res = { headersSent: false, writeHead(c) { status = c; this.headersSent = true; }, end() {} };
+    await handler({ method: "GET", url: "/secret/do_token", headers: { authorization } }, res);
+    return status;
+  };
+  // extra spaces between scheme and token still authenticate (token is trimmed)
+  assert.equal(await raw(`Bearer    ${API_KEY}`), 200);
+  // scheme alone / whitespace-only token → 401
+  assert.equal(await raw("Bearer "), 401);
+  assert.equal(await raw("Bearer     "), 401);
+  // wrong scheme → 401
+  assert.equal(await raw(`Basic ${API_KEY}`), 401);
+  // the old regex's pathological input: 'Bearer' + many spaces must return
+  // (quickly) rather than backtrack — this line hung >seconds pre-fix
+  const start = Date.now();
+  assert.equal(await raw("Bearer " + " ".repeat(50000) + "x y".repeat(2000)), 401);
+  assert.ok(Date.now() - start < 1000, "auth parse must be linear-time");
+});
