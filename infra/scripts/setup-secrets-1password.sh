@@ -38,12 +38,14 @@ fi
 
 echo "Creating '$OP_ITEM' in vault '$OP_VAULT'..."
 
+# NOTE: no DigitalOcean field here. Runtime reads the least-privilege `do_token_scoped`
+# from the separate `Grove Infra` item, not this one (GOL-75). See the field guide below
+# for how to generate it. The old full-privilege `do_token` on this item is retired.
 op item create \
     --category="API Credential" \
     --title="$OP_ITEM" \
     --vault="$OP_VAULT" \
     --tags="agenticos,terraform,infra" \
-    "do_token[concealed]=PASTE_DIGITALOCEAN_TOKEN_HERE" \
     "tailscale_api_key[concealed]=PASTE_TAILSCALE_API_KEY_HERE" \
     "tailscale_tailnet=PASTE_TAILSCALE_TAILNET_HERE" \
     "cloudflare_api_token[concealed]=PASTE_CLOUDFLARE_API_TOKEN_HERE" \
