@@ -1,0 +1,6 @@
+# Real allowlist + dev secrets are operator-provided; only the *.example.json are committed.
+secrets-map.json
+local-secrets.json
+node_modules/
+# package-lock.json is intentionally NOT ignored — commit it once deps are pinned
+# so the Dockerfile can switch to `npm ci`.
