@@ -5,7 +5,7 @@
 // DO cannot mint short-lived scoped tokens, so instead of handing out a DO token
 // we issue an HMAC-signed short-lived capability token and proxy DO API calls,
 // injecting the real do_token_scoped PAT server-side. The PAT never leaves here.
-import { createHmac, timingSafeEqual, hkdfSync, randomBytes } from "node:crypto";
+import { createHmac, timingSafeEqual, hkdfSync } from "node:crypto";
 
 const b64url = (buf) => Buffer.from(buf).toString("base64url");
 const fromB64url = (s) => Buffer.from(s, "base64url");
@@ -21,19 +21,18 @@ export function deriveSigningKey({ signingKey, apiKey }) {
   );
 }
 
-// Per-process key for a double-HMAC constant-time compare. A KEYED MAC (not a
-// bare hash of the key) hides length/timing AND is not a password hash, so it
-// doesn't trip CodeQL js/insufficient-password-hash. The bearer key is a
-// high-entropy API token compared per-request, not a stored user password, so a
-// slow KDF (scrypt/pbkdf2) is the wrong tool here.
-const BEARER_COMPARE_KEY = randomBytes(32);
-
+// Constant-time compare of the presented bearer against the expected API key.
+// We compare the RAW bytes (no hashing of the key): the bearer key is a
+// high-entropy API token, not a stored user password, so a hash/KDF is the wrong
+// tool — and hashing it would trip CodeQL js/insufficient-password-hash. The
+// length pre-check guards timingSafeEqual (which requires equal-length buffers);
+// it leaks only the key's length, which is not secret.
 function safeBearer(header, expected) {
   const pfx = "Bearer ";
   if (typeof header !== "string" || !header.startsWith(pfx)) return false;
-  const got = createHmac("sha256", BEARER_COMPARE_KEY).update(header.slice(pfx.length)).digest();
-  const exp = createHmac("sha256", BEARER_COMPARE_KEY).update(expected).digest();
-  return timingSafeEqual(got, exp);
+  const got = Buffer.from(header.slice(pfx.length));
+  const exp = Buffer.from(expected);
+  return got.length === exp.length && timingSafeEqual(got, exp);
 }
 
 function readBody(req) {
