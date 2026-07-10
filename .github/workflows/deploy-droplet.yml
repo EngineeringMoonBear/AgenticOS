@@ -67,6 +67,35 @@ jobs:
             ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" \
               'tar xzf - -C /opt/agenticos && echo synced'
 
+      # GOL-238: the 4G swap safety-net lives in cloud-init, but that only runs on
+      # a fresh droplet build. This box (created 2026-05-21) predates that change,
+      # so /swapfile was never created and the OOM-killer fired at 91.8% RAM on
+      # 2026-07-10 11:16Z, taking down a UI-backing container. The container
+      # mem_limits sum to ~7.4G on a 4G box (intentional overcommit), so swap is
+      # load-bearing. Ensure it on the LIVE host here, idempotently, so the fix
+      # ships with zero new access and self-heals on every deploy. Mirrors the
+      # cloud-init snippet exactly.
+      - name: Ensure swap safety-net (GOL-238)
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" '
+             set -e
+             # No sudo when already root; non-interactive sudo otherwise so a
+             # missing sudoer fails fast instead of hanging on a password prompt.
+             SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo -n"
+             if [ ! -f /swapfile ]; then
+               $SUDO fallocate -l 4G /swapfile || $SUDO dd if=/dev/zero of=/swapfile bs=1M count=4096
+               $SUDO chmod 600 /swapfile
+               $SUDO mkswap /swapfile
+             fi
+             $SUDO swapon /swapfile 2>/dev/null || true
+             grep -q "^/swapfile" /etc/fstab || echo "/swapfile none swap sw 0 0" | $SUDO tee -a /etc/fstab
+             $SUDO sysctl -w vm.swappiness=10 >/dev/null
+             echo "vm.swappiness=10" | $SUDO tee /etc/sysctl.d/99-swap.conf >/dev/null
+             echo "--- swap status ---"; swapon --show; free -h | grep -i swap'
+
       - name: Rebuild vault-server + reload plugins on paperclip-server
         env:
           HOST: ${{ secrets.DROPLET_HOST }}
