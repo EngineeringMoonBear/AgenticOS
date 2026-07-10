@@ -16,3 +16,6 @@
 # disruption (force-push on main, broken local clones for anyone who fetched).
 # Allowlisting the specific fingerprint is the proportionate fix.
 13cc1f2eafac7c6af766c63618281e45e74ca41b:docs/phase-3-v0.14.0-implications.md:curl-auth-header:222
+# PR #304: curl example in the credential-broker README used the literal dev
+# placeholder "dev-local-key"; reworded to $BROKER_API_KEY in a follow-up commit,
+3e772c3d630219b1737d85ef184f6fb3ddf210b0:packages/credential-broker/README.md:curl-auth-header:55

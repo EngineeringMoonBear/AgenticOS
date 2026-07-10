@@ -52,7 +52,7 @@ npm install && npm start
 npm install
 BROKER_API_KEY=dev-local-key ./client/dev-run.sh   # reads agenticos-broker-ro_token via op, then starts
 # in another shell:
-curl -s -H "Authorization: Bearer dev-local-key" localhost:9100/secret/do_token_scoped
+curl -s -H "Authorization: Bearer $BROKER_API_KEY" localhost:9100/secret/do_token_scoped
 ```
 
 > **Why only dev:** `dev-run.sh` is the *only* place that reads the service-account token *from* 1Password, and it works solely because a human `op` session bootstraps it. The broker itself can never do this in prod — the token *is* its 1Password credential, so fetching it from 1Password is circular. In prod the token is injected via the chmod-600 env file above.
