@@ -1,0 +1,183 @@
+# D3 provenance failure router (AgenticOS group-coding design, 2026-07-07).
+#
+# Routes every failed run of the watched workflows by WHO owns the failure:
+#   - PR failure (live owner)  → sticky comment on the PR, updated in place.
+#     3 consecutive failures of the same workflow on the branch escalates to
+#     a deduped GitHub issue.
+#   - Ownerless failure (main, cron, manual dispatch) → mint/update a deduped
+#     GitHub issue immediately.
+#
+# Issues created here are picked up by the AgenticOS GitHub App issues
+# webhook (App-wide, PR #228 + #237 in EngineeringMoonBear/AgenticOS) and
+# mirrored into Paperclip for agent analysis — that's the point of this file.
+#
+# Runs in the base-repo context but never checks out or executes PR code —
+# it only reads run metadata and writes comments/issues.
+name: CI failure router
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - CodeQL
+      - Security
+      - E2E
+      - Deploy Droplet
+      - Deploy Droplet Plugins
+      - Droplet Disk Reclaim
+      - Recreate paperclip-server
+      - Sync new GitHub issues → Paperclip
+    types: [completed]
+
+permissions:
+  actions: read # list runs + jobs for the failed run / 3-strike lookback
+  issues: write # mint/update failure issues
+  pull-requests: write # sticky comment on the owning PR
+
+concurrency:
+  # Serialize per workflow+branch so dedup lookups don't race; never cancel —
+  # each failure must be processed.
+  group: ci-failure-router-${{ github.event.workflow_run.name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  route:
+    name: Route failure by provenance
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Route
+        uses: actions/github-script@v8
+        env:
+          # workflow_run fields are semi-trusted (same-repo branches), but the
+          # skill rule stands: nothing from the event payload lands in a shell —
+          # and in JS we only ever treat these as data, never eval.
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          WF_NAME: ${{ github.event.workflow_run.name }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        with:
+          script: |
+            const { RUN_ID, WF_NAME, HEAD_BRANCH, HEAD_SHA, RUN_URL, RUN_EVENT, RUN_ATTEMPT } = process.env;
+            const { owner, repo } = context.repo;
+            const runId = Number(RUN_ID);
+            const shortSha = HEAD_SHA.slice(0, 7);
+
+            // ── Failed-job summary for the failed run ──────────────────────
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner, repo, run_id: runId, filter: "latest", per_page: 100,
+            });
+            const failedJobs = jobs.filter((j) => j.conclusion === "failure");
+            const jobLines = failedJobs
+              .map((j) => `- [\`${j.name}\`](${j.html_url})`)
+              .join("\n") || "- (no job-level detail — see the run)";
+
+            // ── Find the owning PR, if any ─────────────────────────────────
+            // workflow_run.pull_requests is unreliable across event types, so
+            // resolve by head branch against open PRs.
+            const { data: prs } = await github.rest.pulls.list({
+              owner, repo, state: "open", head: `${owner}:${HEAD_BRANCH}`, per_page: 1,
+            });
+            const pr = prs[0] ?? null;
+
+            // ── 3-strike lookback: last 3 completed runs of this workflow on
+            //    this branch all failed? ───────────────────────────────────
+            const { data: history } = await github.rest.actions.listWorkflowRunsForRepo({
+              owner, repo, branch: HEAD_BRANCH, status: "completed", per_page: 20,
+            });
+            const sameWf = history.workflow_runs
+              .filter((r) => r.name === WF_NAME)
+              .slice(0, 3);
+            const threeStrikes =
+              sameWf.length === 3 && sameWf.every((r) => r.conclusion === "failure");
+
+            const summary = [
+              `**Workflow:** ${WF_NAME} (attempt ${RUN_ATTEMPT})`,
+              `**Branch:** \`${HEAD_BRANCH}\` @ \`${shortSha}\` (event: ${RUN_EVENT})`,
+              `**Run:** ${RUN_URL}`,
+              `**Failed jobs:**`,
+              jobLines,
+            ].join("\n");
+
+            // ── Deduped issue mint/update (ownerless + escalation path) ────
+            async function mintOrUpdateIssue(reason) {
+              const marker = `<!-- d3-ci-failure:${WF_NAME}:${HEAD_BRANCH} -->`;
+              const title = `CI failure: ${WF_NAME} on ${HEAD_BRANCH}`;
+              const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+                owner, repo, state: "open", labels: "ci-failure", per_page: 100,
+              });
+              const existing = openIssues.find((i) => (i.body ?? "").includes(marker));
+              const body = [
+                marker,
+                `${reason}`,
+                "",
+                summary,
+                "",
+                "_Filed by the D3 failure router; mirrored to Paperclip for analysis._",
+              ].join("\n");
+              if (existing) {
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: existing.number,
+                  body: `Failed again.\n\n${summary}`,
+                });
+                core.info(`Updated existing issue #${existing.number}`);
+              } else {
+                // Ensure the label exists; ignore "already exists" races.
+                try {
+                  await github.rest.issues.createLabel({
+                    owner, repo, name: "ci-failure", color: "b60205",
+                    description: "Minted by the D3 CI failure router",
+                  });
+                } catch (e) {
+                  if (e.status !== 422) throw e;
+                }
+                const { data: issue } = await github.rest.issues.create({
+                  owner, repo, title, body, labels: ["ci-failure"],
+                });
+                core.info(`Minted issue #${issue.number}`);
+              }
+            }
+
+            if (!pr) {
+              // Ownerless: main, cron, dispatch, or a branch with no open PR.
+              await mintOrUpdateIssue(
+                `Ownerless failure — no open PR for \`${HEAD_BRANCH}\`.`,
+              );
+              return;
+            }
+
+            // ── PR path: sticky comment, updated in place per workflow ─────
+            const stickyMarker = `<!-- d3-ci-failure-router:${WF_NAME} -->`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: pr.number, per_page: 100,
+            });
+            const sticky = comments.find((c) => (c.body ?? "").includes(stickyMarker));
+            const strikeNote = threeStrikes
+              ? "\n\n⚠️ **3 consecutive failures** of this workflow on this branch — escalated to an issue for Paperclip analysis."
+              : "";
+            const commentBody = [
+              stickyMarker,
+              `### ❌ ${WF_NAME} failed`,
+              "",
+              summary,
+              strikeNote,
+            ].join("\n");
+            if (sticky) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: sticky.id, body: commentBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: pr.number, body: commentBody,
+              });
+            }
+            core.info(`Sticky comment on PR #${pr.number}`);
+
+            if (threeStrikes) {
+              await mintOrUpdateIssue(
+                `3-strike escalation from PR #${pr.number} — the owner appears stuck.`,
+              );
+            }
