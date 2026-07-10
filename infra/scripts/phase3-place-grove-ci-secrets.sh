@@ -71,15 +71,18 @@ place_row() {
     SKIP)               echo "  skip   $vault / $item / $field  (SKIP)";               skipped=$((skipped+1)); return;;
   esac
   local val
-  if ! val=$(op read "$src" 2>/dev/null); then
+  if ! val=$(op read "$src" </dev/null 2>/dev/null); then
     echo "  FAIL   $vault / $item / $field  (can't read source: $src)" >&2; failed=$((failed+1)); return
   fi
   if [ "$DRY" = 1 ]; then echo "  would  $vault / $item / $field  (len=${#val})"; placed=$((placed+1)); return; fi
   # upsert: edit adds/updates the field on an existing item; create makes it the first time.
-  if op item edit "$item" --vault "$vault" "$field[password]=$val" >/dev/null 2>&1; then
+  # </dev/null on every op call: this runs inside a `while read` loop whose stdin is
+  # the MAP here-string; without it `op item edit/create` read that as piped JSON
+  # and fail with "invalid JSON in piped input".
+  if op item edit "$item" --vault "$vault" "$field[password]=$val" </dev/null >/dev/null 2>&1; then
     echo "  ok     $vault / $item / $field  (updated)"
   else
-    op item create --category "API Credential" --title "$item" --vault "$vault" "$field[password]=$val" >/dev/null
+    op item create --category "API Credential" --title "$item" --vault "$vault" "$field[password]=$val" </dev/null >/dev/null
     echo "  ok     $vault / $item / $field  (created item)"
   fi
   placed=$((placed+1))
