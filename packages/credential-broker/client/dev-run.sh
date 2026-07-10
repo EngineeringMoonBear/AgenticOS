@@ -34,10 +34,15 @@ if ! op account get >/dev/null 2>&1; then
     exit 1
 fi
 
-# Fetch the item once, then auto-detect the token by VALUE (not by guessing
-# labels): scan every field for a value starting `ops_` (the SA token prefix).
-# Override the source with BROKER_TOKEN_ITEM / AGENTICOS_OP_VAULT if the token
-# lives elsewhere, e.g.  BROKER_TOKEN_ITEM='AgenticOS Infra' ./client/dev-run.sh
+# Fetch the item once, then select the token. An item can hold MORE THAN ONE
+# ops_ token (e.g. AgenticOS Infra carries both the Production-Terraform key AND
+# the broker key), so we must NOT just grab the first ops_ value — that could run
+# the broker under a broader-scoped identity. Selection order:
+#   1) field whose label == BROKER_TOKEN_FIELD (default agenticos-broker-ro_token)
+#   2) field whose label contains "broker-ro"
+#   3) the ONLY ops_ field, if exactly one
+#   4) otherwise refuse and list the candidates (ambiguous — set BROKER_TOKEN_FIELD)
+# Override source item/vault with BROKER_TOKEN_ITEM / AGENTICOS_OP_VAULT.
 item_json="$(op item get "$ITEM" --vault "$VAULT" --reveal --format json 2>/dev/null || true)"
 if [ -z "$item_json" ]; then
     echo "✗ Could not read item '$ITEM' in vault '$VAULT'. Does it exist? Is op authed to that vault?" >&2
@@ -45,29 +50,40 @@ if [ -z "$item_json" ]; then
     exit 1
 fi
 
-token="$(printf '%s' "$item_json" | python3 -c '
-import json, sys
+token="$(printf '%s' "$item_json" | BROKER_TOKEN_FIELD="${BROKER_TOKEN_FIELD:-agenticos-broker-ro_token}" python3 -c '
+import json, os, sys
 d = json.load(sys.stdin)
-for f in d.get("fields", []):
-    v = f.get("value") or ""
-    if v.startswith("ops_"):
-        sys.stderr.write("→ read token from field %r\n" % f.get("label"))
-        print(v); break
+want = os.environ["BROKER_TOKEN_FIELD"].lower()
+fields = d.get("fields", [])
+def val(f): return f.get("value") or ""
+ops = [f for f in fields if val(f).startswith("ops_")]
+def emit(f, why):
+    sys.stderr.write("→ read token from field %r (%s)\n" % (f.get("label"), why)); print(val(f)); sys.exit(0)
+for f in ops:
+    if (f.get("label") or "").lower() == want: emit(f, "exact label")
+for f in ops:
+    if "broker-ro" in (f.get("label") or "").lower(): emit(f, "broker-ro label")
+if len(ops) == 1: emit(ops[0], "only ops_ field")
+if len(ops) > 1:
+    sys.stderr.write("✗ %d ops_ tokens in this item — ambiguous. Set BROKER_TOKEN_FIELD to the right label:\n" % len(ops))
+    for f in ops: sys.stderr.write("    - %r\n" % f.get("label"))
 ' || true)"
 
 if [ -z "$token" ]; then
-    echo "✗ No ops_ service-account token found in item '$ITEM' (vault '$VAULT')." >&2
-    echo "  Fields actually present in that item (label = 4-char value preview):" >&2
-    printf '%s' "$item_json" | python3 -c '
+    # Distinguish "no ops_ at all" from the ambiguous case (which printed above).
+    if ! printf '%s' "$item_json" | grep -q '"ops_'; then
+        echo "✗ No ops_ service-account token found in item '$ITEM' (vault '$VAULT')." >&2
+        echo "  Fields present (label = 4-char value preview):" >&2
+        printf '%s' "$item_json" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 for f in d.get("fields", []):
     v = f.get("value") or ""
     print("    - %-24r %s" % (f.get("label"), (v[:4]+"…") if v else "(empty)"), file=sys.stderr)
 ' >&2
-    echo "  → If the token is on another item: BROKER_TOKEN_ITEM='AgenticOS Infra' ./client/dev-run.sh" >&2
-    echo "  → If NO field shows 'ops_…', the item never captured the token (1Password shows it once at" >&2
-    echo "    creation). Regenerate: Developer → Service Accounts → agenticos-broker-ro → new token." >&2
+        echo "  → If NO field shows ops_…, the token was never saved (shown once at creation)." >&2
+        echo "    Regenerate: Developer → Service Accounts → agenticos-broker-ro → new token." >&2
+    fi
     exit 1
 fi
 
