@@ -51,20 +51,45 @@ heading() {
 }
 
 # ───── DigitalOcean ─────
-heading "DigitalOcean"
-http_get https://api.digitalocean.com/v2/account "Authorization: Bearer $TF_VAR_do_token"
-if [ "$HTTP_CODE" = "200" ]; then
-    email="$(jq -r '.account.email // "?"' < "$BODY")"
-    status="$(jq -r '.account.status // "?"' < "$BODY")"
-    droplet_limit="$(jq -r '.account.droplet_limit // "?"' < "$BODY")"
-    green "✓ DO API auth ok"
-    echo "    account:        $email"
-    echo "    status:         $status"
-    echo "    droplet limit:  $droplet_limit"
-else
-    red "✗ DO API returned HTTP $HTTP_CODE"
-    head -5 "$BODY"
+# GOL-75: the DO token is least-privilege scoped to the FIVE resource types the
+# root Terraform manages — droplet, app, ssh_key, vpc, monitoring (each r+w). We
+# must NOT validate against /v2/account — a scoped token 403s there by design.
+# Instead we prove all five in-scope READ surfaces work AND assert account access
+# is denied, catching BOTH an under-scoped token (missing e.g. app/vpc/ssh_key,
+# which would 403 the next `terraform plan/apply` when it refreshes those) and an
+# accidentally full-privilege token — here, rather than downstream.
+DO_DROPLET_ID="${AGENTICOS_DROPLET_ID:-572389418}"
+heading "DigitalOcean (scoped: droplet + app + ssh_key + vpc + monitoring)"
+
+# Each required read scope → the endpoint Terraform hits to refresh that resource.
+# ssh_key lives at /v2/account/keys but is governed by the ssh_key scope (not the
+# account scope), so it succeeds on a correctly-scoped token.
+do_scope_check() { # $1 label  $2 url
+    http_get "$2" "Authorization: Bearer $TF_VAR_do_token"
+    if [ "$HTTP_CODE" = "200" ]; then
+        green "✓ DO $1 ok"
+    else
+        red "✗ DO $1 returned HTTP $HTTP_CODE (expected 200 — token is missing this scope)"
+        head -3 "$BODY"
+        FAILED=$((FAILED+1))
+    fi
+}
+do_scope_check "droplet:read"    "https://api.digitalocean.com/v2/droplets/$DO_DROPLET_ID"
+do_scope_check "app:read"        "https://api.digitalocean.com/v2/apps?per_page=1"
+do_scope_check "ssh_key:read"    "https://api.digitalocean.com/v2/account/keys?per_page=1"
+do_scope_check "vpc:read"        "https://api.digitalocean.com/v2/vpcs?per_page=1"
+do_scope_check "monitoring:read" "https://api.digitalocean.com/v2/monitoring/alerts"
+
+# account access MUST be denied — proves the token is least-privilege
+http_get "https://api.digitalocean.com/v2/account" "Authorization: Bearer $TF_VAR_do_token"
+if [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "401" ]; then
+    green "✓ DO /v2/account denied (HTTP $HTTP_CODE) — token is correctly scoped"
+elif [ "$HTTP_CODE" = "200" ]; then
+    red "✗ DO /v2/account returned 200 — token is FULL-PRIVILEGE, not the scoped grant (GOL-75)"
     FAILED=$((FAILED+1))
+else
+    yellow "⚠ DO /v2/account returned HTTP $HTTP_CODE (expected 401/403); verify token scope manually"
+    WARN=$((WARN+1))
 fi
 
 # ───── Tailscale ─────

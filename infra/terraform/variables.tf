@@ -1,5 +1,5 @@
 variable "do_token" {
-  description = "DigitalOcean Personal Access Token with read+write to all resources"
+  description = "DigitalOcean least-privilege scoped PAT: read+write on droplet + app + ssh_key + vpc + monitoring ONLY (GOL-75) — the five resource types this root config manages. Sourced from op://Goldberry Grove - Admin/Grove Infra/do_token_scoped. NOT a full-account token."
   type        = string
   sensitive   = true
 }
@@ -151,6 +151,6 @@ variable "alert_emails" {
 
 variable "alert_slack" {
   description = "Optional Slack/Discord-compatible incoming-webhook for DO alerts. Leave url empty to send email only. (DO's Slack alert type also posts to Discord webhooks with /slack appended.)"
-  type = object({ url = string, channel = string })
-  default = { url = "", channel = "" }
+  type        = object({ url = string, channel = string })
+  default     = { url = "", channel = "" }
 }

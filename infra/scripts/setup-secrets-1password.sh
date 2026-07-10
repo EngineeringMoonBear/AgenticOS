@@ -64,7 +64,14 @@ Next: edit each field with real values. Two ways:
 
 How to generate each token (per infra/README.md §3):
 
-  do_token             DO Console → API → Tokens → Generate (full read+write)
+  do_token_scoped      DO Console → API → Tokens → Generate New Token →
+                       "Custom Scopes" → grant read+write on EXACTLY these five:
+                       droplet, app, ssh_key, vpc, monitoring → Generate. Save to
+                       the `Grove Infra` item as `do_token_scoped` (GOL-75). These
+                       are the resource types the root Terraform manages; fewer
+                       (e.g. droplet+monitoring only) 403s the next plan/apply on
+                       the App Platform app, VPC, and SSH key. Do NOT grant full
+                       account scope. Verify with infra/scripts/check-auth.sh.
   tailscale_api_key    https://login.tailscale.com/admin/settings/keys
                        (scope: auth_keys:write, 90-day expiry is fine)
   tailscale_tailnet    Your tailnet name from https://login.tailscale.com/admin/general
