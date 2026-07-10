@@ -17,7 +17,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."   # -> package root (src/ + secrets-map.json live here)
 
 VAULT="${AGENTICOS_OP_VAULT:-Goldberry Grove - Admin}"
-ITEM="${BROKER_TOKEN_ITEM:-agenticos-broker-ro_token}"
+# The agenticos-broker-ro service-account token is stored as an `ops_...` FIELD on
+# the AgenticOS Infra item (not a standalone item). The detector below scans by
+# value prefix, so it finds it whatever the field is labeled. Override if it moves.
+ITEM="${BROKER_TOKEN_ITEM:-AgenticOS Infra}"
 
 # Bootstrapping needs the operator's INTERACTIVE op session. If OP_SERVICE_ACCOUNT_TOKEN
 # is already set in the environment (e.g. a stale/half-pasted value from a prior run),
