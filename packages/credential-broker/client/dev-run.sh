@@ -31,33 +31,42 @@ if ! op account get >/dev/null 2>&1; then
     exit 1
 fi
 
-# Auto-detect the token by VALUE, not by guessing labels: scan every field in the
-# item for a value starting `ops_` (the service-account token prefix). Works no
-# matter what the field is labeled. Override the source with BROKER_TOKEN_ITEM
-# (and AGENTICOS_OP_VAULT) if the token lives elsewhere, e.g.
-#   BROKER_TOKEN_ITEM='AgenticOS Infra' ./client/dev-run.sh
-token="$(op item get "$ITEM" --vault "$VAULT" --reveal --format json 2>/dev/null | python3 -c '
+# Fetch the item once, then auto-detect the token by VALUE (not by guessing
+# labels): scan every field for a value starting `ops_` (the SA token prefix).
+# Override the source with BROKER_TOKEN_ITEM / AGENTICOS_OP_VAULT if the token
+# lives elsewhere, e.g.  BROKER_TOKEN_ITEM='AgenticOS Infra' ./client/dev-run.sh
+item_json="$(op item get "$ITEM" --vault "$VAULT" --reveal --format json 2>/dev/null || true)"
+if [ -z "$item_json" ]; then
+    echo "✗ Could not read item '$ITEM' in vault '$VAULT'. Does it exist? Is op authed to that vault?" >&2
+    echo "  List items:  op item list --vault '$VAULT'" >&2
+    exit 1
+fi
+
+token="$(printf '%s' "$item_json" | python3 -c '
 import json, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
+d = json.load(sys.stdin)
 for f in d.get("fields", []):
     v = f.get("value") or ""
     if v.startswith("ops_"):
         sys.stderr.write("→ read token from field %r\n" % f.get("label"))
-        print(v)
-        break
+        print(v); break
 ' || true)"
 
-case "$token" in
-    ops_*) : ;;  # looks like a real service-account token
-    "")  echo "✗ No token found in item '$ITEM' (vault '$VAULT'); checked fields credential/password/token/api_key/value." >&2
-         echo "  Inspect the real labels: op item get '$ITEM' --vault '$VAULT'" >&2
-         exit 1 ;;
-    *)   echo "✗ Found a field but it isn't a service-account token (want ops_...). Wrong field, or the item holds the SA name/ID instead of the token." >&2
-         exit 1 ;;
-esac
+if [ -z "$token" ]; then
+    echo "✗ No ops_ service-account token found in item '$ITEM' (vault '$VAULT')." >&2
+    echo "  Fields actually present in that item (label = 4-char value preview):" >&2
+    printf '%s' "$item_json" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+for f in d.get("fields", []):
+    v = f.get("value") or ""
+    print("    - %-24r %s" % (f.get("label"), (v[:4]+"…") if v else "(empty)"), file=sys.stderr)
+' >&2
+    echo "  → If the token is on another item: BROKER_TOKEN_ITEM='AgenticOS Infra' ./client/dev-run.sh" >&2
+    echo "  → If NO field shows 'ops_…', the item never captured the token (1Password shows it once at" >&2
+    echo "    creation). Regenerate: Developer → Service Accounts → agenticos-broker-ro → new token." >&2
+    exit 1
+fi
 
 export OP_SERVICE_ACCOUNT_TOKEN="$token"
 export BROKER_API_KEY="${BROKER_API_KEY:-dev-local-key}"
