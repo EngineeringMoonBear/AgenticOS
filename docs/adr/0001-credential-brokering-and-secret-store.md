@@ -18,7 +18,7 @@
 > `grove-broker-prod-ro`). The QA identity cannot read the Prod vault even if the
 > broker's policy code is wrong — defense in depth. Sections below reflect this;
 > the phased plan is updated accordingly.
-
+>
 > **Amendment 2026-07-10 — CI reads 1Password directly, NOT the broker.** This ADR
 > assumed *"CI authenticates to the broker via GitHub OIDC."* That does not hold:
 > the broker is deployed **internal-only** (no host port, reachable only on the
