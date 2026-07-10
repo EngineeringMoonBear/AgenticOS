@@ -5,6 +5,20 @@
 - **Deciders:** Josh (CEO/operator)
 - **Scope:** AgenticOS, odoocker, grovesites, and future apps + their QA/Prod deploy pipelines
 
+> **Amendment 2026-07-10 — QA/Prod isolation via per-stage vaults.** The original
+> design used **one** read-only, single-vault service account and enforced the
+> QA-vs-Prod boundary purely in **broker policy** (the broker refuses Prod creds to
+> a caller lacking the `production` OIDC claim). We evaluated 1Password
+> **Environments** for finer granularity and rejected it: its composition model is
+> stored key-value copies (a second source of truth → drift, our known failure
+> mode) and it abandons the `op://` reference the whole stack is built on. Instead
+> we make the boundary **physical at the 1Password layer** using the vault-scoping
+> primitive we already use: **one vault per stage** (`Grove QA`, `Grove Prod`) and
+> **one read-only service account scoped to each** (`grove-broker-qa-ro`,
+> `grove-broker-prod-ro`). The QA identity cannot read the Prod vault even if the
+> broker's policy code is wrong — defense in depth. Sections below reflect this;
+> the phased plan is updated accordingly.
+
 ## Context and drivers
 
 1. **Cost.** We are paying for Infisical Cloud (used today for odoocker/grovesites machine secrets) and want to stop.
@@ -23,7 +37,7 @@
 
 ## Decision
 
-Retire Infisical. Use **1Password (Families) as the secret store**, accessed by a **single read-only, vault-scoped service account**, fronted by a **caching credential broker** — a sibling of `gh-token-broker` — that is the **policy + dynamic-issuance engine**. The broker holds the service-account token and any backing cloud credentials, enforces per-agent / per-project / QA-vs-Prod policy, and issues **ephemeral, scoped** credentials (or proxies the provider API) to agents and CI.
+Retire Infisical. Use **1Password (Families) as the secret store**, accessed by **read-only, vault-scoped service accounts — one per deploy stage** (see the 2026-07-10 amendment), fronted by a **caching credential broker** — a sibling of `gh-token-broker` — that is the **policy + dynamic-issuance engine**. The broker holds the service-account token(s) and any backing cloud credentials, enforces per-agent / per-project / QA-vs-Prod policy, and issues **ephemeral, scoped** credentials (or proxies the provider API) to agents and CI. QA-vs-Prod separation is **physical** (the QA service account is scoped to the `Grove QA` vault and literally cannot read `Grove Prod`), with broker policy + GitHub Environments as additional gates on top.
 
 ## Options considered
 
@@ -39,11 +53,13 @@ Retire Infisical. Use **1Password (Families) as the secret store**, accessed by 
 
 ```text
 1Password (Families)                      ← the STORE (human + machine secrets)
-  ├─ vaults (per project/env as needed):  agenticos · odoocker · grovesites · qa · prod
-  └─ ONE service account: read-only, vault-scoped, rotated quarterly
-        │  OP_SERVICE_ACCOUNT_TOKEN  (lives ONLY in the broker, chmod 600)
+  ├─ per-stage vaults:  Grove QA · Grove Prod   (+ shared/admin vault as needed)
+  └─ ONE read-only service account PER STAGE, each scoped to exactly its vault,
+     rotated quarterly:  grove-broker-qa-ro → Grove QA ; grove-broker-prod-ro → Grove Prod
+        │  OP_SERVICE_ACCOUNT_TOKEN (per stage; lives ONLY in the broker, chmod 600)
         ▼
 credential broker  (sidecar; models gh-token-broker)   ← POLICY + DYNAMIC ISSUANCE
+  ├─ selects the stage's backing SA token by the caller's identity/OIDC `environment` claim
   ├─ caches backing secrets in memory (long TTL; re-read only on rotation/restart)
   ├─ policy: per-agent identity · per-project · QA vs Prod (Prod may require approval)
   ├─ holds backing cloud creds (e.g. a DO PAT) and mints ephemeral scoped access
@@ -56,18 +72,18 @@ consumers:  Paperclip agents · CI (QA/Prod deploys) · terraform
 ## Security model
 
 - **Token isolation.** `OP_SERVICE_ACCOUNT_TOKEN` and backing PATs live only inside the broker, injected as a chmod-600 file — identical handling to the GitHub App private key in `gh-token-broker`. Never in agent env, CI, or `.env`.
-- **Least privilege.** The service account is **read-only** and scoped to only the vault(s) the broker needs. A leaked token can read one vault — no writes, no other vaults, no direct provider access.
+- **Least privilege + physical stage isolation.** Each service account is **read-only** and scoped to **exactly one stage vault**. A leaked QA token can read only `Grove QA` — no writes, no Prod vault, no other vaults, no direct provider access. The QA↔Prod boundary is enforced by 1Password itself, not by broker code being correct.
 - **Rotation policy (compensates for no auto-expiry).** Rotate the service-account token on a **quarterly** cadence and immediately on suspected exposure; automate rotation if `op` exposes it programmatically, otherwise a recurring task. Backing provider PATs held by the broker follow the same cadence.
 - **Ephemerality for consumers.** Agents/CI receive short-lived, scoped credentials from the broker, never the root secrets.
-- **QA vs Prod.** Encoded as broker policy: an agent's identity is auto-granted QA credentials; Prod requires a higher-trust role and/or an explicit approval step before issuance.
+- **QA vs Prod.** Three independent gates: (1) **physical** — the stage's read-only SA is scoped to only that stage's vault; (2) **broker policy** — auto-grants QA, requires a higher-trust role/approval for Prod; (3) **GitHub Environments** — Prod jobs held behind required reviewers before they can obtain the `production` claim. Any one failing does not breach the boundary.
 - **Audit.** 1Password usage reports show what the service account accessed; the broker logs every issuance (who/what/scope). Anomalies trigger rotation.
 
 ## Deploy pipelines: QA-Deploy and Prod-Deploy
 
 Both are CI pipelines (GitHub Actions) for odoocker, grovesites, and AgenticOS. **Neither holds static secrets.** Each authenticates to the broker via **GitHub Actions OIDC** — the native, signed, short-lived JWT (`id-token: write`) carrying `repository`, `ref`, and `environment` claims — and the broker issues ephemeral, environment-scoped credentials. This is the same workload-identity idea as the DO droplet PoC, but the identity source is GitHub instead of a droplet's SSH key.
 
-- **QA-Deploy.** The job requests an OIDC token with `environment: qa`. The broker validates the repo + `environment=qa` claim and issues **QA-scoped** credentials (QA vault secrets, QA DO project/resources). **Auto-approved** — no human gate.
-- **Prod-Deploy.** The job targets a GitHub **Environment `production`** protected by **required reviewers**. GitHub holds the job at the environment gate until a human approves; only then does it run, obtain an OIDC token with `environment: production`, and the broker — seeing that claim — issues **Prod-scoped** credentials. So Prod approval is enforced **twice**: natively by GitHub Environments *and* by broker policy (which refuses Prod creds to any job not carrying the `production` claim). Defense in depth.
+- **QA-Deploy.** The job requests an OIDC token with `environment: qa`. The broker validates the repo + `environment=qa` claim and reads through the **`grove-broker-qa-ro`** service account → **`Grove QA`** vault, issuing **QA-scoped** credentials (QA vault secrets, QA DO project/resources). **Auto-approved** — no human gate. Even a bug here cannot reach Prod: the QA SA has no access to `Grove Prod`.
+- **Prod-Deploy.** The job targets a GitHub **Environment `production`** protected by **required reviewers**. GitHub holds the job at the environment gate until a human approves; only then does it run, obtain an OIDC token with `environment: production`, and the broker — seeing that claim — reads through the **`grove-broker-prod-ro`** SA → **`Grove Prod`** vault and issues **Prod-scoped** credentials. Prod is thus gated in **three** independent places: GitHub Environments (human approval), broker policy (refuses Prod creds without the `production` claim), and 1Password vault scoping (only the Prod SA can read `Grove Prod`).
 
 Net: one broker, two identity-bearing caller types (Paperclip agents via compose-network identity; CI via GitHub OIDC), one policy engine, environment separation by claim, and Prod gated by a human approval enforced in two independent places.
 
@@ -83,7 +99,7 @@ Local dev must **always** work on OrbStack with **zero dependency** on the prod 
 ## Implementation plan (phased)
 
 - **Phase 0 — unblock today (independent of this ADR).** Mint the 5-scope DO PAT (`droplet, app, ssh_key, vpc, monitoring`, full CRUD) so current Terraform keeps working; store as `do_token_scoped` on the `Grove Infra` item and fix #232's item-name path.
-- **Phase 1 — broker skeleton + store access + local mode.** Stand up the caching broker as a compose service (modeled on `gh-token-broker`) that runs identically on OrbStack, QA, and Prod. Create the read-only, vault-scoped 1Password service account; broker reads + caches secrets via `OP_SERVICE_ACCOUNT_TOKEN` in QA/Prod, and via a **local backing mode** (dev `op` / dev vault / `.env.local`) on OrbStack. Prove `docker compose up` works locally with no prod-credential dependency.
+- **Phase 1 — broker skeleton + store access + local mode.** Stand up the caching broker as a compose service (modeled on `gh-token-broker`) that runs identically on OrbStack, QA, and Prod. Create the **per-stage** read-only, vault-scoped 1Password service accounts (`grove-broker-qa-ro` → `Grove QA`, `grove-broker-prod-ro` → `Grove Prod`); broker reads + caches secrets via the stage's `OP_SERVICE_ACCOUNT_TOKEN` in QA/Prod, and via a **local backing mode** (dev `op` / dev vault / `.env.local`) on OrbStack. Prove `docker compose up` works locally with no prod-credential dependency. (Broker scaffold: #304. First stage vault + SA is the operator step that activates it.)
 - **Phase 2 — DO dynamic slice.** Broker holds the DO PAT and mints ephemeral scoped DO access (front the DO API and/or issue short-lived capability tokens). Wire one Paperclip agent end-to-end as proof.
 - **Phase 3 — retire Infisical.** Migrate odoocker/grovesites machine secrets into 1Password vault(s); repoint their CI to the broker / service-account token; decommission the Infisical Cloud subscription.
 - **Phase 4 — QA/Prod CI via OIDC + rotation.** Wire QA-Deploy and Prod-Deploy to authenticate to the broker with **GitHub Actions OIDC** (no static CI secrets); gate Prod behind a GitHub **Environment `production`** with required reviewers, and enforce the same `environment` claim in broker policy. Implement token rotation (automated if `op` supports it, else scheduled).
@@ -103,7 +119,8 @@ Local dev must **always** work on OrbStack with **zero dependency** on the prod 
 
 1. Can `op` rotate a service-account token programmatically (for automated rotation), or is it UI-only?
 2. Does Terraform's DO provider need to route through the broker (endpoint override / HTTP proxy), or is a broker-minted short-lived PAT injected as `TF_VAR_do_token` sufficient?
-3. Confirm 1Password Families' exact service-account and Connect limits.
+3. Confirm 1Password Families' exact service-account and Connect limits — specifically the **max number of vaults and service accounts** the plan allows, since per-stage isolation needs ≥2 of each (QA + Prod, plus the existing admin vault). Single-vault SAs already work on the plan; this is a count check. If the plan caps SAs too low, fall back to per-stage *vaults* with the broker selecting creds by claim within one SA scoped to both (weaker isolation — note it explicitly).
+4. **Rejected: 1Password Environments.** Evaluated 2026-07-10 for QA/Prod granularity; rejected because its variables appear to be stored key-value **copies** (second source of truth → drift) rather than `op://` references. Per-stage vaults give the same isolation on the reference model we already use. Revisit only if 1Password documents Environments composed *from* vault-item references.
 4. Broker language/runtime — reuse the `gh-token-broker` Node stack, or adopt the DO PoC's proxy core for the DO slice?
 
 ## Related
