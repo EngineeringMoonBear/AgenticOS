@@ -27,39 +27,54 @@ proxy so the DO PAT never leaves the broker.
 
 ```bash
 ssh agenticos-droplet          # or your access path to droplet 572389418
+
+# 0) Make sure the broker SOURCE is in the live tree — merges to
+#    packages/credential-broker/** do NOT auto-deploy (see "Update / restart").
+git -C /opt/agenticos/repo checkout main && git -C /opt/agenticos/repo pull --ff-only
+cp -a /opt/agenticos/repo/packages/credential-broker/. /opt/agenticos/packages/credential-broker/
+
 sudo mkdir -p /opt/agenticos/secrets && sudo chmod 700 /opt/agenticos/secrets
 
-# 1) Broker-only secrets (chmod 600). Kept OUT of /opt/agenticos/.env.
-sudo tee /opt/agenticos/secrets/credential-broker.env >/dev/null <<'EOF'
-OP_SERVICE_ACCOUNT_TOKEN=ops_...        # agenticos-broker-ro token
-BROKER_API_KEY=...                       # openssl rand -hex 32
-EOF
-sudo chmod 600 /opt/agenticos/secrets/credential-broker.env
+# 1) Broker-only secrets. Compose runs as the `deploy` user, so the files MUST be
+#    deploy-owned — root-owned files (from `sudo tee`) cause "permission denied" at `up`.
+#    The SA token is ~852 chars; copy the WHOLE value — a truncated paste base64-fails.
+#    Cleanest is to pipe it (no manual copy) from your LOCAL mac where `op` works:
+#      TOKEN=$(op read "op://Goldberry Grove - Admin/AgenticOS Infra/agenticos-broker-ro_token" | tr -d '\r\n')
+#      printf 'OP_SERVICE_ACCOUNT_TOKEN=%s\nBROKER_API_KEY=%s\n' "$TOKEN" "$(openssl rand -hex 32)" \
+#        | ssh agenticos-droplet 'cat > /tmp/cb.env'
+#    then, back on the droplet:
+sudo install -o deploy -g deploy -m 600 /tmp/cb.env /opt/agenticos/secrets/credential-broker.env && rm -f /tmp/cb.env
 
-# 2) Allowlist (name -> op:// ref). Start from the repo example and trim to what
-#    agenticos-broker-ro can read.
+# 2) Allowlist (name -> op:// ref), deploy-owned + 600. Trim to what agenticos-broker-ro can read.
 sudo cp /opt/agenticos/repo/packages/credential-broker/secrets-map.example.json \
         /opt/agenticos/secrets/credential-broker-secrets-map.json
-sudo "$EDITOR" /opt/agenticos/secrets/credential-broker-secrets-map.json   # remove the _comment key
+sudo nano /opt/agenticos/secrets/credential-broker-secrets-map.json   # delete the "_comment" line
+sudo chown deploy:deploy /opt/agenticos/secrets/credential-broker-secrets-map.json
 sudo chmod 600 /opt/agenticos/secrets/credential-broker-secrets-map.json
+python3 -m json.tool /opt/agenticos/secrets/credential-broker-secrets-map.json >/dev/null && echo "valid JSON"
 
 # 3) Bring it up (the profile keeps it dormant until you ask for it).
-cd /opt/agenticos
-docker compose --profile credential-broker up -d --build credential-broker
+cd /opt/agenticos && docker compose --profile credential-broker up -d --build credential-broker
 ```
 
 ## Verify
+
+The broker publishes **no host port** (internal-only, like `gh-token-broker`) — it is
+reachable only on the compose network at `credential-broker:9100`. So `curl localhost:9100`
+from the droplet host returns nothing; verify via the healthcheck and an in-container probe.
 
 ```bash
 docker compose logs --tail=20 credential-broker
 #   expect: [broker] listening on :9100 — mode=1password-service-account, secrets=N, ...
 #           [broker] DO proxy enabled          (only if a DO PAT name is in the map)
 
-curl -s localhost:9100/health          # {"status":"ok","secrets":N,...}
+# Healthcheck verdict (compose hits /health internally every 30s):
+docker compose ps credential-broker              # STATUS: Up (healthy)
 
-# Resolve a secret WITHOUT printing its value:
-curl -s -H "Authorization: Bearer $BROKER_API_KEY" localhost:9100/secret/do_token_scoped \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print('resolved ok — len', len(d.get('value','')), '| cached', d.get('cached'))"
+# Resolve a secret WITHOUT printing its value — run INSIDE the container network:
+BK=$(sudo grep -oP '(?<=^BROKER_API_KEY=).*' /opt/agenticos/secrets/credential-broker.env)
+docker compose exec -e BK="$BK" credential-broker node -e \
+  "fetch('http://127.0.0.1:9100/secret/do_token_scoped',{headers:{authorization:'Bearer '+process.env.BK}}).then(r=>r.json()).then(d=>console.log(d.value?('resolve OK len='+d.value.length+' cached='+d.cached):JSON.stringify(d)))"
 ```
 
 - `mode=local-dev` in the logs → `OP_SERVICE_ACCOUNT_TOKEN` didn't load; check the env file.
@@ -95,10 +110,22 @@ The 1Password Families service-account token has no expiry — rotate quarterly
 
 ## Update / restart
 
+`/opt/agenticos` is an rsync/tarball snapshot and `/opt/agenticos/packages` is a **real
+directory**, not a symlink to `repo/`. Broker source lives under `packages/credential-broker/**`,
+which is **not** in `deploy-droplet.yml`'s trigger paths — so merging broker changes to `main`
+does **not** auto-ship them. Refresh the live tree by hand, then rebuild:
+
 ```bash
-cd /opt/agenticos && git -C repo pull    # or your normal deploy path
-docker compose --profile credential-broker up -d --build credential-broker
+git -C /opt/agenticos/repo checkout main && git -C /opt/agenticos/repo pull --ff-only
+# copy the updated broker package into the live build context:
+cp -a /opt/agenticos/repo/packages/credential-broker/. /opt/agenticos/packages/credential-broker/
+ls /opt/agenticos/packages/credential-broker/src/    # confirm the expected files are present
+
+cd /opt/agenticos && docker compose --profile credential-broker up -d --build credential-broker
 ```
+
+A plain restart with no source change (e.g. after rotating the token) needs no `--build`:
+`docker compose --profile credential-broker up -d credential-broker`.
 
 ## Rollback / stop
 
