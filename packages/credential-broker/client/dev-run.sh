@@ -19,6 +19,13 @@ cd "$(dirname "$0")/.."   # -> package root (src/ + secrets-map.json live here)
 VAULT="${AGENTICOS_OP_VAULT:-Goldberry Grove - Admin}"
 ITEM="${BROKER_TOKEN_ITEM:-agenticos-broker-ro_token}"
 
+# Bootstrapping needs the operator's INTERACTIVE op session. If OP_SERVICE_ACCOUNT_TOKEN
+# is already set in the environment (e.g. a stale/half-pasted value from a prior run),
+# `op` forces service-account mode and every op call below fails to parse it
+# ("DecodeSACredentials ... format is invalid"). Clear it so we auth interactively;
+# we set the real token further down, for node only.
+unset OP_SERVICE_ACCOUNT_TOKEN
+
 if ! op account get >/dev/null 2>&1; then
     echo "✗ Not signed in to 1Password. Run: op signin  (then re-run this)." >&2
     exit 1
