@@ -75,26 +75,23 @@ jobs:
       # load-bearing. Ensure it on the LIVE host here, idempotently, so the fix
       # ships with zero new access and self-heals on every deploy. Mirrors the
       # cloud-init snippet exactly.
+      # GOL-238: the 4G swap safety-net lives in cloud-init, which only runs on a
+      # droplet build; this box (created 2026-05-21) predates it, so /swapfile was
+      # never created and the OOM-killer fired at 91.8% RAM on 2026-07-10 11:16Z,
+      # killing a UI-backing container. The deploy user has no passwordless sudo
+      # but is in the docker group, so run the committed ensure-swap.sh in a
+      # privileged one-shot container (docker-group == host root). swapon/sysctl
+      # are global kernel ops -> they take effect host-wide. Zero new access;
+      # idempotent; self-heals on every deploy. The script was shipped to the host
+      # by the "Ship committed tree" step above.
       - name: Ensure swap safety-net (GOL-238)
         env:
           HOST: ${{ secrets.DROPLET_HOST }}
           USER: ${{ secrets.DROPLET_USER }}
         run: |
           ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" '
-             set -e
-             # No sudo when already root; non-interactive sudo otherwise so a
-             # missing sudoer fails fast instead of hanging on a password prompt.
-             SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo -n"
-             if [ ! -f /swapfile ]; then
-               $SUDO fallocate -l 4G /swapfile || $SUDO dd if=/dev/zero of=/swapfile bs=1M count=4096
-               $SUDO chmod 600 /swapfile
-               $SUDO mkswap /swapfile
-             fi
-             $SUDO swapon /swapfile 2>/dev/null || true
-             grep -q "^/swapfile" /etc/fstab || echo "/swapfile none swap sw 0 0" | $SUDO tee -a /etc/fstab
-             $SUDO sysctl -w vm.swappiness=10 >/dev/null
-             echo "vm.swappiness=10" | $SUDO tee /etc/sysctl.d/99-swap.conf >/dev/null
-             echo "--- swap status ---"; swapon --show; free -h | grep -i swap'
+             docker run --rm --privileged -e HOST=/host -v /:/host alpine:3 \
+               sh /host/opt/agenticos/infra/scripts/ensure-swap.sh'
 
       - name: Rebuild vault-server + reload plugins on paperclip-server
         env:
