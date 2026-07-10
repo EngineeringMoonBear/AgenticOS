@@ -31,13 +31,24 @@ if ! op account get >/dev/null 2>&1; then
     exit 1
 fi
 
-# Auto-detect the field holding the ops_... token (label varies by how it was
-# saved). op read reveals concealed values by default and prints only the value.
-token=""
-for field in credential password token api_key value; do
-    token="$(op read "op://$VAULT/$ITEM/$field" 2>/dev/null || true)"
-    if [ -n "$token" ]; then echo "→ read token from field '$field'" >&2; break; fi
-done
+# Auto-detect the token by VALUE, not by guessing labels: scan every field in the
+# item for a value starting `ops_` (the service-account token prefix). Works no
+# matter what the field is labeled. Override the source with BROKER_TOKEN_ITEM
+# (and AGENTICOS_OP_VAULT) if the token lives elsewhere, e.g.
+#   BROKER_TOKEN_ITEM='AgenticOS Infra' ./client/dev-run.sh
+token="$(op item get "$ITEM" --vault "$VAULT" --reveal --format json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for f in d.get("fields", []):
+    v = f.get("value") or ""
+    if v.startswith("ops_"):
+        sys.stderr.write("→ read token from field %r\n" % f.get("label"))
+        print(v)
+        break
+' || true)"
 
 case "$token" in
     ops_*) : ;;  # looks like a real service-account token
