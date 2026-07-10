@@ -14,6 +14,7 @@
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { createBroker } from "./broker.mjs";
+import { createDoProxy } from "./do-proxy.mjs";
 
 function fatal(msg) {
   console.error(`[broker] FATAL: ${msg}`);
@@ -71,6 +72,27 @@ async function buildResolver() {
   );
 }
 
+/** Compose the DO-proxy routes in front of the broker's secret-serving handler.
+ *  Exported for unit testing; `main()` wires the real broker + proxy. */
+export function createRequestHandler({ brokerHandler, doProxy }) {
+  return async function handler(req, res) {
+    const send = (code, obj) => {
+      res.writeHead(code, { "content-type": "application/json" });
+      res.end(JSON.stringify(obj));
+    };
+    const { pathname } = new URL(req.url, "http://broker");
+    if (pathname === "/token/digitalocean" && req.method === "POST") {
+      if (!doProxy) return send(503, { error: "DO proxy not configured" });
+      return doProxy.mint(req, res);
+    }
+    if (pathname === "/do" || pathname.startsWith("/do/")) {
+      if (!doProxy) return send(503, { error: "DO proxy not configured" });
+      return doProxy.proxy(req, res);
+    }
+    return brokerHandler(req, res);
+  };
+}
+
 async function main() {
   const apiKey = process.env.BROKER_API_KEY;
   if (!apiKey) fatal("BROKER_API_KEY is required (callers authenticate with it).");
@@ -79,7 +101,33 @@ async function main() {
   const ttlMs = Number(process.env.CACHE_TTL_MS || 60 * 60 * 1000);
 
   const { secretsMap, resolve, mode } = await buildResolver();
-  const handler = createBroker({ resolve, secretsMap, apiKey, ttlMs });
+  const brokerHandler = createBroker({ resolve, secretsMap, apiKey, ttlMs });
+
+  // DO proxy (Phase 2): enabled only when the PAT secret is in the map.
+  const patName = process.env.DO_PAT_SECRET_NAME || "do_token_scoped";
+  let doProxy = null;
+  if (secretsMap[patName]) {
+    // Small TTL cache so the proxy honors the Families read cap (one read per TTL).
+    let patCache = null;
+    const resolvePat = async () => {
+      if (patCache && patCache.exp > Date.now()) return patCache.v;
+      const value = await resolve(secretsMap[patName]);
+      patCache = { v: value, exp: Date.now() + ttlMs };
+      return value;
+    };
+    doProxy = createDoProxy({
+      apiKey,
+      resolvePat,
+      signingKey: process.env.BROKER_CAPABILITY_SIGNING_KEY,
+      maxTtlMs: Number(process.env.DO_PROXY_MAX_TTL_S || 3600) * 1000,
+      defaultTtlMs: Number(process.env.DO_PROXY_DEFAULT_TTL_S || 900) * 1000,
+    });
+    // Do not interpolate the env-derived secret name into the log (CodeQL
+    // js/clear-text-logging). The startup line below reports doProxy on/off.
+    console.error("[broker] DO proxy enabled");
+  }
+
+  const handler = createRequestHandler({ brokerHandler, doProxy });
 
   createServer((req, res) => {
     handler(req, res).catch((err) => {
@@ -91,9 +139,12 @@ async function main() {
     });
   }).listen(port, () => {
     console.error(
-      `[broker] listening on :${port} — mode=${mode}, secrets=${Object.keys(secretsMap).length}, ttl=${ttlMs}ms`,
+      `[broker] listening on :${port} — mode=${mode}, secrets=${Object.keys(secretsMap).length}, ttl=${ttlMs}ms, doProxy=${doProxy ? "on" : "off"}`,
     );
   });
 }
 
-main();
+// Only run the server when executed directly, not when imported by tests.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}
