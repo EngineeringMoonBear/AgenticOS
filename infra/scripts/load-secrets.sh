@@ -4,6 +4,17 @@
 # Loads AgenticOS infra secrets as TF_VAR_* environment variables.
 # Tries 1Password CLI first; falls back to ~/.config/agenticos/infra.env.
 #
+# 1Password auth — two identities, no code change to switch (ADR-0001):
+#   • Machine identity (non-interactive; CI + the future credential broker):
+#       export OP_SERVICE_ACCOUNT_TOKEN=...   # read-only, scoped to the vault
+#       source infra/scripts/load-secrets.sh  # no `op signin` needed
+#     The service account must be READ-ONLY and have access to the
+#     "Goldberry Grove - Admin" vault (items: AgenticOS Infra + Grove Infra).
+#     NOTE (1Password Families cap ≈ 1000 reads/day/account): fine for occasional
+#     `terraform apply` (~19 reads/run); do NOT wire high-frequency callers to raw
+#     `op read` — that's the caching broker's job.
+#   • Interactive (local dev): a signed-in `op` session (`op signin`).
+#
 # Usage:
 #   source infra/scripts/load-secrets.sh
 #   cd infra/terraform && terraform apply
@@ -22,7 +33,18 @@ _agenticos_load_1password() {
     local op_item="AgenticOS Infra"
 
     if ! command -v op >/dev/null 2>&1; then return 1; fi
-    if ! op account get >/dev/null 2>&1; then return 1; fi
+    # Auth liveness — two supported identities:
+    #   • Machine identity (CI / the future credential broker): OP_SERVICE_ACCOUNT_TOKEN
+    #     is set and `op` authenticates as the service account non-interactively.
+    #     `op account get` does NOT work for a service account, so we skip it — the
+    #     `op item get` below proves both liveness AND vault access. The service
+    #     account MUST be read-only and scoped to the "$op_vault" vault (it reads the
+    #     AgenticOS Infra + Grove Infra items). This is the ADR-0001 machine-identity
+    #     path; keep high-frequency callers behind the broker's cache, not raw op.
+    #   • Interactive (local dev): a signed-in `op` session, verified here.
+    if [ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ] && ! op account get >/dev/null 2>&1; then
+        return 1
+    fi
     if ! op item get "$op_item" --vault "$op_vault" --format=json >/dev/null 2>&1; then
         return 1
     fi
@@ -94,7 +116,9 @@ _agenticos_load_1password() {
         return 1
     fi
 
-    echo "✓ Loaded AgenticOS infra secrets from 1Password (vault: $op_vault)" >&2
+    local _id="interactive session"
+    [ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ] && _id="service account (machine identity)"
+    echo "✓ Loaded AgenticOS infra secrets from 1Password (vault: $op_vault, auth: $_id)" >&2
     _agenticos_secrets_loaded=true
     return 0
 }
