@@ -121,7 +121,7 @@ Local dev must **always** work on OrbStack with **zero dependency** on the prod 
 2. Does Terraform's DO provider need to route through the broker (endpoint override / HTTP proxy), or is a broker-minted short-lived PAT injected as `TF_VAR_do_token` sufficient?
 3. Confirm 1Password Families' exact service-account and Connect limits — specifically the **max number of vaults and service accounts** the plan allows, since per-stage isolation needs ≥2 of each (QA + Prod, plus the existing admin vault). Single-vault SAs already work on the plan; this is a count check. If the plan caps SAs too low, fall back to per-stage *vaults* with the broker selecting creds by claim within one SA scoped to both (weaker isolation — note it explicitly).
 4. **Rejected: 1Password Environments.** Evaluated 2026-07-10 for QA/Prod granularity; rejected because its variables appear to be stored key-value **copies** (second source of truth → drift) rather than `op://` references. Per-stage vaults give the same isolation on the reference model we already use. Revisit only if 1Password documents Environments composed *from* vault-item references.
-4. Broker language/runtime — reuse the `gh-token-broker` Node stack, or adopt the DO PoC's proxy core for the DO slice?
+5. Broker language/runtime — reuse the `gh-token-broker` Node stack, or adopt the DO PoC's proxy core for the DO slice?
 
 ## Related
 
