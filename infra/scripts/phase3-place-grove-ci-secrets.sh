@@ -24,29 +24,36 @@ DRY=0
 
 # SOURCE_REF | STAGE_VAULT | ITEM | FIELD(env-var name)
 # ── odoocker ──────────────────────────────────────────────────────────────
+# SRC = op://Goldberry Grove - Admin/Grove Infra/<field>. Rows still FILL_SOURCE_REF
+# are "stragglers" not yet in 1Password (add them, then set the ref).
+# ⚠ CONFIRM inline: DIGITALOCEAN_TOKEN uses the FULL do_token (odoocker needs Spaces
+#   scope, which do_token_scoped lacks). Tighten later if desired.
 MAP=$(cat <<'ROWS'
-op://Goldberry Grove - Admin/Grove Infra/do_token_scoped | Grove Prod | odoocker | DIGITALOCEAN_TOKEN
-FILL_SOURCE_REF | Grove Prod | odoocker | DO_SPACES_ACCESS_KEY
-FILL_SOURCE_REF | Grove Prod | odoocker | DO_SPACES_SECRET_KEY
+op://Goldberry Grove - Admin/Grove Infra/do_token | Grove Prod | odoocker | DIGITALOCEAN_TOKEN
+op://Goldberry Grove - Admin/Grove Infra/spaces_bootstrap_access_key_id | Grove Prod | odoocker | DO_SPACES_ACCESS_KEY
+op://Goldberry Grove - Admin/Grove Infra/spaces_bootstrap_secret_key | Grove Prod | odoocker | DO_SPACES_SECRET_KEY
+op://Goldberry Grove - Admin/Grove Infra/discord_webhook_url | Grove Prod | odoocker | DISCORD_OPS_WEBHOOK_URL
 FILL_SOURCE_REF | Grove Prod | odoocker | DO_SSH_KEY_ID
 FILL_SOURCE_REF | Grove Prod | odoocker | PROD_HOST
 FILL_SOURCE_REF | Grove Prod | odoocker | PROD_SSH_PRIVATE_KEY
 FILL_SOURCE_REF | Grove Prod | odoocker | SLACK_WEBHOOK_URL
-FILL_SOURCE_REF | Grove Prod | odoocker | DISCORD_OPS_WEBHOOK_URL
-FILL_SOURCE_REF | Grove QA   | odoocker | SANDBOX_SSH_PRIVATE_KEY
+op://Goldberry Grove - Admin/Grove Infra/grove_qa_ci_ssh_private_key | Grove QA | odoocker | SANDBOX_SSH_PRIVATE_KEY
 FILL_SOURCE_REF | Grove QA   | odoocker | ENV_SANDBOX
 ROWS
 )
 # ── grove-sites (P3.3 — fill when you get there; harmless to place now) ─────
+# ⚠ CONFIRM inline: grove-sites Spaces = the grove_assets_* bucket keys; GHOST_KEY_* =
+#   the CONTENT keys (Next build reads Ghost content). Swap to admin/*_key if a
+#   workflow needs the Admin API instead.
 MAP_GROVE_SITES=$(cat <<'ROWS'
-FILL_SOURCE_REF | Grove Prod | grove-sites | DIGITALOCEAN_TOKEN
-FILL_SOURCE_REF | Grove Prod | grove-sites | DO_SPACES_ACCESS_KEY
-FILL_SOURCE_REF | Grove Prod | grove-sites | DO_SPACES_SECRET_KEY
+op://Goldberry Grove - Admin/Grove Infra/do_token | Grove Prod | grove-sites | DIGITALOCEAN_TOKEN
+op://Goldberry Grove - Admin/Grove Infra/grove_assets_access_key_id | Grove Prod | grove-sites | DO_SPACES_ACCESS_KEY
+op://Goldberry Grove - Admin/Grove Infra/grove_assets_secret_key | Grove Prod | grove-sites | DO_SPACES_SECRET_KEY
+op://Goldberry Grove - Admin/Grove Infra/ghost_content_key_goldberry | Grove Prod | grove-sites | GHOST_KEY_GOLDBERRY
+op://Goldberry Grove - Admin/Grove Infra/ghost_content_key_ggg | Grove Prod | grove-sites | GHOST_KEY_GGG
+op://Goldberry Grove - Admin/Grove Infra/ghost_content_key_nursery | Grove Prod | grove-sites | GHOST_KEY_NURSERY
+op://Goldberry Grove - Admin/Grove Infra/discord_webhook_url | Grove Prod | grove-sites | DISCORD_OPS_WEBHOOK_URL
 FILL_SOURCE_REF | Grove Prod | grove-sites | ADMIN_IP_CIDR
-FILL_SOURCE_REF | Grove Prod | grove-sites | GHOST_KEY_GOLDBERRY
-FILL_SOURCE_REF | Grove Prod | grove-sites | GHOST_KEY_GGG
-FILL_SOURCE_REF | Grove Prod | grove-sites | GHOST_KEY_NURSERY
-FILL_SOURCE_REF | Grove Prod | grove-sites | DISCORD_OPS_WEBHOOK_URL
 FILL_SOURCE_REF | Grove QA   | grove-sites | PREVIEW_SSH_KEY_ID
 ROWS
 )
