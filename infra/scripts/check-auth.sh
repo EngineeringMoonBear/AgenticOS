@@ -58,12 +58,13 @@ heading() {
 # is denied, catching BOTH an under-scoped token (missing e.g. app/vpc/ssh_key,
 # which would 403 the next `terraform plan/apply` when it refreshes those) and an
 # accidentally full-privilege token — here, rather than downstream.
-DO_DROPLET_ID="${AGENTICOS_DROPLET_ID:-572389418}"
 heading "DigitalOcean (scoped: droplet + app + ssh_key + vpc + monitoring)"
 
-# Each required read scope → the endpoint Terraform hits to refresh that resource.
-# ssh_key lives at /v2/account/keys but is governed by the ssh_key scope (not the
-# account scope), so it succeeds on a correctly-scoped token.
+# Each required read scope → a COLLECTION endpoint Terraform hits to refresh that
+# resource. Collections (not a specific resource by ID) so the probe is 200 even on
+# a fresh provision where no droplet/app/vpc exists yet — check-auth.sh runs BEFORE
+# `terraform apply` (GOL-195). ssh_key lives at /v2/account/keys but is governed by
+# the ssh_key scope (not the account scope), so it succeeds on a correctly-scoped token.
 do_scope_check() { # $1 label  $2 url
     http_get "$2" "Authorization: Bearer $TF_VAR_do_token"
     if [ "$HTTP_CODE" = "200" ]; then
@@ -74,13 +75,17 @@ do_scope_check() { # $1 label  $2 url
         FAILED=$((FAILED+1))
     fi
 }
-do_scope_check "droplet:read"    "https://api.digitalocean.com/v2/droplets/$DO_DROPLET_ID"
+do_scope_check "droplet:read"    "https://api.digitalocean.com/v2/droplets?per_page=1"
 do_scope_check "app:read"        "https://api.digitalocean.com/v2/apps?per_page=1"
 do_scope_check "ssh_key:read"    "https://api.digitalocean.com/v2/account/keys?per_page=1"
 do_scope_check "vpc:read"        "https://api.digitalocean.com/v2/vpcs?per_page=1"
 do_scope_check "monitoring:read" "https://api.digitalocean.com/v2/monitoring/alerts"
 
-# account access MUST be denied — proves the token is least-privilege
+# account access MUST be denied — proves the token is least-privilege.
+# GOL-195 verified: DO gates /v2/account behind the granular `account` scope (each
+# custom scope maps to one public endpoint; an unscoped call returns 401/403), which
+# the 5-scope grant deliberately omits. So a 200 here genuinely means a full-privilege
+# token — a real misconfiguration worth failing on, not a false positive.
 http_get "https://api.digitalocean.com/v2/account" "Authorization: Bearer $TF_VAR_do_token"
 if [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "401" ]; then
     green "✓ DO /v2/account denied (HTTP $HTTP_CODE) — token is correctly scoped"
