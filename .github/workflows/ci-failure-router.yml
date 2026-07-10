@@ -1,11 +1,16 @@
 # D3 provenance failure router (AgenticOS group-coding design, 2026-07-07).
 #
-# Routes every failed run of the watched workflows by WHO owns the failure:
+# Routes every completed run of the watched workflows by WHO owns the failure:
 #   - PR failure (live owner)  → sticky comment on the PR, updated in place.
-#     3 consecutive failures of the same workflow on the branch escalates to
-#     a deduped GitHub issue.
+#     Escalates to a deduped GitHub issue when EITHER (a) 3 consecutive failures
+#     of the same workflow on the branch (the owner appears stuck), OR (b) the
+#     failed jobs are all DETERMINISTIC checks (lint/type/format) — those never
+#     flake and are always agent-fixable, so escalate on the first failure.
+#     Security-sensitive failures (gitleaks/CodeQL) are excluded from (b).
 #   - Ownerless failure (main, cron, manual dispatch) → mint/update a deduped
 #     GitHub issue immediately.
+#   - SUCCESS of a watched workflow on a PR branch → resolves (updates) any
+#     lingering sticky failure comment for that workflow to ✅.
 #
 # Issues created here are picked up by the AgenticOS GitHub App issues
 # webhook (App-wide, PR #228 + #237 in EngineeringMoonBear/AgenticOS) and
@@ -43,7 +48,8 @@ concurrency:
 jobs:
   route:
     name: Route failure by provenance
-    if: github.event.workflow_run.conclusion == 'failure'
+    # Run on failure (route it) AND success (resolve a lingering sticky comment).
+    if: github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Route
@@ -59,12 +65,42 @@ jobs:
           RUN_URL: ${{ github.event.workflow_run.html_url }}
           RUN_EVENT: ${{ github.event.workflow_run.event }}
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
         with:
           script: |
-            const { RUN_ID, WF_NAME, HEAD_BRANCH, HEAD_SHA, RUN_URL, RUN_EVENT, RUN_ATTEMPT } = process.env;
+            const { RUN_ID, WF_NAME, HEAD_BRANCH, HEAD_SHA, RUN_URL, RUN_EVENT, RUN_ATTEMPT, RUN_CONCLUSION } = process.env;
             const { owner, repo } = context.repo;
             const runId = Number(RUN_ID);
             const shortSha = HEAD_SHA.slice(0, 7);
+
+            // Resolve the owning PR by head branch (workflow_run.pull_requests is
+            // unreliable across event types). Used by both the success + failure paths.
+            async function findOpenPr() {
+              const { data: prs } = await github.rest.pulls.list({
+                owner, repo, state: "open", head: `${owner}:${HEAD_BRANCH}`, per_page: 1,
+              });
+              return prs[0] ?? null;
+            }
+            const stickyMarker = `<!-- d3-ci-failure-router:${WF_NAME} -->`;
+
+            // ── SUCCESS: resolve any lingering sticky failure comment ──────────
+            if (RUN_CONCLUSION === "success") {
+              const pr = await findOpenPr();
+              if (!pr) return;
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: pr.number, per_page: 100,
+              });
+              const sticky = comments.find((c) => (c.body ?? "").includes(stickyMarker));
+              if (sticky) {
+                await github.rest.issues.updateComment({
+                  owner, repo, comment_id: sticky.id,
+                  body: `${stickyMarker}\n### ✅ ${WF_NAME} now passing\n\nResolved by a later successful run: ${RUN_URL}`,
+                });
+                core.info(`Resolved sticky comment on PR #${pr.number}`);
+              }
+              return;
+            }
+            if (RUN_CONCLUSION !== "failure") return; // ignore cancelled/skipped/etc.
 
             // ── Failed-job summary for the failed run ──────────────────────
             const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
@@ -75,13 +111,8 @@ jobs:
               .map((j) => `- [\`${j.name}\`](${j.html_url})`)
               .join("\n") || "- (no job-level detail — see the run)";
 
-            // ── Find the owning PR, if any ─────────────────────────────────
-            // workflow_run.pull_requests is unreliable across event types, so
-            // resolve by head branch against open PRs.
-            const { data: prs } = await github.rest.pulls.list({
-              owner, repo, state: "open", head: `${owner}:${HEAD_BRANCH}`, per_page: 1,
-            });
-            const pr = prs[0] ?? null;
+            // ── Find the owning PR, if any (resolved by head branch) ───────
+            const pr = await findOpenPr();
 
             // ── 3-strike lookback: last 3 completed runs of this workflow on
             //    this branch all failed? ───────────────────────────────────
@@ -93,6 +124,23 @@ jobs:
               .slice(0, 3);
             const threeStrikes =
               sameWf.length === 3 && sameWf.every((r) => r.conclusion === "failure");
+
+            // Deterministic checks (lint/type/format) never flake — a failure is
+            // always real and agent-fixable, so escalate to a Paperclip issue on
+            // the FIRST failure instead of waiting for 3 strikes. Security-sensitive
+            // jobs (gitleaks/CodeQL) are excluded — those need human judgment, not
+            // an auto-filed "just fix it" issue. Escalate-now only when EVERY failed
+            // job is deterministic (a mixed run keeps the 3-strike behavior).
+            const DETERMINISTIC = /markdownlint|actionlint|shellcheck|prettier|eslint|typecheck|type-check|format|\blint\b/i;
+            const SECURITY = /gitleaks|codeql|secret|trivy|semgrep|analyze/i;
+            const deterministicOnly =
+              failedJobs.length > 0 &&
+              failedJobs.every((j) => DETERMINISTIC.test(j.name)) &&
+              !failedJobs.some((j) => SECURITY.test(j.name));
+            const escalate = threeStrikes || deterministicOnly;
+            const escalateReason = threeStrikes
+              ? `3 consecutive failures of this workflow on \`${HEAD_BRANCH}\` — the owner appears stuck.`
+              : `deterministic check (lint/type/format) failed — always agent-fixable, escalated on first failure.`;
 
             const summary = [
               `**Workflow:** ${WF_NAME} (attempt ${RUN_ATTEMPT})`,
@@ -150,13 +198,13 @@ jobs:
             }
 
             // ── PR path: sticky comment, updated in place per workflow ─────
-            const stickyMarker = `<!-- d3-ci-failure-router:${WF_NAME} -->`;
+            // (stickyMarker declared above, shared with the success path.)
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number: pr.number, per_page: 100,
             });
             const sticky = comments.find((c) => (c.body ?? "").includes(stickyMarker));
-            const strikeNote = threeStrikes
-              ? "\n\n⚠️ **3 consecutive failures** of this workflow on this branch — escalated to an issue for Paperclip analysis."
+            const strikeNote = escalate
+              ? `\n\n⚠️ **Escalated to a Paperclip issue** — ${escalateReason}`
               : "";
             const commentBody = [
               stickyMarker,
@@ -176,8 +224,8 @@ jobs:
             }
             core.info(`Sticky comment on PR #${pr.number}`);
 
-            if (threeStrikes) {
+            if (escalate) {
               await mintOrUpdateIssue(
-                `3-strike escalation from PR #${pr.number} — the owner appears stuck.`,
+                `Escalation from PR #${pr.number} — ${escalateReason}`,
               );
             }
