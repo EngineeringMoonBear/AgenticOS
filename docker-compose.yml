@@ -407,6 +407,45 @@ services:
       retries: 3
       start_period: 5s
 
+  # credential-broker — ADR-0001 Phase 1. Holds ONE read-only, vault-scoped
+  # 1Password service-account token and serves allowlisted secrets from an
+  # in-memory cache over the internal network. Generalizes gh-token-broker to
+  # arbitrary 1Password secrets; keeps high-frequency callers off raw `op read`
+  # (Families ~1000 reads/day cap). Only this container holds the backing token,
+  # in a chmod-600 secret file (NOT /opt/agenticos/.env). Consumers authenticate
+  # with BROKER_API_KEY and can fetch only names in secrets-map.json.
+  #
+  # Behind the `credential-broker` profile so it starts ONLY where the
+  # service-account token has been provisioned — otherwise it crash-loops on the
+  # missing OP_SERVICE_ACCOUNT_TOKEN. Enable with: docker compose --profile
+  # credential-broker up -d credential-broker (once the SA + secret file exist).
+  # See packages/credential-broker/README.md.
+  credential-broker:
+    build: ./packages/credential-broker
+    container_name: credential-broker
+    profiles: ["credential-broker"]
+    # OOM guardrail (GOL-53): small secret cache + SDK.
+    mem_limit: 192m
+    mem_reservation: 48m
+    restart: unless-stopped
+    environment:
+      PORT: "9100"
+      SECRETS_MAP_FILE: /app/secrets-map.json
+      CACHE_TTL_MS: "3600000"
+    env_file:
+      # Broker-only secrets: OP_SERVICE_ACCOUNT_TOKEN + BROKER_API_KEY. Created on
+      # the Droplet (chmod 600), kept OUT of /opt/agenticos/.env — see the README.
+      - /opt/agenticos/secrets/credential-broker.env
+    volumes:
+      # Operator-provided allowlist (name -> op:// ref). Mounted read-only; not baked.
+      - /opt/agenticos/secrets/credential-broker-secrets-map.json:/app/secrets-map.json:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   # otel-collector — host + per-container USE metrics → shared obs-droplet OpenObserve.
   # GOL-54 (P1). Ships hostmetrics (CPU/RAM/disk/swap/net) + docker_stats (per-container
   # CPU%/mem%) OUT to the obs-droplet, tagged host.role=agenticos. Independent host, push-out
