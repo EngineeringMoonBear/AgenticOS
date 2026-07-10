@@ -35,6 +35,28 @@ the same thing for GitHub App installation tokens) to arbitrary 1Password secret
 | GET    | `/health`        | none   | `{status, secrets, upstreamReads, cacheHits}`       |
 | GET    | `/secret/:name`  | Bearer | `{value, cached}` for an allowlisted name; 404 else |
 
+## DigitalOcean proxy (Phase 2)
+
+DigitalOcean can't mint short-lived scoped tokens, so the broker fronts the DO API: callers present a short-lived **capability token** and the broker injects the real `do_token_scoped` PAT server-side. The PAT never leaves the broker.
+
+| Method | Path                    | Auth              | Purpose                                   |
+|--------|-------------------------|-------------------|-------------------------------------------|
+| POST   | `/token/digitalocean`   | `BROKER_API_KEY`  | Mint a capability token (`scope=ro\|rw`, `ttl` s) |
+| ALL    | `/do/*`                 | capability token  | Proxy to `api.digitalocean.com` with the PAT |
+
+`ro` capabilities allow only `GET`/`HEAD`; `rw` allows all methods. Tokens are HMAC-signed and expire (default 15 m, cap 60 m).
+
+**Terraform — zero code change:**
+
+```bash
+eval "$(BROKER_URL=http://credential-broker:9100 BROKER_API_KEY=… ./client/do-broker-env.sh rw 1200)"
+terraform -chdir=infra/terraform apply     # PAT never enters the shell
+```
+
+**Config:** `BROKER_CAPABILITY_SIGNING_KEY` (optional; HKDF-derived from `BROKER_API_KEY` if unset), `DO_PAT_SECRET_NAME` (default `do_token_scoped`), `DO_PROXY_DEFAULT_TTL_S` (900), `DO_PROXY_MAX_TTL_S` (3600). The proxy is enabled only when `DO_PAT_SECRET_NAME` is in the secrets map; otherwise `/token/digitalocean` and `/do/*` return `503`.
+
+**Limitation:** scope is coarse (`ro`/`rw`), not per-resource-type. Deferred: per-resource policy, the Paperclip-agent consumer, request audit log.
+
 ## Running
 
 **Production / QA — 1Password machine identity:**
