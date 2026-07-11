@@ -40,6 +40,7 @@ import {
 } from "./pr-review.js";
 import { getReviewRecord, upsertReviewRecord } from "./pr-review-store.js";
 import { handleReviewSignoff } from "./pr-signoff.js";
+import { recordError, buildSwallowedFailurePing } from "./error-log.js";
 
 /** Manifest-declared inbound webhook endpoint keys (GitHub → Paperclip). */
 /** Custom Actions-workflow path: a signed {repo,number,title,body,url} payload. */
@@ -203,6 +204,41 @@ async function postOpsPing(ctx: PluginContext, webhookUrl: string | undefined, c
 }
 
 /**
+ * Record a SWALLOWED worker failure (GOL-296) to every sink we own, so a caught
+ * exception is never invisible-until-a-server.log-dig again:
+ *   1. `ctx.logger.error` — host stderr (unchanged; preserves the prior behaviour).
+ *   2. the `github_sync_error` table — a durable, queryable per-plugin sink
+ *      (`SELECT … ORDER BY occurred_at DESC`) reachable without server.log access.
+ *   3. a 🚨 Discord ops-webhook alert — real-time paging when a delivery 200s with
+ *      no mirror.
+ * Sinks 2 and 3 are best-effort: the failure being reported must never be masked by
+ * a secondary failure while writing it down.
+ */
+async function recordSwallowedFailure(
+  ctx: PluginContext,
+  cfg: GithubSyncConfig,
+  scope: string,
+  err: unknown,
+  context: Record<string, unknown> = {},
+): Promise<void> {
+  const detail = err instanceof Error ? err.message : String(err);
+  ctx.logger.error(scope, { ...context, error: detail });
+  try {
+    await recordError(ctx.db, {
+      occurredAt: new Date().toISOString(),
+      scope,
+      detail,
+      context,
+    });
+  } catch (writeErr) {
+    ctx.logger.warn("failed to persist swallowed failure to github_sync_error", {
+      error: writeErr instanceof Error ? writeErr.message : String(writeErr),
+    });
+  }
+  await postOpsPing(ctx, cfg.opsWebhookUrl, buildSwallowedFailurePing(scope, detail));
+}
+
+/**
  * Route an issue event to the bridge for its project, with per-event error
  * isolation (a handler must never throw back onto the bus).
  *
@@ -217,6 +253,7 @@ async function postOpsPing(ctx: PluginContext, webhookUrl: string | undefined, c
  */
 function makeDispatch(
   ctx: PluginContext,
+  cfg: GithubSyncConfig,
   depsByProject: Map<string, SyncDeps>,
   handle: (deps: SyncDeps, input: { issueId: string; companyId: string }) => Promise<void>,
   eventName: string,
@@ -238,9 +275,10 @@ function makeDispatch(
       if (!deps) return; // not in a synced project — ignore quietly
       await handle(deps, { issueId: event.entityId, companyId: event.companyId });
     } catch (err) {
-      ctx.logger.error(`${eventName} handler failed`, {
+      // Swallowed here so one bad event never throws back onto the bus. Report it to
+      // every sink we own (log + github_sync_error + Discord) so it isn't invisible.
+      await recordSwallowedFailure(ctx, cfg, `${eventName} handler failed`, err, {
         issueId: event.entityId,
-        error: err instanceof Error ? err.message : String(err),
       });
     }
   };
@@ -880,13 +918,13 @@ const plugin = definePlugin({
 
     // One company-wide subscription per event type; makeDispatch routes each event
     // to the bridge for the issue's project (or drops it if not a synced project).
-    ctx.events.on("issue.created", makeDispatch(ctx, depsByProject, handleIssueCreated, "issue.created"));
-    ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleIssueUpdated, "issue.updated"));
+    ctx.events.on("issue.created", makeDispatch(ctx, cfg, depsByProject, handleIssueCreated, "issue.created"));
+    ctx.events.on("issue.updated", makeDispatch(ctx, cfg, depsByProject, handleIssueUpdated, "issue.updated"));
     // Second issue.updated dispatch: complete the agent-review check-run when a PR
     // review issue closes `done` (GOL-186). Independent of the mirror path above —
     // it early-returns on issues with no github_pr_review row, and the mirror path
     // early-returns on unmapped review issues, so they never collide.
-    ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleReviewSignoff, "issue.updated:signoff"));
+    ctx.events.on("issue.updated", makeDispatch(ctx, cfg, depsByProject, handleReviewSignoff, "issue.updated:signoff"));
 
     ctx.logger.info("github sync listening", {
       projects: Array.from(depsByProject.keys()),
@@ -907,8 +945,13 @@ const plugin = definePlugin({
     const ctx = currentContext;
     if (!ctx) return;
 
-    const cfg = readConfig(await ctx.config.get());
+    // `cfg` is read INSIDE the try: a throw from ctx.config.get()/readConfig used to
+    // escape onWebhook and surface only as the host's opaque "host handler error"
+    // line in server.log (GOL-296). Capturing it here means every failure path — not
+    // just handler bodies — reaches recordSwallowedFailure below.
+    let cfg: GithubSyncConfig | undefined;
     try {
+      cfg = readConfig(await ctx.config.get());
       if (input.endpointKey === INBOUND_ENDPOINT_KEY) {
         await handleCustomInbound(ctx, cfg, input);
       } else if (input.endpointKey === APP_WEBHOOK_ENDPOINT_KEY) {
@@ -930,10 +973,25 @@ const plugin = definePlugin({
         ctx.logger.warn("inbound webhook: unknown endpoint", { endpointKey: input.endpointKey });
       }
     } catch (err) {
-      ctx.logger.error("inbound webhook: handler failed", {
-        endpointKey: input.endpointKey,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      const scope = `inbound webhook: handler failed (${input.endpointKey})`;
+      if (cfg) {
+        await recordSwallowedFailure(ctx, cfg, scope, err, { endpointKey: input.endpointKey });
+      } else {
+        // The config read itself threw — we have no opsWebhookUrl to page, but the DB
+        // namespace is config-independent, so still persist to the queryable sink.
+        const detail = err instanceof Error ? err.message : String(err);
+        ctx.logger.error(scope, { endpointKey: input.endpointKey, error: detail });
+        try {
+          await recordError(ctx.db, {
+            occurredAt: new Date().toISOString(),
+            scope,
+            detail,
+            context: { endpointKey: input.endpointKey },
+          });
+        } catch {
+          // best-effort; host stderr above is the floor.
+        }
+      }
     }
   },
 
