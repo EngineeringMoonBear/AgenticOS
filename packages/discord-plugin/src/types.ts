@@ -14,6 +14,13 @@ export interface DiscordPluginConfig {
   spacesRegion: string;
   spacesEndpoint: string;
   presignExpirySeconds: number;
+  // --- #assets ingest (GOL-92). Optional: the assets-ingest job only registers when set. ---
+  /** Discord #assets channel id (brand-asset uploads). */
+  assetsChannelId?: string;
+  /** Base URL of the grove-sites optimize service (wraps @grove/assets; runs sharp server-side). */
+  groveAssetsOptimizeUrl?: string;
+  /** Bearer token authorizing calls to the optimize service. */
+  groveAssetsOptimizeToken?: string;
 }
 
 /** Machine-readable metadata embedded in every receipt issue description. */

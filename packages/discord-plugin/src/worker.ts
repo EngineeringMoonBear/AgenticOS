@@ -5,6 +5,8 @@ import { DiscordClient } from "./discord-client.js";
 import { ReceiptArchive } from "./spaces.js";
 import { runIngest } from "./ingest/job.js";
 import { runDigest } from "./digest/job.js";
+import { runAssetIngest } from "./assets/job.js";
+import { GroveAssetsClient } from "./assets/client.js";
 import {
   handleRecordExtraction,
   handleRequestRetake,
@@ -41,6 +43,13 @@ function readConfig(raw: Record<string, unknown>): DiscordPluginConfig {
     spacesRegion: String(raw.spacesRegion ?? "nyc3"),
     spacesEndpoint: String(raw.spacesEndpoint ?? "https://nyc3.digitaloceanspaces.com"),
     presignExpirySeconds: Number(raw.presignExpirySeconds ?? 604800),
+    assetsChannelId: typeof raw.assetsChannelId === "string" && raw.assetsChannelId ? raw.assetsChannelId : undefined,
+    groveAssetsOptimizeUrl:
+      typeof raw.groveAssetsOptimizeUrl === "string" && raw.groveAssetsOptimizeUrl ? raw.groveAssetsOptimizeUrl : undefined,
+    groveAssetsOptimizeToken:
+      typeof raw.groveAssetsOptimizeToken === "string" && raw.groveAssetsOptimizeToken
+        ? raw.groveAssetsOptimizeToken
+        : undefined,
   };
 }
 
@@ -164,6 +173,38 @@ const plugin = definePlugin({
       });
       ctx.logger.info("weekly-digest complete", summary as unknown as Record<string, unknown>);
     });
+
+    // #assets ingest (GOL-92). Only wired when the channel + optimize service are configured,
+    // so this is inert on instances that haven't enabled the assets lane. The optimize recipe
+    // (@grove/assets / sharp) runs server-side; see assets/client.ts for why it can't be in-process.
+    if (cfg.assetsChannelId && cfg.groveAssetsOptimizeUrl && cfg.groveAssetsOptimizeToken) {
+      const assetsChannelId = cfg.assetsChannelId;
+      const assetsCursorKey = { scopeKind: "instance" as const, stateKey: "assets-cursor" };
+      const grove = new GroveAssetsClient({
+        baseUrl: cfg.groveAssetsOptimizeUrl,
+        token: cfg.groveAssetsOptimizeToken,
+      });
+      ctx.jobs.register("assets-ingest", async () => {
+        const summary = await runAssetIngest({
+          discord: {
+            fetchMessagesAfter: (channelId, afterId) => discord.fetchMessagesAfter(channelId, afterId),
+            downloadAttachment: (url) => discord.downloadAttachment(url),
+            replyToMessage: (c, m, text) => discord.replyToMessage(c, m, text),
+          },
+          pipeline: grove,
+          brand: grove,
+          state: {
+            getCursor: async () => (await ctx.state.get(assetsCursorKey)) as string | null,
+            setCursor: (id) => ctx.state.set(assetsCursorKey, id),
+          },
+          config: { assetsChannelId },
+          log: (msg) => ctx.logger.info(msg),
+        });
+        ctx.logger.info("assets-ingest complete", summary as unknown as Record<string, unknown>);
+      });
+    } else {
+      ctx.logger.info("assets-ingest not registered (assetsChannelId / groveAssetsOptimize* unset)");
+    }
 
     ctx.tools.register(
       "receipt_record_extraction",
