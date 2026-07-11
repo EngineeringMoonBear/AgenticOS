@@ -34,10 +34,39 @@ resource "digitalocean_app" "dashboard" {
     }
 
     service {
-      name               = "dashboard"
-      instance_count     = 1
-      instance_size_slug = "basic-xxs"
-      http_port          = 3000
+      name = "dashboard"
+
+      # Horizontal autoscale (GOL-256 / GOL-241 Tier 1, board decision D1).
+      #
+      # App Platform can only autoscale on a *dedicated* ("professional-*")
+      # instance size — the shared "basic-*" tiers are fixed-count — so the
+      # floor moves from basic-xxs ($5/mo fixed) up to professional-xs
+      # (~$29/mo), scaling to ~$87/mo at 3 instances under sustained CPU.
+      # The dashboard is stateless (all state lives on the Droplet/Postgres
+      # over the VPC), so replicas are interchangeable and scaling is
+      # zero-downtime.
+      #
+      # `instance_count` is intentionally REMOVED: when an `autoscaling`
+      # block is present the App Platform API owns the live replica count,
+      # and leaving a static `instance_count` here yields a perpetual plan
+      # diff (DO returns the autoscaled count, TF keeps re-proposing 1) —
+      # the same never-converging-diff failure mode documented for `region`
+      # above. `min_instance_count` is the new floor.
+      #
+      # ROLLBACK: delete this `autoscaling` block and restore
+      #   instance_count = 1 / instance_size_slug = "basic-xxs"
+      # then re-apply — reverts to the $5/mo fixed single instance.
+      instance_size_slug = "professional-xs"
+      autoscaling {
+        min_instance_count = 1
+        max_instance_count = 3
+        metrics {
+          cpu {
+            percent = 70
+          }
+        }
+      }
+      http_port = 3000
       # source_dir = "/" (repo root) is required so App Platform's buildpack
       # finds the root pnpm-lock.yaml and uses pnpm. Setting source_dir to a
       # subdirectory makes the buildpack treat that subdir as the project root,
