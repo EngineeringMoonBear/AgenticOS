@@ -34,6 +34,8 @@
 > workflows to the 1Password action, not the broker. Inventory + structure (source
 > of truth): the `Grove Secrets Inventory` vault note. See spec
 > `docs/superpowers/specs/2026-07-10-phase3-p1-secret-home-design.md`.
+>
+> **Amendment 2026-07-10 — consolidated to ONE cross-environment DevOps SA (revises the per-stage-SA plan).** The per-stage read-only SAs (`grove-ci-prod-ro` / `grove-ci-qa-ro`) proved both **operationally fragile** (1Password's CLI has no `service-account delete`, so retries spawned ~13 duplicates) and **mismatched to the actual consumer**: the DevOps/terraform agent legitimately needs **cross-environment** access (Grove Prod *and* Grove QA *and* the admin vault), and the odoocker workflows being migrated are infra/terraform jobs that identity runs. So collapse to **one read-only `grove-devops-ro`** scoped to `Grove Prod` + `Grove QA` + `Goldberry Grove - Admin`, used by the agent **and** all infra CI (`OP_CI_SA_TOKEN`); plus the unchanged `agenticos-broker-ro` for the broker. **Tradeoff:** this drops the physical QA↔Prod isolation from the per-stage amendment — acceptable now because there is no real multi-trust QA→Prod deploy pipeline yet (`release.yml` is dormant, slated for a Level-3 rewrite). **Re-introduce a narrow prod-only read SA when that L3 prod deploy ships.** Source of truth: `Grove Secrets Inventory`.
 
 ## Context and drivers
 
