@@ -154,3 +154,31 @@ variable "alert_slack" {
   type        = object({ url = string, channel = string })
   default     = { url = "", channel = "" }
 }
+
+# ── GOL-252: GitHub Actions CI secrets (see github-ci-secrets.tf) ───────────
+
+variable "github_ci_secrets_repo" {
+  description = "owner/name of the repo whose GitHub Actions secrets this module manages. Its Actions secrets receive DO_MONITORING_TOKEN for the Tier 2A rightsize advisor."
+  type        = string
+  default     = "EngineeringMoonBear/AgenticOS"
+}
+
+variable "github_ci_token" {
+  description = "GitHub token used to push Actions secrets to github_ci_secrets_repo. Needs Actions:Secrets WRITE when manage_github_ci_secrets = true. Sourced from op://Goldberry Grove - Admin/Grove Infra/github_token, which is currently Contents/PR-scoped only (no secrets write) — the GOL-252 governance gate. Empty default keeps the provider inert when the gate is off."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "do_monitoring_token" {
+  description = "DigitalOcean token exposed to CI as the DO_MONITORING_TOKEN Actions secret so the Tier 2A rightsize advisor can read 7-day p95 CPU/mem. Least privilege: prefer a monitoring:read (+ droplet:read) token; interim value is op://Goldberry Grove - Admin/Grove Infra/do_token_scoped. See GOL-252 for the read-only mint decision."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "manage_github_ci_secrets" {
+  description = "Gate: when true, Terraform pushes DO_MONITORING_TOKEN to github_ci_secrets_repo's Actions secrets. Requires a secrets:write github_ci_token (GOL-252 CEO governance gate). Defaults to false = no-op, so this config is safe to merge before the token exists."
+  type        = bool
+  default     = false
+}
