@@ -51,9 +51,9 @@ Two independent surfaces, two deploy paths:
 ## Cost
 
 - Droplet `s-2vcpu-4gb`: **$24/mo**
-- App Platform `basic-xxs`: **$5/mo**
+- App Platform `professional-xs`, horizontal autoscale 1–3 instances @70% CPU (GOL-256, board decision D1): **~$29/mo floor → up to ~$87/mo** at 3 instances under sustained load
 - Tailscale free tier, Cloudflare Access free tier, Syncthing free → **$0/mo**
-- **Total: ~$29/mo**
+- **Total: ~$53/mo floor** (up to ~$111/mo under sustained dashboard load)
 
 ## Prerequisites
 
