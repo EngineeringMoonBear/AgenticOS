@@ -23,7 +23,10 @@ var manifest = {
   //   migrations/004). No new capabilities/webhook endpoints — reuses issues.create/
   //   update + issue.comments.create + http.outbound; needs the App subscribed to
   //   `check_suite`/`workflow_run` and granted `checks:read` (GOL-304 / T1).
-  version: "0.9.0",
+  // 0.9.1 = inbound invocation-scope fix (GOL-300/GOL-295): the mirror-create and
+  //   closure paths now re-enter the captured host scope (runInScope), matching the
+  //   PR-path fix (GOL-179). Bugfix only — manifest surface unchanged bar version.
+  version: "0.9.1",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",

@@ -327,6 +327,7 @@ async function createMirrorIssue(
   bridge: BridgeConfig,
   payload: InboundPayload,
   labels: readonly string[] = [],
+  runInScope: InvocationScopeRunner = (fn) => fn(),
 ): Promise<void> {
   if (!cfg.companyId) {
     ctx.logger.error("inbound webhook: companyId not configured — cannot create issue");
@@ -350,15 +351,21 @@ async function createMirrorIssue(
   // it up (heartbeat rule #1), so an unresolved routing is surfaced loudly below.
   const routing = resolveRouting(bridge, labels);
   const assigneeAgentId = routing.assigneeAgentId;
-  const issue = await ctx.issues.create({
-    companyId: cfg.companyId,
-    projectId: bridge.paperclipProjectId,
-    title: payload.title,
-    description: buildInboundDescription(payload),
-    status: "todo",
-    priority: bridge.defaultPriority ?? "medium",
-    ...(assigneeAgentId ? { assigneeAgentId } : {}),
-  });
+  // Re-enter the captured host invocation scope for the privileged write. Without
+  // this the create can fire after the webhook's HTTP-200 has expired the scope
+  // ("missing, expired, or unknown invocation scope"), which is the intermittent
+  // mirror-drop of GOL-300/GOL-295. See captureInvocationScope (GOL-179).
+  const issue = await runInScope(() =>
+    ctx.issues.create({
+      companyId: cfg.companyId!,
+      projectId: bridge.paperclipProjectId,
+      title: payload.title,
+      description: buildInboundDescription(payload),
+      status: "todo",
+      priority: bridge.defaultPriority ?? "medium",
+      ...(assigneeAgentId ? { assigneeAgentId } : {}),
+    }),
+  );
 
   await upsert(ctx.db, {
     paperclipIssueId: issue.id,
@@ -414,6 +421,7 @@ async function handleCustomInbound(
   ctx: PluginContext,
   cfg: GithubSyncConfig,
   input: PluginWebhookInput,
+  runInScope: InvocationScopeRunner,
 ): Promise<void> {
   if (!cfg.inboundWebhookSecret) {
     ctx.logger.error("inbound webhook: no inboundWebhookSecret configured — rejecting");
@@ -435,7 +443,7 @@ async function handleCustomInbound(
     ctx.logger.info("inbound webhook: repo not in a synced bridge; ignoring", { repo: payload.repo });
     return;
   }
-  await createMirrorIssue(ctx, cfg, bridge, payload);
+  await createMirrorIssue(ctx, cfg, bridge, payload, [], runInScope);
 }
 
 /**
@@ -456,6 +464,7 @@ async function handleAppClosure(
   ctx: PluginContext,
   cfg: GithubSyncConfig,
   event: { action: string; payload: InboundPayload },
+  runInScope: InvocationScopeRunner,
 ): Promise<void> {
   const bridge = matchBridge(cfg, event.payload.repo);
   if (!bridge) {
@@ -480,7 +489,7 @@ async function handleAppClosure(
     return;
   }
 
-  const issue = await ctx.issues.get(mapping.paperclipIssueId, cfg.companyId);
+  const issue = await runInScope(() => ctx.issues.get(mapping.paperclipIssueId, cfg.companyId!));
   if (!issue) {
     ctx.logger.warn("app webhook: mirror issue not readable; skipping closure", {
       issueId: mapping.paperclipIssueId,
@@ -499,7 +508,7 @@ async function handleAppClosure(
     return;
   }
 
-  await ctx.issues.update(issue.id, { status: target }, cfg.companyId);
+  await runInScope(() => ctx.issues.update(issue.id, { status: target }, cfg.companyId!));
   await upsert(ctx.db, { ...mapping, lastSyncedAt: new Date().toISOString() });
 
   ctx.logger.info("app webhook: propagated GitHub closure to Paperclip mirror", {
@@ -521,6 +530,7 @@ async function handleAppInbound(
   ctx: PluginContext,
   cfg: GithubSyncConfig,
   input: PluginWebhookInput,
+  runInScope: InvocationScopeRunner,
 ): Promise<void> {
   if (!cfg.appWebhookSecret) {
     ctx.logger.error("app webhook: no appWebhookSecret configured — rejecting");
@@ -548,7 +558,7 @@ async function handleAppInbound(
   // GitHub issue → `closed`; `reopened` is the inverse. Handled before the
   // opened-only guard, and intentionally without the Paperclip-origin label skip.
   if (event.action === "closed" || event.action === "reopened") {
-    await handleAppClosure(ctx, cfg, event);
+    await handleAppClosure(ctx, cfg, event, runInScope);
     return;
   }
   if (event.action !== "opened") {
@@ -574,7 +584,7 @@ async function handleAppInbound(
   }
 
   // Pass the issue's labels so discipline routing (v0.6.0) can pick the assignee.
-  await createMirrorIssue(ctx, cfg, bridge, event.payload, event.labels);
+  await createMirrorIssue(ctx, cfg, bridge, event.payload, event.labels, runInScope);
 }
 
 /**
@@ -1233,6 +1243,16 @@ const plugin = definePlugin({
     const ctx = currentContext;
     if (!ctx) return;
 
+    // Capture the host invocation scope BEFORE any await — including
+    // ctx.config.get() below and, critically, the webhook HTTP-200 send that the
+    // host uses to expire the scope. On the inbound mirror/closure paths the
+    // privileged ctx.issues.* write can otherwise fire after that teardown and be
+    // rejected ("missing, expired, or unknown invocation scope"), the intermittent
+    // drop root-caused in GOL-300/GOL-295. Every inbound handler re-enters this
+    // scope for its writes via runInScope, matching the proven PR-path fix
+    // (GOL-179). handlePrInbound still captures its own scope internally.
+    const runInScope = captureInvocationScope();
+
     // `cfg` is read INSIDE the try: a throw from ctx.config.get()/readConfig used to
     // escape onWebhook and surface only as the host's opaque "host handler error"
     // line in server.log (GOL-296). Capturing it here means every failure path — not
@@ -1241,7 +1261,7 @@ const plugin = definePlugin({
     try {
       cfg = readConfig(await ctx.config.get());
       if (input.endpointKey === INBOUND_ENDPOINT_KEY) {
-        await handleCustomInbound(ctx, cfg, input);
+        await handleCustomInbound(ctx, cfg, input, runInScope);
       } else if (input.endpointKey === APP_WEBHOOK_ENDPOINT_KEY) {
         // A GitHub App has a single webhook URL, so once the App is subscribed to
         // `pull_request` those deliveries also land on `github-app` (not the separate
@@ -1259,7 +1279,7 @@ const plugin = definePlugin({
           // suite auto-closes it. Same App webhook URL, fanned out by event type.
           await handleCiCompletion(ctx, cfg, input, ghEvent);
         } else {
-          await handleAppInbound(ctx, cfg, input);
+          await handleAppInbound(ctx, cfg, input, runInScope);
         }
       } else if (input.endpointKey === PR_WEBHOOK_ENDPOINT_KEY) {
         await handlePrInbound(ctx, cfg, input);
