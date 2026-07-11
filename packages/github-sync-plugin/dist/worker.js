@@ -11450,6 +11450,28 @@ async function postSignoffCheck(deps, row, reviewer) {
   await deps.postOpsPing?.(buildSignoffPing(reviewer, row.githubRepo, row.prNumber));
 }
 
+// src/error-log.ts
+var ERROR_TABLE = "github_sync_error";
+function qualifiedTable2(db) {
+  return `${db.namespace}.${ERROR_TABLE}`;
+}
+function buildSwallowedFailurePing(scope, detail) {
+  const trimmed = detail.length > 500 ? `${detail.slice(0, 500)}\u2026` : detail;
+  return `\u{1F6A8} github-sync failure \u2014 ${scope}: ${trimmed}`;
+}
+async function recordError(db, row) {
+  await db.execute(
+    `INSERT INTO ${qualifiedTable2(db)} (occurred_at, scope, detail, context)
+       VALUES ($1, $2, $3, $4)`,
+    [
+      row.occurredAt,
+      row.scope,
+      row.detail,
+      row.context && Object.keys(row.context).length > 0 ? JSON.stringify(row.context) : null
+    ]
+  );
+}
+
 // src/worker.ts
 var INBOUND_ENDPOINT_KEY = "github-issue";
 var APP_WEBHOOK_ENDPOINT_KEY = "github-app";
@@ -11517,7 +11539,24 @@ async function postOpsPing(ctx, webhookUrl, content) {
     });
   }
 }
-function makeDispatch(ctx, depsByProject, handle, eventName) {
+async function recordSwallowedFailure(ctx, cfg, scope, err, context = {}) {
+  const detail = err instanceof Error ? err.message : String(err);
+  ctx.logger.error(scope, { ...context, error: detail });
+  try {
+    await recordError(ctx.db, {
+      occurredAt: (/* @__PURE__ */ new Date()).toISOString(),
+      scope,
+      detail,
+      context
+    });
+  } catch (writeErr) {
+    ctx.logger.warn("failed to persist swallowed failure to github_sync_error", {
+      error: writeErr instanceof Error ? writeErr.message : String(writeErr)
+    });
+  }
+  await postOpsPing(ctx, cfg.opsWebhookUrl, buildSwallowedFailurePing(scope, detail));
+}
+function makeDispatch(ctx, cfg, depsByProject, handle, eventName) {
   return async (event) => {
     try {
       if (!event.entityId) {
@@ -11535,9 +11574,8 @@ function makeDispatch(ctx, depsByProject, handle, eventName) {
       if (!deps) return;
       await handle(deps, { issueId: event.entityId, companyId: event.companyId });
     } catch (err) {
-      ctx.logger.error(`${eventName} handler failed`, {
-        issueId: event.entityId,
-        error: err instanceof Error ? err.message : String(err)
+      await recordSwallowedFailure(ctx, cfg, `${eventName} handler failed`, err, {
+        issueId: event.entityId
       });
     }
   };
@@ -11961,9 +11999,9 @@ var plugin = definePlugin({
       ctx.logger.warn("no usable bridges (all missing auth) \u2014 GitHub Sync is INACTIVE.");
       return;
     }
-    ctx.events.on("issue.created", makeDispatch(ctx, depsByProject, handleIssueCreated, "issue.created"));
-    ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleIssueUpdated, "issue.updated"));
-    ctx.events.on("issue.updated", makeDispatch(ctx, depsByProject, handleReviewSignoff, "issue.updated:signoff"));
+    ctx.events.on("issue.created", makeDispatch(ctx, cfg, depsByProject, handleIssueCreated, "issue.created"));
+    ctx.events.on("issue.updated", makeDispatch(ctx, cfg, depsByProject, handleIssueUpdated, "issue.updated"));
+    ctx.events.on("issue.updated", makeDispatch(ctx, cfg, depsByProject, handleReviewSignoff, "issue.updated:signoff"));
     ctx.logger.info("github sync listening", {
       projects: Array.from(depsByProject.keys())
     });
@@ -11981,8 +12019,9 @@ var plugin = definePlugin({
   async onWebhook(input) {
     const ctx = currentContext;
     if (!ctx) return;
-    const cfg = readConfig(await ctx.config.get());
+    let cfg;
     try {
+      cfg = readConfig(await ctx.config.get());
       if (input.endpointKey === INBOUND_ENDPOINT_KEY) {
         await handleCustomInbound(ctx, cfg, input);
       } else if (input.endpointKey === APP_WEBHOOK_ENDPOINT_KEY) {
@@ -11997,10 +12036,22 @@ var plugin = definePlugin({
         ctx.logger.warn("inbound webhook: unknown endpoint", { endpointKey: input.endpointKey });
       }
     } catch (err) {
-      ctx.logger.error("inbound webhook: handler failed", {
-        endpointKey: input.endpointKey,
-        error: err instanceof Error ? err.message : String(err)
-      });
+      const scope = `inbound webhook: handler failed (${input.endpointKey})`;
+      if (cfg) {
+        await recordSwallowedFailure(ctx, cfg, scope, err, { endpointKey: input.endpointKey });
+      } else {
+        const detail = err instanceof Error ? err.message : String(err);
+        ctx.logger.error(scope, { endpointKey: input.endpointKey, error: detail });
+        try {
+          await recordError(ctx.db, {
+            occurredAt: (/* @__PURE__ */ new Date()).toISOString(),
+            scope,
+            detail,
+            context: { endpointKey: input.endpointKey }
+          });
+        } catch {
+        }
+      }
     }
   },
   async onHealth() {

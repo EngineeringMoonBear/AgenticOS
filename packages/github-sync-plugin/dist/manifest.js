@@ -10,7 +10,12 @@ var manifest = {
   //   when the review issue closes `done` (Phase 3 prerequisite). No new
   //   capabilities/webhooks — reuses issues.read + http.outbound (checks:write is
   //   an App-side grant, GOL-175), so the manifest surface is unchanged bar version.
-  version: "0.7.1",
+  // 0.8.0 = swallowed-failure observability (GOL-296): caught exceptions in
+  //   onWebhook / event dispatch now write a queryable `github_sync_error` row
+  //   (migrations/003) AND fire a 🚨 ops-webhook alert, instead of vanishing into
+  //   host server.log. No new capabilities — reuses database.namespace.write +
+  //   http.outbound; a new migration ships under the existing `database` block.
+  version: "0.8.0",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",
@@ -186,7 +191,7 @@ var manifest = {
       opsWebhookUrl: {
         type: "string",
         title: "Ops webhook URL (Discord)",
-        description: "Optional Discord (or Discord-compatible) webhook URL. When set, the plugin posts a best-effort `{content}` ping on every inbound mirror creation so triage is never silent \u2014 including a loud warning when the mirror landed unassigned. A failed ping never blocks mirror creation. Also carries the PR-review state-change pings (System 3): review-issues-created, re-review-on-new-commits, and pipeline errors."
+        description: "Optional Discord (or Discord-compatible) webhook URL. When set, the plugin posts a best-effort `{content}` ping on every inbound mirror creation so triage is never silent \u2014 including a loud warning when the mirror landed unassigned. A failed ping never blocks mirror creation. Also carries the PR-review state-change pings (System 3): review-issues-created, re-review-on-new-commits, and pipeline errors \u2014 and \u{1F6A8} swallowed-failure alerts (GOL-296) when a caught exception in onWebhook or an event dispatch would otherwise vanish into server.log."
       },
       prReviewAliceAgentId: {
         type: "string",
