@@ -12,6 +12,13 @@ name: OTel Collector Diagnostics
 
 on:
   workflow_dispatch:
+  # Also run on a push that touches THIS file. The GitHub App installation token cannot
+  # create workflow_dispatch events (actions:write is not granted), so a merged one-line
+  # change here is the trigger of record. Read-only + touches no stateful service, so
+  # firing it on its own edits is safe. (GOL-313)
+  push:
+    paths:
+      - '.github/workflows/otel-collector-diag.yml'
 
 permissions:
   contents: read
