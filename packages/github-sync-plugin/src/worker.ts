@@ -41,6 +41,22 @@ import {
 import { getReviewRecord, upsertReviewRecord } from "./pr-review-store.js";
 import { handleReviewSignoff } from "./pr-signoff.js";
 import { recordError, buildSwallowedFailurePing } from "./error-log.js";
+import {
+  buildCiFixBody,
+  buildCiFixOpenedPing,
+  buildCiFixResolvedPing,
+  buildCiFixTitle,
+  buildCiFixUpdatedPing,
+  buildCiReFailNote,
+  buildCiResolvedNote,
+  classifyCiState,
+  decideCiFixAction,
+  DEFAULT_AGENT_PR_AUTHOR,
+  failingChecks,
+  parseCiCompletionEvent,
+  type CiCompletionEvent,
+} from "./ci-failure.js";
+import { getCiFailureRecord, upsertCiFailureRecord } from "./ci-failure-store.js";
 
 /** Manifest-declared inbound webhook endpoint keys (GitHub → Paperclip). */
 /** Custom Actions-workflow path: a signed {repo,number,title,body,url} payload. */
@@ -120,6 +136,12 @@ interface GithubSyncConfig {
   prReviewIrisAgentId?: string;
   /** Changed-file globs that trigger the frontend (Iris) review. Defaults applied at use. */
   prReviewFrontendPaths?: string[];
+  /**
+   * GitHub login that authors agent PRs (GOL-305 CI-fix loop). A failing CI check
+   * only opens a fix issue when the PR's author matches this. Defaults to
+   * "agenticos-developer[bot]" (the shared Developer App identity).
+   */
+  ciAgentPrAuthor?: string;
 }
 
 function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
@@ -171,6 +193,7 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
     prReviewFrontendPaths: Array.isArray(raw.prReviewFrontendPaths)
       ? raw.prReviewFrontendPaths.filter((p): p is string => typeof p === "string" && p.length > 0)
       : undefined,
+    ciAgentPrAuthor: raw.ciAgentPrAuthor ? String(raw.ciAgentPrAuthor) : undefined,
   };
 }
 
@@ -852,6 +875,271 @@ async function seedPendingCheck(
   }
 }
 
+/**
+ * CI → Paperclip fix-issue loop (GOL-305). Native GitHub App `check_suite` /
+ * `workflow_run` **completed** events arrive on the same App webhook URL as
+ * `issues`/`pull_request` and are fanned here by X-GitHub-Event. The event is only
+ * a trigger: for each associated PR we re-derive the aggregate CI state from the
+ * head SHA's check-runs (excluding the plugin's own `agent-review/*` checks), then:
+ *   - red CI on an agent-authored open PR → open (or update-in-place) a fix issue
+ *     assigned to the code owner (Alice, or Iris on frontend paths), and
+ *   - a green suite → auto-close the open fix issue.
+ * The github_ci_failure store keys one fix issue per (repo, PR#) — the loop-guard.
+ *
+ * Live verification depends on the App being subscribed to `check_suite` /
+ * `workflow_run` (GOL-304). Until then this path never fires (GitHub delivers no
+ * such events) and everything else is unchanged.
+ */
+async function handleCiCompletion(
+  ctx: PluginContext,
+  cfg: GithubSyncConfig,
+  input: PluginWebhookInput,
+  eventType: string,
+): Promise<void> {
+  if (!cfg.appWebhookSecret) {
+    ctx.logger.error("ci webhook: no appWebhookSecret configured — rejecting");
+    return;
+  }
+  if (!verifyGithubSignature(input.rawBody, cfg.appWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
+    ctx.logger.warn("ci webhook: signature verification failed");
+    await postOpsPing(ctx, cfg.opsWebhookUrl, buildPipelineErrorPing(`HMAC verification failed on a ${eventType} delivery`));
+    return;
+  }
+
+  const ev = parseCiCompletionEvent(input.parsedBody ?? safeJson(input.rawBody), eventType);
+  if (!ev) {
+    ctx.logger.warn("ci webhook: unparseable/invalid payload", { eventType });
+    return;
+  }
+  if (ev.action !== "completed") {
+    ctx.logger.info("ci webhook: ignoring non-completed action", { action: ev.action, eventType });
+    return;
+  }
+  if (ev.prNumbers.length === 0) {
+    // No same-repo PR is associated (fork PR or a push-triggered run) — there's no
+    // PR to route a fix to. check_suite reliably carries pull_requests for agent
+    // (same-repo) PRs, so this is the expected skip for everything else.
+    ctx.logger.info("ci webhook: run not associated with a PR; ignoring", {
+      repo: ev.repo,
+      headSha: ev.headSha,
+      eventType,
+    });
+    return;
+  }
+
+  const bridge = matchBridge(cfg, ev.repo);
+  if (!bridge) {
+    ctx.logger.info("ci webhook: repo not in a synced bridge; ignoring", { repo: ev.repo });
+    return;
+  }
+  if (!cfg.companyId) {
+    ctx.logger.error("ci webhook: companyId not configured — cannot manage fix issues");
+    return;
+  }
+  if (!cfg.prReviewAliceAgentId) {
+    // Reuses the PR-review owner config (Alice default, Iris on frontend). Unset →
+    // the CI-fix loop is off, mirroring how the review pipeline gates.
+    ctx.logger.info("ci webhook: CI-fix loop disabled (no prReviewAliceAgentId configured)");
+    return;
+  }
+
+  const github = makeBridgeGithubClient(cfg, bridge);
+  if (!github) {
+    ctx.logger.warn("ci webhook: no auth for bridge — cannot manage fix issues", { repo: ev.repo });
+    return;
+  }
+
+  // Capture the invocation scope BEFORE any outbound fetch drops the async context;
+  // every privileged ctx.issues.* write is re-entered via runInScope (GOL-179).
+  const runInScope = captureInvocationScope();
+
+  for (const prNumber of ev.prNumbers) {
+    try {
+      await processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope);
+    } catch (err) {
+      ctx.logger.error("ci webhook: PR processing failed", {
+        repo: ev.repo,
+        prNumber,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await postOpsPing(
+        ctx,
+        cfg.opsWebhookUrl,
+        buildPipelineErrorPing(`CI-fix handling failed for ${ev.repo}#${prNumber}`),
+      );
+    }
+  }
+}
+
+/**
+ * Open / update / auto-close the fix issue for one PR. Idempotent per (repo, PR#)
+ * via github_ci_failure:
+ *   - green CI + open record   → close the fix issue (done) + resolved note
+ *   - red CI   + no/closed rec → create a fix issue assigned to the code owner
+ *   - red CI   + open record   → reopen (todo) + re-fail note, in place
+ *   - pending / no CI checks    → no-op (wait for a terminal signal)
+ * The author gate (agent-authored PR) + owner routing only run when we actually
+ * create/update — the close path needs neither.
+ */
+async function processCiPr(
+  ctx: PluginContext,
+  cfg: GithubSyncConfig,
+  bridge: BridgeConfig,
+  github: GitHubClient,
+  ev: CiCompletionEvent,
+  prNumber: number,
+  runInScope: InvocationScopeRunner,
+): Promise<void> {
+  const checksRes = await github.listCommitCheckRuns(bridge.githubRepo, ev.headSha);
+  if (!checksRes.ok) {
+    ctx.logger.error("ci webhook: failed to list check-runs", {
+      repo: ev.repo,
+      prNumber,
+      headSha: ev.headSha,
+      error: checksRes.error,
+    });
+    await postOpsPing(
+      ctx,
+      cfg.opsWebhookUrl,
+      buildPipelineErrorPing(`could not list check-runs for ${ev.repo}@${ev.headSha}: ${checksRes.error}`),
+    );
+    return;
+  }
+
+  const state = classifyCiState(checksRes.data);
+  const record = await getCiFailureRecord(ctx.db, ev.repo, prNumber);
+  const action = decideCiFixAction(record, state);
+  const now = new Date().toISOString();
+
+  if (action === "noop") {
+    ctx.logger.info("ci webhook: no action", {
+      repo: ev.repo,
+      prNumber,
+      state,
+      record: record?.status ?? null,
+    });
+    return;
+  }
+
+  if (action === "close") {
+    // decideCiFixAction only returns "close" when record is present + open.
+    const rec = record!;
+    await runInScope(() => ctx.issues.update(rec.paperclipIssueId, { status: "done" }, cfg.companyId!));
+    await runInScope(() => ctx.issues.createComment(rec.paperclipIssueId, buildCiResolvedNote(ev.headSha), cfg.companyId!));
+    await upsertCiFailureRecord(ctx.db, { ...rec, headSha: ev.headSha, status: "closed", updatedAt: now });
+    ctx.logger.info("ci webhook: auto-closed fix issue (CI green)", {
+      repo: ev.repo,
+      prNumber,
+      issueId: rec.paperclipIssueId,
+      headSha: ev.headSha,
+    });
+    await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixResolvedPing(ev.repo, prNumber));
+    return;
+  }
+
+  // create / update — both gate on an agent-authored, still-open PR + owner routing.
+  const prRes = await github.getPull(bridge.githubRepo, prNumber);
+  if (!prRes.ok) {
+    ctx.logger.error("ci webhook: failed to fetch PR", { repo: ev.repo, prNumber, error: prRes.error });
+    return;
+  }
+  const pr = prRes.data;
+  const agentAuthor = cfg.ciAgentPrAuthor || DEFAULT_AGENT_PR_AUTHOR;
+  if (pr.authorLogin.toLowerCase() !== agentAuthor.toLowerCase()) {
+    ctx.logger.info("ci webhook: PR not agent-authored; skipping", {
+      repo: ev.repo,
+      prNumber,
+      author: pr.authorLogin,
+    });
+    return;
+  }
+  if (pr.state === "closed") {
+    ctx.logger.info("ci webhook: PR is closed; not opening a fix issue", {
+      repo: ev.repo,
+      prNumber,
+      merged: pr.merged,
+    });
+    return;
+  }
+
+  // Owner routing mirrors the PR-review pipeline: Iris when a changed path is
+  // frontend (and Iris is configured), else Alice. A file-list fetch failure
+  // degrades to Alice rather than dropping the fix.
+  const filesRes = await github.listPullFiles(bridge.githubRepo, prNumber);
+  const files = filesRes.ok ? filesRes.data.files : [];
+  if (!filesRes.ok) {
+    ctx.logger.warn("ci webhook: could not list PR files for owner routing; defaulting to Alice", {
+      repo: ev.repo,
+      prNumber,
+      error: filesRes.error,
+    });
+  }
+  const frontendPaths = cfg.prReviewFrontendPaths?.length ? cfg.prReviewFrontendPaths : DEFAULT_FRONTEND_PATHS;
+  const owner =
+    files.length > 0 && anyFrontendMatch(files, frontendPaths) && cfg.prReviewIrisAgentId
+      ? { agentId: cfg.prReviewIrisAgentId, name: "Iris" }
+      : { agentId: cfg.prReviewAliceAgentId!, name: "Alice" };
+
+  const failed = failingChecks(checksRes.data);
+  const fixCtx = {
+    repo: ev.repo,
+    prNumber,
+    prUrl: pr.htmlUrl || ev.detailsUrl,
+    prTitle: pr.title,
+    headSha: ev.headSha,
+    ownerName: owner.name,
+    runName: ev.name,
+    runUrl: ev.detailsUrl,
+    failed,
+  };
+
+  if (action === "create") {
+    const issue = await runInScope(() =>
+      ctx.issues.create({
+        companyId: cfg.companyId!,
+        projectId: bridge.paperclipProjectId,
+        title: buildCiFixTitle(fixCtx),
+        description: buildCiFixBody(fixCtx),
+        status: "todo",
+        // CI red blocks the merge — fix issues page higher than routine mirrors.
+        priority: bridge.defaultPriority ?? "high",
+        assigneeAgentId: owner.agentId,
+      }),
+    );
+    await upsertCiFailureRecord(ctx.db, {
+      githubRepo: ev.repo,
+      prNumber,
+      headSha: ev.headSha,
+      paperclipIssueId: issue.id,
+      status: "open",
+      updatedAt: now,
+    });
+    ctx.logger.info("ci webhook: opened CI fix issue", {
+      repo: ev.repo,
+      prNumber,
+      issueId: issue.id,
+      assigneeAgentId: owner.agentId,
+      failedCount: failed.length,
+    });
+    await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixOpenedPing(fixCtx));
+    return;
+  }
+
+  // update — decideCiFixAction only returns "update" when record is present + open.
+  const rec = record!;
+  await runInScope(() => ctx.issues.update(rec.paperclipIssueId, { status: "todo" }, cfg.companyId!));
+  await runInScope(() => ctx.issues.createComment(rec.paperclipIssueId, buildCiReFailNote(fixCtx), cfg.companyId!));
+  await upsertCiFailureRecord(ctx.db, { ...rec, headSha: ev.headSha, status: "open", updatedAt: now });
+  ctx.logger.info("ci webhook: updated CI fix issue (still failing)", {
+    repo: ev.repo,
+    prNumber,
+    issueId: rec.paperclipIssueId,
+    headSha: ev.headSha,
+    failedCount: failed.length,
+  });
+  await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixUpdatedPing(fixCtx));
+}
+
 const plugin = definePlugin({
   async setup(ctx) {
     ctx.logger.info("GitHub Sync plugin starting");
@@ -962,8 +1250,14 @@ const plugin = definePlugin({
         // else → the issues-mirror handler (which self-filters to `issues`). The
         // dedicated `github-pr` endpoint remains a valid direct-ingress path; each
         // handler verifies the same appWebhookSecret, so both routes are equivalent.
-        if (getHeader(input.headers, "x-github-event") === "pull_request") {
+        const ghEvent = getHeader(input.headers, "x-github-event");
+        if (ghEvent === "pull_request") {
           await handlePrInbound(ctx, cfg, input);
+        } else if (ghEvent === "check_suite" || ghEvent === "workflow_run") {
+          // CI → Paperclip fix-issue loop (GOL-305): a failing check on an
+          // agent-authored PR opens/updates an author-assigned fix issue; a green
+          // suite auto-closes it. Same App webhook URL, fanned out by event type.
+          await handleCiCompletion(ctx, cfg, input, ghEvent);
         } else {
           await handleAppInbound(ctx, cfg, input);
         }

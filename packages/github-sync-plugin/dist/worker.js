@@ -10871,6 +10871,64 @@ var GitHubClient = class {
     if (!res.ok) return res;
     return { ok: true, data: { id: Number(res.data.id) } };
   }
+  /**
+   * Fetch a PR's author + head SHA + state (GOL-305). The CI-fix loop gates on
+   * `authorLogin === agenticos-developer[bot]` (agent-authored PRs only) and needs
+   * the head SHA to key idempotency. `merged` distinguishes a merged PR from a
+   * plain close.
+   */
+  async getPull(repo, num) {
+    const res = await this.request(
+      "GET",
+      repo,
+      `/repos/${this.org}/${repo}/pulls/${num}`
+    );
+    if (!res.ok) return res;
+    const raw = res.data;
+    return {
+      ok: true,
+      data: {
+        number: Number(raw.number),
+        title: String(raw.title ?? ""),
+        authorLogin: String(raw.user?.login ?? ""),
+        headSha: String(raw.head?.sha ?? ""),
+        htmlUrl: String(raw.html_url ?? ""),
+        state: raw.state === "closed" ? "closed" : "open",
+        draft: raw.draft === true,
+        merged: raw.merged === true
+      }
+    };
+  }
+  /**
+   * List the check-runs for a commit ref (GOL-305). Used to derive the aggregate CI
+   * state on a PR head SHA regardless of whether a `check_suite` or `workflow_run`
+   * event triggered us. Single page at 100 (a suite rarely exceeds that); `output`
+   * gives a short human excerpt for the fix issue without downloading job logs.
+   * Requires the App's `checks:read` permission.
+   */
+  async listCommitCheckRuns(repo, sha) {
+    const res = await this.request(
+      "GET",
+      repo,
+      `/repos/${this.org}/${repo}/commits/${sha}/check-runs?per_page=100`
+    );
+    if (!res.ok) return res;
+    const runs = Array.isArray(res.data?.check_runs) ? res.data.check_runs : [];
+    return {
+      ok: true,
+      data: runs.map((r) => {
+        const output = r?.output ?? {};
+        const summary = typeof output.summary === "string" && output.summary ? output.summary : typeof output.title === "string" ? output.title : void 0;
+        return {
+          name: String(r?.name ?? ""),
+          status: String(r?.status ?? ""),
+          conclusion: typeof r?.conclusion === "string" ? r.conclusion : null,
+          ...typeof r?.details_url === "string" && r.details_url ? { detailsUrl: r.details_url } : {},
+          ...summary ? { summary } : {}
+        };
+      })
+    };
+  }
   /** Comment on an issue or PR (PRs share the issues comments endpoint). */
   async createIssueComment(repo, num, body) {
     const res = await this.request(
@@ -11472,6 +11530,201 @@ async function recordError(db, row) {
   );
 }
 
+// src/ci-failure.ts
+var DEFAULT_AGENT_PR_AUTHOR = "agenticos-developer[bot]";
+var AGENT_REVIEW_CHECK_PREFIX = "agent-review/";
+var FAILING_CONCLUSIONS = /* @__PURE__ */ new Set([
+  "failure",
+  "timed_out",
+  "cancelled",
+  "action_required",
+  "startup_failure",
+  "stale"
+]);
+function asRecord(v) {
+  return v && typeof v === "object" ? v : {};
+}
+function prNumbersFrom(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const pr of raw) {
+    const n = Number(asRecord(pr).number);
+    if (Number.isFinite(n) && n > 0) out.push(n);
+  }
+  return [...new Set(out)];
+}
+function parseCheckSuiteEvent(raw) {
+  const o = asRecord(raw);
+  const cs = asRecord(o.check_suite);
+  const repository = asRecord(o.repository);
+  const repo = typeof repository.full_name === "string" ? repository.full_name : "";
+  const headSha = typeof cs.head_sha === "string" ? cs.head_sha : "";
+  if (!repo || !headSha) return null;
+  const app = asRecord(cs.app);
+  return {
+    kind: "check_suite",
+    action: typeof o.action === "string" ? o.action : "",
+    repo,
+    headSha,
+    conclusion: typeof cs.conclusion === "string" ? cs.conclusion : null,
+    prNumbers: prNumbersFrom(cs.pull_requests),
+    name: typeof app.name === "string" && app.name ? app.name : "CI",
+    detailsUrl: ""
+  };
+}
+function parseWorkflowRunEvent(raw) {
+  const o = asRecord(raw);
+  const wr = asRecord(o.workflow_run);
+  const repository = asRecord(o.repository);
+  const repo = typeof repository.full_name === "string" ? repository.full_name : "";
+  const headSha = typeof wr.head_sha === "string" ? wr.head_sha : "";
+  if (!repo || !headSha) return null;
+  return {
+    kind: "workflow_run",
+    action: typeof o.action === "string" ? o.action : "",
+    repo,
+    headSha,
+    conclusion: typeof wr.conclusion === "string" ? wr.conclusion : null,
+    prNumbers: prNumbersFrom(wr.pull_requests),
+    name: typeof wr.name === "string" && wr.name ? wr.name : "workflow",
+    detailsUrl: typeof wr.html_url === "string" ? wr.html_url : ""
+  };
+}
+function parseCiCompletionEvent(raw, eventType) {
+  if (eventType === "check_suite") return parseCheckSuiteEvent(raw);
+  if (eventType === "workflow_run") return parseWorkflowRunEvent(raw);
+  return null;
+}
+function isAgentReviewCheck(name) {
+  return name.startsWith(AGENT_REVIEW_CHECK_PREFIX);
+}
+function isFailingCheck(c) {
+  return c.conclusion !== null && FAILING_CONCLUSIONS.has(c.conclusion);
+}
+function ciChecks(checks) {
+  return checks.filter((c) => !isAgentReviewCheck(c.name));
+}
+function failingChecks(checks) {
+  return ciChecks(checks).filter(isFailingCheck);
+}
+function classifyCiState(checks) {
+  const ci = ciChecks(checks);
+  if (ci.length === 0) return "none";
+  if (ci.some(isFailingCheck)) return "failing";
+  if (ci.some((c) => c.status !== "completed")) return "pending";
+  return "green";
+}
+function decideCiFixAction(record, state) {
+  if (state === "failing") return record && record.status === "open" ? "update" : "create";
+  if (state === "green") return record && record.status === "open" ? "close" : "noop";
+  return "noop";
+}
+function ciFixMarker(repo, prNumber) {
+  return `<!-- ci-fix: ${repo}#${prNumber} -->`;
+}
+function shortSha2(sha) {
+  return sha.length > 7 ? sha.slice(0, 7) : sha;
+}
+function truncate(s, max) {
+  const t = s.trim();
+  return t.length > max ? t.slice(0, max - 1).trimEnd() + "\u2026" : t;
+}
+function renderFailedChecks(failed) {
+  if (failed.length === 0) return "- _(no individual failing check reported)_";
+  const shown = failed.slice(0, 20);
+  const lines = shown.map((c) => {
+    const excerpt = c.summary ? ` \u2014 ${truncate(c.summary.replace(/\s+/g, " "), 160)}` : "";
+    const link = c.detailsUrl ? ` ([logs](${c.detailsUrl}))` : "";
+    return `- \`${c.name}\`${excerpt}${link}`;
+  });
+  if (failed.length > shown.length) lines.push(`- \u2026and ${failed.length - shown.length} more`);
+  return lines.join("\n");
+}
+function buildCiFixTitle(ctx) {
+  const suffix = ctx.prTitle ? ` \u2014 ${ctx.prTitle}` : "";
+  return `CI failing \u2014 ${ctx.repo}#${ctx.prNumber}${suffix}`;
+}
+function buildCiFixBody(ctx) {
+  const runLine = ctx.runUrl ? `${ctx.runName} (${ctx.runUrl})` : ctx.runName;
+  return [
+    ciFixMarker(ctx.repo, ctx.prNumber),
+    "",
+    `**PR:** ${ctx.prUrl || `${ctx.repo}#${ctx.prNumber}`}`,
+    `**Head SHA:** \`${ctx.headSha}\``,
+    `**Failing run:** ${runLine}`,
+    `**Owner:** ${ctx.ownerName}`,
+    "",
+    `### Failing checks (${ctx.failed.length})`,
+    renderFailedChecks(ctx.failed),
+    "",
+    "### What to do",
+    "- Reproduce + fix the failure, then push to the PR branch.",
+    "- When CI goes green on the new head SHA this issue **auto-closes** (GOL-305).",
+    "- If the PR is being abandoned, close this issue `done` \u2014 a green suite would do the same.",
+    "",
+    "_Opened automatically from a failing CI check on an agent-authored PR (GOL-305)._"
+  ].join("\n");
+}
+function buildCiReFailNote(ctx) {
+  return [
+    `\u{1F501} CI still failing at head \`${shortSha2(ctx.headSha)}\` (${ctx.runName}).`,
+    "",
+    `### Failing checks (${ctx.failed.length})`,
+    renderFailedChecks(ctx.failed)
+  ].join("\n");
+}
+function buildCiResolvedNote(headSha) {
+  return `\u2705 CI is green at head \`${shortSha2(headSha)}\` \u2014 auto-closing this fix issue (GOL-305).`;
+}
+function buildCiFixOpenedPing(ctx) {
+  return `\u{1F6A8} CI failing on ${ctx.repo}#${ctx.prNumber} \u2192 fix issue for ${ctx.ownerName} \u2014 <${ctx.prUrl || ctx.repo}>`;
+}
+function buildCiFixUpdatedPing(ctx) {
+  return `\u{1F501} CI still failing on ${ctx.repo}#${ctx.prNumber} (\`${shortSha2(ctx.headSha)}\`) \u2192 fix issue updated`;
+}
+function buildCiFixResolvedPing(repo, prNumber) {
+  return `\u2705 CI green on ${repo}#${prNumber} \u2192 fix issue auto-closed`;
+}
+
+// src/ci-failure-store.ts
+var CI_FAILURE_TABLE = "github_ci_failure";
+function qualified2(db) {
+  return `${db.namespace}.${CI_FAILURE_TABLE}`;
+}
+function toRow3(raw) {
+  return {
+    githubRepo: String(raw.github_repo),
+    prNumber: Number(raw.pr_number),
+    headSha: String(raw.head_sha),
+    paperclipIssueId: String(raw.paperclip_issue_id),
+    status: raw.status === "closed" ? "closed" : "open",
+    updatedAt: String(raw.updated_at)
+  };
+}
+async function getCiFailureRecord(db, githubRepo, prNumber) {
+  const rows = await db.query(
+    `SELECT github_repo, pr_number, head_sha, paperclip_issue_id, status, updated_at
+       FROM ${qualified2(db)}
+      WHERE github_repo = $1 AND pr_number = $2`,
+    [githubRepo, prNumber]
+  );
+  const first = rows[0];
+  return first ? toRow3(first) : null;
+}
+async function upsertCiFailureRecord(db, row) {
+  await db.execute(
+    `INSERT INTO ${qualified2(db)}
+       (github_repo, pr_number, head_sha, paperclip_issue_id, status, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (github_repo, pr_number) DO UPDATE SET
+       head_sha = $3,
+       paperclip_issue_id = $4,
+       status = $5,
+       updated_at = $6`,
+    [row.githubRepo, row.prNumber, row.headSha, row.paperclipIssueId, row.status, row.updatedAt]
+  );
+}
+
 // src/worker.ts
 var INBOUND_ENDPOINT_KEY = "github-issue";
 var APP_WEBHOOK_ENDPOINT_KEY = "github-app";
@@ -11518,7 +11771,8 @@ function readConfig(raw) {
     opsWebhookUrl: raw.opsWebhookUrl ? String(raw.opsWebhookUrl) : void 0,
     prReviewAliceAgentId: raw.prReviewAliceAgentId ? String(raw.prReviewAliceAgentId) : void 0,
     prReviewIrisAgentId: raw.prReviewIrisAgentId ? String(raw.prReviewIrisAgentId) : void 0,
-    prReviewFrontendPaths: Array.isArray(raw.prReviewFrontendPaths) ? raw.prReviewFrontendPaths.filter((p) => typeof p === "string" && p.length > 0) : void 0
+    prReviewFrontendPaths: Array.isArray(raw.prReviewFrontendPaths) ? raw.prReviewFrontendPaths.filter((p) => typeof p === "string" && p.length > 0) : void 0,
+    ciAgentPrAuthor: raw.ciAgentPrAuthor ? String(raw.ciAgentPrAuthor) : void 0
   };
 }
 async function postOpsPing(ctx, webhookUrl, content) {
@@ -11951,6 +12205,202 @@ async function seedPendingCheck(ctx, github, bridge, ev, reviewer) {
     });
   }
 }
+async function handleCiCompletion(ctx, cfg, input, eventType) {
+  if (!cfg.appWebhookSecret) {
+    ctx.logger.error("ci webhook: no appWebhookSecret configured \u2014 rejecting");
+    return;
+  }
+  if (!verifyGithubSignature(input.rawBody, cfg.appWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
+    ctx.logger.warn("ci webhook: signature verification failed");
+    await postOpsPing(ctx, cfg.opsWebhookUrl, buildPipelineErrorPing(`HMAC verification failed on a ${eventType} delivery`));
+    return;
+  }
+  const ev = parseCiCompletionEvent(input.parsedBody ?? safeJson(input.rawBody), eventType);
+  if (!ev) {
+    ctx.logger.warn("ci webhook: unparseable/invalid payload", { eventType });
+    return;
+  }
+  if (ev.action !== "completed") {
+    ctx.logger.info("ci webhook: ignoring non-completed action", { action: ev.action, eventType });
+    return;
+  }
+  if (ev.prNumbers.length === 0) {
+    ctx.logger.info("ci webhook: run not associated with a PR; ignoring", {
+      repo: ev.repo,
+      headSha: ev.headSha,
+      eventType
+    });
+    return;
+  }
+  const bridge = matchBridge(cfg, ev.repo);
+  if (!bridge) {
+    ctx.logger.info("ci webhook: repo not in a synced bridge; ignoring", { repo: ev.repo });
+    return;
+  }
+  if (!cfg.companyId) {
+    ctx.logger.error("ci webhook: companyId not configured \u2014 cannot manage fix issues");
+    return;
+  }
+  if (!cfg.prReviewAliceAgentId) {
+    ctx.logger.info("ci webhook: CI-fix loop disabled (no prReviewAliceAgentId configured)");
+    return;
+  }
+  const github = makeBridgeGithubClient(cfg, bridge);
+  if (!github) {
+    ctx.logger.warn("ci webhook: no auth for bridge \u2014 cannot manage fix issues", { repo: ev.repo });
+    return;
+  }
+  const runInScope = captureInvocationScope();
+  for (const prNumber of ev.prNumbers) {
+    try {
+      await processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope);
+    } catch (err) {
+      ctx.logger.error("ci webhook: PR processing failed", {
+        repo: ev.repo,
+        prNumber,
+        error: err instanceof Error ? err.message : String(err)
+      });
+      await postOpsPing(
+        ctx,
+        cfg.opsWebhookUrl,
+        buildPipelineErrorPing(`CI-fix handling failed for ${ev.repo}#${prNumber}`)
+      );
+    }
+  }
+}
+async function processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope) {
+  const checksRes = await github.listCommitCheckRuns(bridge.githubRepo, ev.headSha);
+  if (!checksRes.ok) {
+    ctx.logger.error("ci webhook: failed to list check-runs", {
+      repo: ev.repo,
+      prNumber,
+      headSha: ev.headSha,
+      error: checksRes.error
+    });
+    await postOpsPing(
+      ctx,
+      cfg.opsWebhookUrl,
+      buildPipelineErrorPing(`could not list check-runs for ${ev.repo}@${ev.headSha}: ${checksRes.error}`)
+    );
+    return;
+  }
+  const state = classifyCiState(checksRes.data);
+  const record = await getCiFailureRecord(ctx.db, ev.repo, prNumber);
+  const action = decideCiFixAction(record, state);
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  if (action === "noop") {
+    ctx.logger.info("ci webhook: no action", {
+      repo: ev.repo,
+      prNumber,
+      state,
+      record: record?.status ?? null
+    });
+    return;
+  }
+  if (action === "close") {
+    const rec2 = record;
+    await runInScope(() => ctx.issues.update(rec2.paperclipIssueId, { status: "done" }, cfg.companyId));
+    await runInScope(() => ctx.issues.createComment(rec2.paperclipIssueId, buildCiResolvedNote(ev.headSha), cfg.companyId));
+    await upsertCiFailureRecord(ctx.db, { ...rec2, headSha: ev.headSha, status: "closed", updatedAt: now });
+    ctx.logger.info("ci webhook: auto-closed fix issue (CI green)", {
+      repo: ev.repo,
+      prNumber,
+      issueId: rec2.paperclipIssueId,
+      headSha: ev.headSha
+    });
+    await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixResolvedPing(ev.repo, prNumber));
+    return;
+  }
+  const prRes = await github.getPull(bridge.githubRepo, prNumber);
+  if (!prRes.ok) {
+    ctx.logger.error("ci webhook: failed to fetch PR", { repo: ev.repo, prNumber, error: prRes.error });
+    return;
+  }
+  const pr = prRes.data;
+  const agentAuthor = cfg.ciAgentPrAuthor || DEFAULT_AGENT_PR_AUTHOR;
+  if (pr.authorLogin.toLowerCase() !== agentAuthor.toLowerCase()) {
+    ctx.logger.info("ci webhook: PR not agent-authored; skipping", {
+      repo: ev.repo,
+      prNumber,
+      author: pr.authorLogin
+    });
+    return;
+  }
+  if (pr.state === "closed") {
+    ctx.logger.info("ci webhook: PR is closed; not opening a fix issue", {
+      repo: ev.repo,
+      prNumber,
+      merged: pr.merged
+    });
+    return;
+  }
+  const filesRes = await github.listPullFiles(bridge.githubRepo, prNumber);
+  const files = filesRes.ok ? filesRes.data.files : [];
+  if (!filesRes.ok) {
+    ctx.logger.warn("ci webhook: could not list PR files for owner routing; defaulting to Alice", {
+      repo: ev.repo,
+      prNumber,
+      error: filesRes.error
+    });
+  }
+  const frontendPaths = cfg.prReviewFrontendPaths?.length ? cfg.prReviewFrontendPaths : DEFAULT_FRONTEND_PATHS;
+  const owner = files.length > 0 && anyFrontendMatch(files, frontendPaths) && cfg.prReviewIrisAgentId ? { agentId: cfg.prReviewIrisAgentId, name: "Iris" } : { agentId: cfg.prReviewAliceAgentId, name: "Alice" };
+  const failed = failingChecks(checksRes.data);
+  const fixCtx = {
+    repo: ev.repo,
+    prNumber,
+    prUrl: pr.htmlUrl || ev.detailsUrl,
+    prTitle: pr.title,
+    headSha: ev.headSha,
+    ownerName: owner.name,
+    runName: ev.name,
+    runUrl: ev.detailsUrl,
+    failed
+  };
+  if (action === "create") {
+    const issue = await runInScope(
+      () => ctx.issues.create({
+        companyId: cfg.companyId,
+        projectId: bridge.paperclipProjectId,
+        title: buildCiFixTitle(fixCtx),
+        description: buildCiFixBody(fixCtx),
+        status: "todo",
+        // CI red blocks the merge — fix issues page higher than routine mirrors.
+        priority: bridge.defaultPriority ?? "high",
+        assigneeAgentId: owner.agentId
+      })
+    );
+    await upsertCiFailureRecord(ctx.db, {
+      githubRepo: ev.repo,
+      prNumber,
+      headSha: ev.headSha,
+      paperclipIssueId: issue.id,
+      status: "open",
+      updatedAt: now
+    });
+    ctx.logger.info("ci webhook: opened CI fix issue", {
+      repo: ev.repo,
+      prNumber,
+      issueId: issue.id,
+      assigneeAgentId: owner.agentId,
+      failedCount: failed.length
+    });
+    await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixOpenedPing(fixCtx));
+    return;
+  }
+  const rec = record;
+  await runInScope(() => ctx.issues.update(rec.paperclipIssueId, { status: "todo" }, cfg.companyId));
+  await runInScope(() => ctx.issues.createComment(rec.paperclipIssueId, buildCiReFailNote(fixCtx), cfg.companyId));
+  await upsertCiFailureRecord(ctx.db, { ...rec, headSha: ev.headSha, status: "open", updatedAt: now });
+  ctx.logger.info("ci webhook: updated CI fix issue (still failing)", {
+    repo: ev.repo,
+    prNumber,
+    issueId: rec.paperclipIssueId,
+    headSha: ev.headSha,
+    failedCount: failed.length
+  });
+  await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixUpdatedPing(fixCtx));
+}
 var plugin = definePlugin({
   async setup(ctx) {
     ctx.logger.info("GitHub Sync plugin starting");
@@ -12025,8 +12475,11 @@ var plugin = definePlugin({
       if (input.endpointKey === INBOUND_ENDPOINT_KEY) {
         await handleCustomInbound(ctx, cfg, input);
       } else if (input.endpointKey === APP_WEBHOOK_ENDPOINT_KEY) {
-        if (getHeader(input.headers, "x-github-event") === "pull_request") {
+        const ghEvent = getHeader(input.headers, "x-github-event");
+        if (ghEvent === "pull_request") {
           await handlePrInbound(ctx, cfg, input);
+        } else if (ghEvent === "check_suite" || ghEvent === "workflow_run") {
+          await handleCiCompletion(ctx, cfg, input, ghEvent);
         } else {
           await handleAppInbound(ctx, cfg, input);
         }
