@@ -1,0 +1,69 @@
+name: OTel Collector Diagnostics
+
+# GOL-313: read-only visibility into the observability otel-collector on the AgenticOS
+# Droplet. The main deploy (deploy-droplet.yml) brings the collector up but only runs
+# `docker compose ps` afterwards, which shows "Up" even when the collector is running but
+# failing to EXPORT to grove-obs OpenObserve (auth/endpoint/queue errors are only in the
+# container's own logs). This dispatch-only workflow SSHes in and dumps the collector's
+# status + recent logs so an export failure is visible without box SSH access.
+#
+# Strictly read-only: it never rebuilds, recreates, or restarts anything. Safe to run any
+# time; touches no stateful service. workflow_dispatch only — never auto-runs on push.
+
+on:
+  workflow_dispatch:
+  # Also run on a push that touches THIS file. The GitHub App installation token cannot
+  # create workflow_dispatch events (actions:write is not granted), so a merged one-line
+  # change here is the trigger of record. Read-only + touches no stateful service, so
+  # firing it on its own edits is safe. (GOL-313)
+  push:
+    paths:
+      - '.github/workflows/otel-collector-diag.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: otel-collector-diag
+  cancel-in-progress: true
+
+jobs:
+  diag:
+    name: Dump otel-collector status + logs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.DROPLET_SSH_KEY }}
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Collector status + logs
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" '
+            set -uo pipefail
+            cd /opt/agenticos
+            echo "===== .env OPENOBSERVE_* keys (names only, values redacted) ====="
+            grep -oE "^OPENOBSERVE_[A-Z_]+=" .env 2>/dev/null || echo "(no OPENOBSERVE_* keys in .env)"
+            echo
+            echo "===== docker compose ps otel-collector ====="
+            docker compose --profile observability ps otel-collector
+            echo
+            echo "===== container state (restarts / exit code) ====="
+            docker inspect otel-collector \
+              --format "status={{.State.Status}} restarts={{.RestartCount}} exitcode={{.State.ExitCode}} error={{.State.Error}}" \
+              2>/dev/null || echo "(otel-collector container not found)"
+            echo
+            echo "===== last 100 log lines (export/auth errors surface here) ====="
+            docker compose --profile observability logs --tail=100 --no-color otel-collector 2>&1 || \
+              docker logs --tail=100 otel-collector 2>&1 || echo "(no logs)"'
+
+# re-fire: verify collector post user:0:0 fix (GOL-313)

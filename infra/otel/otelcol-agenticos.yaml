@@ -38,10 +38,26 @@ receivers:
     root_path: /hostfs
     scrapers:
       cpu:
+        # system.cpu.utilization (0..1 per state) is disabled by default; enable it so the
+        # `system_cpu_utilization` stream lands in grove-obs. The agenticos-* CPU alerts key
+        # off utilization, not the cumulative `system_cpu_time` counter (GOL-313 / GOL-76).
+        metrics:
+          system.cpu.utilization:
+            enabled: true
       load:
       memory:
+        # system.memory.utilization (0..1 per state) — off by default; enable for the
+        # `system_memory_utilization` stream the agenticos-* memory alerts filter on.
+        metrics:
+          system.memory.utilization:
+            enabled: true
       disk:
       filesystem:
+        # system.filesystem.utilization (0..1 per mount) — off by default; enable for the
+        # `system_filesystem_utilization` stream the agenticos-* disk alerts filter on.
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
       network:
       paging:   # swap in/out + swap utilization — the swap file is the OOM safety net (P0);
                 # paging.utilization is how we see it working before the next OOM.
@@ -51,6 +67,13 @@ receivers:
   # cause) rather than just "the box is hot".
   docker_stats:
     endpoint: unix:///var/run/docker.sock
+    # This box's Docker daemon requires a minimum negotiated API version of 1.40; the
+    # docker_stats receiver otherwise defaults to 1.25 and the daemon rejects it with
+    # "client version 1.25 is too old. Minimum supported API version is 1.40", which fails
+    # the receiver and — because OTel aborts the whole pipeline on any component start
+    # failure — crash-loops the collector (GOL-313). Must be a QUOTED string or YAML parses
+    # it as the float 1.4 and the receiver rejects the version.
+    api_version: "1.40"
     collection_interval: 30s
     metrics:
       container.cpu.utilization:

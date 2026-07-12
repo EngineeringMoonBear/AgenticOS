@@ -238,6 +238,77 @@ export class GitHubClient {
     return { ok: true, data: { id: Number(res.data.id) } };
   }
 
+  /**
+   * Fetch a PR's author + head SHA + state (GOL-305). The CI-fix loop gates on
+   * `authorLogin === agenticos-developer[bot]` (agent-authored PRs only) and needs
+   * the head SHA to key idempotency. `merged` distinguishes a merged PR from a
+   * plain close.
+   */
+  async getPull(
+    repo: string,
+    num: number,
+  ): Promise<Result<{ number: number; title: string; authorLogin: string; headSha: string; htmlUrl: string; state: "open" | "closed"; draft: boolean; merged: boolean }>> {
+    const res = await this.request<Record<string, any>>(
+      "GET",
+      repo,
+      `/repos/${this.org}/${repo}/pulls/${num}`,
+    );
+    if (!res.ok) return res;
+    const raw = res.data;
+    return {
+      ok: true,
+      data: {
+        number: Number(raw.number),
+        title: String(raw.title ?? ""),
+        authorLogin: String(raw.user?.login ?? ""),
+        headSha: String(raw.head?.sha ?? ""),
+        htmlUrl: String(raw.html_url ?? ""),
+        state: raw.state === "closed" ? "closed" : "open",
+        draft: raw.draft === true,
+        merged: raw.merged === true,
+      },
+    };
+  }
+
+  /**
+   * List the check-runs for a commit ref (GOL-305). Used to derive the aggregate CI
+   * state on a PR head SHA regardless of whether a `check_suite` or `workflow_run`
+   * event triggered us. Single page at 100 (a suite rarely exceeds that); `output`
+   * gives a short human excerpt for the fix issue without downloading job logs.
+   * Requires the App's `checks:read` permission.
+   */
+  async listCommitCheckRuns(
+    repo: string,
+    sha: string,
+  ): Promise<Result<Array<{ name: string; status: string; conclusion: string | null; detailsUrl?: string; summary?: string }>>> {
+    const res = await this.request<Record<string, any>>(
+      "GET",
+      repo,
+      `/repos/${this.org}/${repo}/commits/${sha}/check-runs?per_page=100`,
+    );
+    if (!res.ok) return res;
+    const runs = Array.isArray(res.data?.check_runs) ? res.data.check_runs : [];
+    return {
+      ok: true,
+      data: runs.map((r: any) => {
+        const output = r?.output ?? {};
+        const summary =
+          typeof output.summary === "string" && output.summary
+            ? output.summary
+            : typeof output.title === "string"
+              ? output.title
+              : undefined;
+        return {
+          name: String(r?.name ?? ""),
+          status: String(r?.status ?? ""),
+          conclusion: typeof r?.conclusion === "string" ? r.conclusion : null,
+          ...(typeof r?.details_url === "string" && r.details_url ? { detailsUrl: r.details_url } : {}),
+          ...(summary ? { summary } : {}),
+        };
+      }),
+    };
+  }
+
   /** Comment on an issue or PR (PRs share the issues comments endpoint). */
   async createIssueComment(repo: string, num: number, body: string): Promise<Result<{ id: number }>> {
     const res = await this.request<Record<string, any>>(

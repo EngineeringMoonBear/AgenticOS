@@ -106,8 +106,8 @@ jobs:
           if [ -s bumps.txt ]; then
             echo "### ⚠️ Manifest changes need a manual finish" >> "$GITHUB_STEP_SUMMARY"
             while read -r _ plugin; do
-              echo "::warning title=Manifest changed::${plugin}: worker code hot-reloaded, but the stored manifest is stale. Run scripts/deploy-plugin.sh ${plugin} from a Mac (op signed in + SSH tunnel) to reinstall, reapply config, and enable."
-              echo "- **${plugin}** — run \`scripts/deploy-plugin.sh ${plugin}\` from a Mac to finish (reinstall + config + enable)." >> "$GITHUB_STEP_SUMMARY"
+              echo "::warning title=Manifest changed::${plugin}: worker code hot-reloaded, but the stored manifest is stale. Finish it self-serve — run the 'Recreate paperclip-server' workflow (workflow_dispatch or repository_dispatch: recreate-paperclip-server), then reinstall+config+enable ${plugin} over the board-key API. See docs/runbooks/deploy-plugin-manifest-change.md. (Mac fallback: scripts/deploy-plugin.sh ${plugin}.)"
+              echo "- **${plugin}** — stored manifest is stale. **Primary:** trigger the [\`Recreate paperclip-server\`](../../actions/workflows/recreate-paperclip-server.yml) workflow (no Mac, no host root), then reinstall+config+enable ${plugin} over the board-key API — see [\`docs/runbooks/deploy-plugin-manifest-change.md\`](../../blob/main/docs/runbooks/deploy-plugin-manifest-change.md). _Fallback:_ \`scripts/deploy-plugin.sh ${plugin}\` from a Mac." >> "$GITHUB_STEP_SUMMARY"
             done < bumps.txt
           else
             echo "No manifest changes — workers hot-reloaded (cheap path)." >> "$GITHUB_STEP_SUMMARY"

@@ -120,6 +120,74 @@ jobs:
              docker compose up -d cloudflared
              docker compose ps vault-server paperclip-server cloudflared'
 
+      # GOL-313: seed the obs-droplet ingest config into the Droplet-only .env so the
+      # conditional reconcile step below can bring the otel-collector up. /opt/agenticos/.env
+      # is NOT CI-managed (the deploy only reads it), so we write the three OPENOBSERVE_*
+      # vars in-architecture from the on-box credential-broker OP service-account token —
+      # no obs creds ever enter GitHub secrets. The OTLP base is non-secret; the two root
+      # creds are read at deploy time via a pinned `op` container using that on-box token
+      # (verified read-scoped to Grove Infra/obs_openobserve_root_*). Fully idempotent and
+      # fail-safe: if the broker token or creds are absent, it logs and leaves the collector
+      # disabled rather than failing the deploy.
+      - name: Seed OpenObserve obs config into .env (GOL-313)
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+          # Non-secret obs-droplet OTLP-HTTP base. Override via repo variable if the obs
+          # endpoint moves; otherwise defaults to the live grove-obs droplet.
+          OTLP_BASE: ${{ vars.OPENOBSERVE_OTLP_BASE || 'http://159.65.46.198:5080/api/default' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" "OTLP_BASE='${OTLP_BASE}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/agenticos
+          ENV_FILE=.env
+          BROKER_ENV=secrets/credential-broker.env
+          OP_IMG=1password/op:2
+
+          : "${OTLP_BASE:?GOL-313: OTLP_BASE not provided}"
+
+          if [ ! -f "$BROKER_ENV" ]; then
+            echo "GOL-313: $BROKER_ENV absent (credential-broker OP token not provisioned) — leaving otel-collector disabled."
+            exit 0
+          fi
+
+          # Extract + de-quote the read-only OP service-account token the broker already holds.
+          OP_TOKEN=$(grep -E '^OP_SERVICE_ACCOUNT_TOKEN=' "$BROKER_ENV" | head -n1 | cut -d= -f2-)
+          OP_TOKEN="${OP_TOKEN%\"}"; OP_TOKEN="${OP_TOKEN#\"}"
+          OP_TOKEN="${OP_TOKEN%\'}"; OP_TOKEN="${OP_TOKEN#\'}"
+          if [ -z "${OP_TOKEN:-}" ]; then
+            echo "GOL-313: OP_SERVICE_ACCOUNT_TOKEN empty in $BROKER_ENV — leaving otel-collector disabled."
+            exit 0
+          fi
+
+          # Box has no op CLI; read via a pinned op container. --entrypoint op is deterministic
+          # regardless of the image default entrypoint. Never fail the deploy on a read error.
+          op_read() {
+            docker run --rm --entrypoint op -e OP_SERVICE_ACCOUNT_TOKEN="$OP_TOKEN" "$OP_IMG" read "$1" 2>/dev/null || true
+          }
+          OO_EMAIL=$(op_read "op://Goldberry Grove - Admin/Grove Infra/obs_openobserve_root_email")
+          OO_PW=$(op_read "op://Goldberry Grove - Admin/Grove Infra/obs_openobserve_root_password")
+          if [ -z "$OO_EMAIL" ] || [ -z "$OO_PW" ]; then
+            echo "GOL-313: obs root creds did not resolve from 1Password — leaving otel-collector disabled."
+            exit 0
+          fi
+
+          # Atomic all-or-nothing upsert of the three keys (so the reconcile gate never sees a
+          # base without creds). Rebuild the file instead of sed so arbitrary password bytes are
+          # never interpreted. .env stays chmod 600.
+          umask 077
+          tmp=$(mktemp)
+          [ -f "$ENV_FILE" ] && grep -vE '^(OPENOBSERVE_OTLP_BASE|OPENOBSERVE_ROOT_EMAIL|OPENOBSERVE_ROOT_PASSWORD)=' "$ENV_FILE" > "$tmp" || true
+          {
+            printf 'OPENOBSERVE_OTLP_BASE=%s\n' "$OTLP_BASE"
+            printf 'OPENOBSERVE_ROOT_EMAIL=%s\n' "$OO_EMAIL"
+            printf 'OPENOBSERVE_ROOT_PASSWORD=%s\n' "$OO_PW"
+          } >> "$tmp"
+          chmod 600 "$tmp"
+          mv "$tmp" "$ENV_FILE"
+          echo "GOL-313: seeded OPENOBSERVE_* into $ENV_FILE (base=$OTLP_BASE; root email + password set)."
+          REMOTE
+
       - name: Reconcile otel-collector (GOL-54, conditional)
         env:
           HOST: ${{ secrets.DROPLET_HOST }}
@@ -135,7 +203,15 @@ jobs:
             set -euo pipefail
             cd /opt/agenticos
             if grep -q "^OPENOBSERVE_OTLP_BASE=." .env 2>/dev/null; then
-              docker compose --profile observability up -d otel-collector
+              # --force-recreate so shipped changes to the bind-mounted collector config
+              # (infra/otel/otelcol-agenticos.yaml) actually take effect. A plain `up -d`
+              # only recreates on a compose-config-hash change (image/env/volumes); a change
+              # to the CONTENTS of a mounted file does not, so otelcol — which reads its
+              # config only at startup — would keep running the stale config. Since
+              # infra/otel/** is a deploy trigger path specifically to ship this config,
+              # recreate on every reconcile. The collector is stateless, so recreation is a
+              # ~1s metrics gap, never a data-loss risk (GOL-313).
+              docker compose --profile observability up -d --force-recreate otel-collector
               docker compose ps otel-collector
             else
               echo "otel-collector not enabled (OPENOBSERVE_OTLP_BASE unset in .env); skipping — GOL-54"
