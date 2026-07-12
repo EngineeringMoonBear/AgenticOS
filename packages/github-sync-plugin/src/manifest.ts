@@ -16,7 +16,15 @@ const manifest: PaperclipPluginManifestV1 = {
   //   (migrations/003) AND fire a 🚨 ops-webhook alert, instead of vanishing into
   //   host server.log. No new capabilities — reuses database.namespace.write +
   //   http.outbound; a new migration ships under the existing `database` block.
-  version: "0.8.0",
+  // 0.9.0 = CI → Paperclip fix-issue loop (GOL-305, from the GOL-303 audit). The App's
+  //   native `check_suite`/`workflow_run` **completed** events land on the same
+  //   `github-app` webhook URL and are fanned out by X-GitHub-Event: a failing CI
+  //   check on an agent-authored PR opens/updates an author-assigned fix issue, and a
+  //   green suite auto-closes it (loop-guarded per (repo, PR#) via github_ci_failure,
+  //   migrations/004). No new capabilities/webhook endpoints — reuses issues.create/
+  //   update + issue.comments.create + http.outbound; needs the App subscribed to
+  //   `check_suite`/`workflow_run` and granted `checks:read` (GOL-304 / T1).
+  version: "0.9.0",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",
@@ -69,9 +77,9 @@ const manifest: PaperclipPluginManifestV1 = {
     },
     {
       endpointKey: "github-app",
-      displayName: "GitHub App issues event → Paperclip mirror (no per-repo setup)",
+      displayName: "GitHub App issues / pull_request / check_suite / workflow_run → Paperclip (no per-repo setup)",
       description:
-        "Point the AgenticOS Developer GitHub App's webhook here and subscribe it to `issues` events. GitHub then delivers a native, signed `issues` payload for EVERY installed repo — the plugin mirrors `opened` issues into a matching bridge's project. Verified with appWebhookSecret; no per-repo Actions workflow or repo secret needed.",
+        "Point the AgenticOS Developer GitHub App's single webhook here. Subscribe it to `issues` (mirror opened issues + closure propagation), `pull_request` (agent review pipeline, GOL-158), and — for the CI→Paperclip fix loop (GOL-305) — `check_suite`/`workflow_run`. All arrive on this one URL and are fanned out by X-GitHub-Event. On a failing CI check on an agent-authored PR the plugin opens/updates a fix issue assigned to the code owner, and auto-closes it when the suite goes green. Verified with appWebhookSecret; the CI loop needs the App granted `checks:read` (+ the two event subscriptions, GOL-304). No per-repo Actions workflow or repo secret needed.",
     },
     {
       endpointKey: "github-pr",
@@ -226,6 +234,12 @@ const manifest: PaperclipPluginManifestV1 = {
         description:
           "Changed-file globs that trigger a second (Iris) frontend review. Supports `*` (within a segment) and `**` (across segments). Defaults to [\"apps/dashboard/**\", \"**/*.tsx\", \"**/*.css\"] when empty.",
         items: { type: "string" },
+      },
+      ciAgentPrAuthor: {
+        type: "string",
+        title: "CI-fix — agent PR author login (GOL-305)",
+        description:
+          "GitHub login that authors agent PRs. The CI→Paperclip fix loop only opens a fix issue when a failing PR's author matches this. Defaults to \"agenticos-developer[bot]\" (the shared Developer App identity). The fix loop reuses prReviewAliceAgentId/prReviewIrisAgentId for owner routing and is off when prReviewAliceAgentId is unset.",
       },
     },
     required: ["bridges"],

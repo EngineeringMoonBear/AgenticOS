@@ -209,3 +209,70 @@ describe("GitHubClient.getIssue", () => {
     expect(init.method).toBe("GET");
   });
 });
+
+describe("GitHubClient.getPull (GOL-305)", () => {
+  it("parses author login, head SHA, state and merged flag", async () => {
+    const fetchMock = mockFetch({
+      number: 42,
+      title: "Fix worker",
+      user: { login: "agenticos-developer[bot]" },
+      head: { sha: "abc1234" },
+      html_url: "https://github.com/o/r/pull/42",
+      state: "open",
+      draft: false,
+      merged: false,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new GitHubClient({ token: "t", org: "o" });
+    const result = await client.getPull("r", 42);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual({
+        number: 42,
+        title: "Fix worker",
+        authorLogin: "agenticos-developer[bot]",
+        headSha: "abc1234",
+        htmlUrl: "https://github.com/o/r/pull/42",
+        state: "open",
+        draft: false,
+        merged: false,
+      });
+    }
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://api.github.com/repos/o/r/pulls/42");
+  });
+});
+
+describe("GitHubClient.listCommitCheckRuns (GOL-305)", () => {
+  it("maps check_runs to name/status/conclusion + an output excerpt + details_url", async () => {
+    const fetchMock = mockFetch({
+      total_count: 2,
+      check_runs: [
+        { name: "build", status: "completed", conclusion: "failure", details_url: "https://x/logs", output: { summary: "boom" } },
+        { name: "lint", status: "completed", conclusion: "success", output: { title: "ok" } },
+      ],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new GitHubClient({ token: "t", org: "o" });
+    const result = await client.listCommitCheckRuns("r", "deadbeef");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual([
+        { name: "build", status: "completed", conclusion: "failure", detailsUrl: "https://x/logs", summary: "boom" },
+        { name: "lint", status: "completed", conclusion: "success", summary: "ok" },
+      ]);
+    }
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://api.github.com/repos/o/r/commits/deadbeef/check-runs?per_page=100");
+  });
+
+  it("tolerates a missing check_runs array", async () => {
+    vi.stubGlobal("fetch", mockFetch({}));
+    const client = new GitHubClient({ token: "t", org: "o" });
+    const result = await client.listCommitCheckRuns("r", "sha");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toEqual([]);
+  });
+});
