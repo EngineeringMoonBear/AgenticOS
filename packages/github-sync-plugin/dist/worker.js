@@ -11839,7 +11839,7 @@ function matchBridge(cfg, repo) {
     (b) => `${b.githubOrg}/${b.githubRepo}`.toLowerCase() === repo.toLowerCase() || b.githubRepo.toLowerCase() === repo.toLowerCase()
   );
 }
-async function createMirrorIssue(ctx, cfg, bridge, payload, labels = []) {
+async function createMirrorIssue(ctx, cfg, bridge, payload, labels = [], runInScope = (fn) => fn()) {
   if (!cfg.companyId) {
     ctx.logger.error("inbound webhook: companyId not configured \u2014 cannot create issue");
     return;
@@ -11854,15 +11854,17 @@ async function createMirrorIssue(ctx, cfg, bridge, payload, labels = []) {
   }
   const routing = resolveRouting(bridge, labels);
   const assigneeAgentId = routing.assigneeAgentId;
-  const issue = await ctx.issues.create({
-    companyId: cfg.companyId,
-    projectId: bridge.paperclipProjectId,
-    title: payload.title,
-    description: buildInboundDescription(payload),
-    status: "todo",
-    priority: bridge.defaultPriority ?? "medium",
-    ...assigneeAgentId ? { assigneeAgentId } : {}
-  });
+  const issue = await runInScope(
+    () => ctx.issues.create({
+      companyId: cfg.companyId,
+      projectId: bridge.paperclipProjectId,
+      title: payload.title,
+      description: buildInboundDescription(payload),
+      status: "todo",
+      priority: bridge.defaultPriority ?? "medium",
+      ...assigneeAgentId ? { assigneeAgentId } : {}
+    })
+  );
   await upsert(ctx.db, {
     paperclipIssueId: issue.id,
     githubRepo: payload.repo,
@@ -11901,7 +11903,7 @@ async function createMirrorIssue(ctx, cfg, bridge, payload, labels = []) {
     })
   );
 }
-async function handleCustomInbound(ctx, cfg, input) {
+async function handleCustomInbound(ctx, cfg, input, runInScope) {
   if (!cfg.inboundWebhookSecret) {
     ctx.logger.error("inbound webhook: no inboundWebhookSecret configured \u2014 rejecting");
     return;
@@ -11920,9 +11922,9 @@ async function handleCustomInbound(ctx, cfg, input) {
     ctx.logger.info("inbound webhook: repo not in a synced bridge; ignoring", { repo: payload.repo });
     return;
   }
-  await createMirrorIssue(ctx, cfg, bridge, payload);
+  await createMirrorIssue(ctx, cfg, bridge, payload, [], runInScope);
 }
-async function handleAppClosure(ctx, cfg, event) {
+async function handleAppClosure(ctx, cfg, event, runInScope) {
   const bridge = matchBridge(cfg, event.payload.repo);
   if (!bridge) {
     ctx.logger.info("app webhook: closure for repo not in a synced bridge; ignoring", {
@@ -11943,7 +11945,7 @@ async function handleAppClosure(ctx, cfg, event) {
     });
     return;
   }
-  const issue = await ctx.issues.get(mapping.paperclipIssueId, cfg.companyId);
+  const issue = await runInScope(() => ctx.issues.get(mapping.paperclipIssueId, cfg.companyId));
   if (!issue) {
     ctx.logger.warn("app webhook: mirror issue not readable; skipping closure", {
       issueId: mapping.paperclipIssueId
@@ -11959,7 +11961,7 @@ async function handleAppClosure(ctx, cfg, event) {
     });
     return;
   }
-  await ctx.issues.update(issue.id, { status: target }, cfg.companyId);
+  await runInScope(() => ctx.issues.update(issue.id, { status: target }, cfg.companyId));
   await upsert(ctx.db, { ...mapping, lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString() });
   ctx.logger.info("app webhook: propagated GitHub closure to Paperclip mirror", {
     issueId: issue.id,
@@ -11969,7 +11971,7 @@ async function handleAppClosure(ctx, cfg, event) {
     status: target
   });
 }
-async function handleAppInbound(ctx, cfg, input) {
+async function handleAppInbound(ctx, cfg, input, runInScope) {
   if (!cfg.appWebhookSecret) {
     ctx.logger.error("app webhook: no appWebhookSecret configured \u2014 rejecting");
     return;
@@ -11989,7 +11991,7 @@ async function handleAppInbound(ctx, cfg, input) {
     return;
   }
   if (event.action === "closed" || event.action === "reopened") {
-    await handleAppClosure(ctx, cfg, event);
+    await handleAppClosure(ctx, cfg, event, runInScope);
     return;
   }
   if (event.action !== "opened") {
@@ -12008,7 +12010,7 @@ async function handleAppInbound(ctx, cfg, input) {
     });
     return;
   }
-  await createMirrorIssue(ctx, cfg, bridge, event.payload, event.labels);
+  await createMirrorIssue(ctx, cfg, bridge, event.payload, event.labels, runInScope);
 }
 function makeBridgeGithubClient(cfg, bridge) {
   const brokerUrl = cfg.tokenBrokerUrl || process.env.GH_TOKEN_BROKER_URL || "";
@@ -12469,11 +12471,12 @@ var plugin = definePlugin({
   async onWebhook(input) {
     const ctx = currentContext;
     if (!ctx) return;
+    const runInScope = captureInvocationScope();
     let cfg;
     try {
       cfg = readConfig(await ctx.config.get());
       if (input.endpointKey === INBOUND_ENDPOINT_KEY) {
-        await handleCustomInbound(ctx, cfg, input);
+        await handleCustomInbound(ctx, cfg, input, runInScope);
       } else if (input.endpointKey === APP_WEBHOOK_ENDPOINT_KEY) {
         const ghEvent = getHeader(input.headers, "x-github-event");
         if (ghEvent === "pull_request") {
@@ -12481,7 +12484,7 @@ var plugin = definePlugin({
         } else if (ghEvent === "check_suite" || ghEvent === "workflow_run") {
           await handleCiCompletion(ctx, cfg, input, ghEvent);
         } else {
-          await handleAppInbound(ctx, cfg, input);
+          await handleAppInbound(ctx, cfg, input, runInScope);
         }
       } else if (input.endpointKey === PR_WEBHOOK_ENDPOINT_KEY) {
         await handlePrInbound(ctx, cfg, input);
