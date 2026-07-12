@@ -65,3 +65,5 @@ jobs:
             echo "===== last 100 log lines (export/auth errors surface here) ====="
             docker compose --profile observability logs --tail=100 --no-color otel-collector 2>&1 || \
               docker logs --tail=100 otel-collector 2>&1 || echo "(no logs)"'
+
+# re-fire: verify collector post user:0:0 fix (GOL-313)
