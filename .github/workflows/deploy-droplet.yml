@@ -203,7 +203,15 @@ jobs:
             set -euo pipefail
             cd /opt/agenticos
             if grep -q "^OPENOBSERVE_OTLP_BASE=." .env 2>/dev/null; then
-              docker compose --profile observability up -d otel-collector
+              # --force-recreate so shipped changes to the bind-mounted collector config
+              # (infra/otel/otelcol-agenticos.yaml) actually take effect. A plain `up -d`
+              # only recreates on a compose-config-hash change (image/env/volumes); a change
+              # to the CONTENTS of a mounted file does not, so otelcol — which reads its
+              # config only at startup — would keep running the stale config. Since
+              # infra/otel/** is a deploy trigger path specifically to ship this config,
+              # recreate on every reconcile. The collector is stateless, so recreation is a
+              # ~1s metrics gap, never a data-loss risk (GOL-313).
+              docker compose --profile observability up -d --force-recreate otel-collector
               docker compose ps otel-collector
             else
               echo "otel-collector not enabled (OPENOBSERVE_OTLP_BASE unset in .env); skipping — GOL-54"
