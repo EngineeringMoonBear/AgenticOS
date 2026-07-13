@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@agenticos/vault-core": "workspace:*",
-    "@anthropic-ai/sdk": "^0.110.0",
+    "@anthropic-ai/sdk": "^0.111.0",
     "@base-ui/react": "^1.6.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@tanstack/react-query": "^5.101.2",
@@ -24,7 +24,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.0.4",
-    "lucide-react": "^1.23.0",
+    "lucide-react": "^1.24.0",
     "next": "^16.2.10",
     "next-themes": "^0.4.6",
     "node-cron": "^4.6.0",
