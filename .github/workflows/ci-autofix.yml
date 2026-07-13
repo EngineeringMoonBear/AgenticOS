@@ -1,68 +1,59 @@
 # Bounded mechanical self-heal for agent PRs (GOL-308, from approved GOL-303).
 #
-# Applies eslint --fix + vitest snapshot updates to an agent PR that failed CI
-# on a purely mechanical check, and pushes ONE fix commit. Non-mechanical
-# failures are left for the D3 CI failure router (ci-failure-router.yml, E1).
-# See grove-sites/.github/workflows/ci-autofix.yml for the full rationale and
-# the GITHUB_TOKEN re-trigger limitation (identical here).
+# Applies eslint --fix + vitest snapshot updates to an agent PR and pushes ONE
+# fix commit; non-mechanical failures leave no diff and stay red for the D3 CI
+# failure router (ci-failure-router.yml, E1). See grove-sites ci-autofix.yml
+# for the full rationale, the `pull_request` (not `workflow_run`) security
+# reasoning, and the GITHUB_TOKEN re-trigger limitation (identical here).
 #
-# Guardrails: agent-authored PRs only; one autofix commit per push (skips if the
-# head commit is already a "[ci-autofix]" commit); no-op if the fixers leave no
-# diff. Node jobs no-op until the monorepo is bootstrapped (package.json present).
+# Guardrails: same-repo agent-authored PRs only; one autofix commit per push
+# (skips if the head commit is already a "[ci-autofix]" commit); no-op if the
+# fixers leave no diff. Node steps no-op until the monorepo is bootstrapped.
 name: CI autofix
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
   pull-requests: read
 
 concurrency:
-  group: ci-autofix-${{ github.event.workflow_run.head_branch }}
-  cancel-in-progress: false
+  group: ci-autofix-${{ github.head_ref }}
+  cancel-in-progress: true
 
 jobs:
   autofix:
-    if: >-
-      github.event.workflow_run.conclusion == 'failure' &&
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.pull_requests[0] != null
+    # Same-repo only — fork code never runs with a write-scoped token.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Gate (agent PR + loop guard)
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 2
+
+      - name: Gate (agent author + loop guard)
         id: gate
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -euo pipefail
-          AUTHOR=$(gh pr view "$PR" --repo "$REPO" --json author -q '.author.login')
           case "$AUTHOR" in
-            app/agenticos-developer|agenticos-developer) ;;
+            agenticos-developer|agenticos-developer[bot]|app/agenticos-developer) ;;
             *)
-              echo "PR #$PR author '$AUTHOR' is not the agent App bot; skipping."
+              echo "PR author '$AUTHOR' is not the agent App bot; skipping."
               echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
           esac
-          HEAD_MSG=$(gh api "repos/$REPO/commits/$HEAD_SHA" -q '.commit.message' | head -1)
-          if printf '%s' "$HEAD_MSG" | grep -q '\[ci-autofix\]'; then
+          LAST_MSG=$(git log -1 --pretty=%s)
+          if printf '%s' "$LAST_MSG" | grep -q '\[ci-autofix\]'; then
             echo "Head commit is already a [ci-autofix] commit; skipping to prevent loops."
             echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          HEAD_REF=$(gh pr view "$PR" --repo "$REPO" --json headRefName -q '.headRefName')
           echo "proceed=true" >> "$GITHUB_OUTPUT"
-          echo "head_ref=$HEAD_REF" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout PR branch
-        if: steps.gate.outputs.proceed == 'true'
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.gate.outputs.head_ref }}
 
       - name: Setup pnpm
         if: steps.gate.outputs.proceed == 'true'
@@ -89,7 +80,7 @@ jobs:
       - name: Commit & push one fix commit (or skip if clean)
         if: steps.gate.outputs.proceed == 'true'
         env:
-          HEAD_REF: ${{ steps.gate.outputs.head_ref }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -101,7 +92,7 @@ jobs:
           fi
           git commit \
             -m "chore(ci): apply mechanical lint/format/snapshot fixes [ci-autofix]" \
-            -m "Automated bounded self-heal for an agent PR that failed CI on a mechanical check. One commit per push (GOL-308)." \
+            -m "Automated bounded self-heal for an agent PR. One commit per push (GOL-308)." \
             -m "Co-authored-by: Paperclip <noreply@paperclip.ing>"
           git push origin "HEAD:$HEAD_REF"
           echo "::notice::Pushed one [ci-autofix] commit to $HEAD_REF. NOTE: GITHUB_TOKEN pushes do not re-trigger pull_request checks — the next agent push or a maintainer 'Re-run' will re-validate."
