@@ -1,0 +1,25 @@
+# Sample decomposition fixture (GOL-154 §8) — acceptance smoke.
+#
+# Exercises all three real ownership.yml files, multiple waves (1 + 2), owners
+# spanning alice/terra/iris, reviewers drawn from partition `review:` and from
+# `defaults.review`, and exactly ONE unmapped path.
+#
+# NOTE (Alice, GOL-343): the literal §8 draft used `packages/ui-kit/**` and
+# `addons/**`, but no partition on `main` claims those (grove-sites has
+# `packages/ui/**`; odoocker has `odoo/**`), so they would report as UNMAPPED —
+# contradicting the doc's stated "one unmapped path" expectation. Substituted the
+# two paths for ones the real ownership.yml actually owns so this fixture yields
+# exactly one unmapped path (`totally/novel/path.py`) as §8 documents. The
+# verbatim draft is preserved in `sample-spec-literal.yml`. Flagged to CEO.
+version: 1
+title: "Sample decomposition smoke"
+umbrella: GOL-154
+summary: "Fixture spec for the decomposition routine acceptance test."
+acceptance: [ "Smoke: partitioning is correct" ]
+changes:
+  - repo: grove-sites
+    paths: [ "apps/hub/**", "packages/ui/**" ]
+  - repo: odoocker
+    paths: [ "postgres/**", "odoo/**" ]
+  - repo: grove-odoo-modules
+    paths: [ "grove_headless/**", "web_dark_mode/**", "totally/novel/path.py" ]

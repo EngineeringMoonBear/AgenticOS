@@ -1,0 +1,36 @@
+# ownership.yml — repo partition + review-routing map for the AgenticOS
+# group-coding flow (GOL-152). See docs/ownership-schema.md for full field
+# definitions. Validate with: python3 scripts/lint-ownership.py
+#
+#   version | repo | defaults.review | partitions[{name, paths, owner, review, wave}]
+version: 1
+repo: grove-odoo-modules
+
+defaults:
+  review: [engineering-alice]
+
+partitions:
+  - name: module-grove-headless
+    paths:
+      - grove_headless/**
+    owner: engineering-alice
+    review: [devops-terra]
+    wave: 1
+  - name: module-web-dark-mode
+    paths:
+      - web_dark_mode/**
+    owner: frontend-iris
+    review: [engineering-alice]
+    wave: 1
+  - name: scripts
+    paths:
+      - scripts/**
+    owner: engineering-alice
+    review: [devops-terra]
+    wave: 1
+  - name: docs
+    paths:
+      - docs/**
+    owner: engineering-alice
+    review: [devops-terra]
+    wave: 3
