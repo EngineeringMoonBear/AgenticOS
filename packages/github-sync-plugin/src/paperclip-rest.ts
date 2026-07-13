@@ -40,6 +40,18 @@ export interface PaperclipRestClientOptions {
   baseUrl: string;
   token: string;
   http: PluginHttpClient;
+  /**
+   * Cloudflare Access service-token credentials. REQUIRED when baseUrl is the
+   * CF-Access-gated public host — which is the ONLY reachable target: the host's
+   * plugin `http.outbound` SSRF filter blocks the internal loopback (127.0.0.1),
+   * so the fallback cannot use the internal listener. Without these the CF Access
+   * edge 302-redirects the request to the login page and the write never reaches
+   * the API. Sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers,
+   * which CF's `non_identity` service-token policy honours. Omit only if baseUrl
+   * points at an un-gated origin.
+   */
+  cfAccessClientId?: string;
+  cfAccessClientSecret?: string;
 }
 
 /**
@@ -51,19 +63,30 @@ export class PaperclipRestClient {
   private readonly baseUrl: string;
   private readonly token: string;
   private readonly http: PluginHttpClient;
+  private readonly cfAccessClientId?: string;
+  private readonly cfAccessClientSecret?: string;
 
   constructor(opts: PaperclipRestClientOptions) {
     // Strip a trailing slash so `${baseUrl}/api/...` never double-slashes.
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.token = opts.token;
     this.http = opts.http;
+    this.cfAccessClientId = opts.cfAccessClientId;
+    this.cfAccessClientSecret = opts.cfAccessClientSecret;
   }
 
   private headers(): Record<string, string> {
-    return {
+    const h: Record<string, string> = {
       "content-type": "application/json",
       authorization: "Bearer " + this.token,
     };
+    // Pass the CF Access edge when baseUrl is the gated public host. Both must be
+    // present to be meaningful; a partial pair is dropped rather than sent.
+    if (this.cfAccessClientId && this.cfAccessClientSecret) {
+      h["CF-Access-Client-Id"] = this.cfAccessClientId;
+      h["CF-Access-Client-Secret"] = this.cfAccessClientSecret;
+    }
+    return h;
   }
 
   private async assertOk(res: Response, what: string): Promise<void> {

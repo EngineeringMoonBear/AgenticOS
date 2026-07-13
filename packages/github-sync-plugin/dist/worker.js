@@ -11735,16 +11735,25 @@ var PaperclipRestClient = class {
   baseUrl;
   token;
   http;
+  cfAccessClientId;
+  cfAccessClientSecret;
   constructor(opts) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.token = opts.token;
     this.http = opts.http;
+    this.cfAccessClientId = opts.cfAccessClientId;
+    this.cfAccessClientSecret = opts.cfAccessClientSecret;
   }
   headers() {
-    return {
+    const h = {
       "content-type": "application/json",
       authorization: "Bearer " + this.token
     };
+    if (this.cfAccessClientId && this.cfAccessClientSecret) {
+      h["CF-Access-Client-Id"] = this.cfAccessClientId;
+      h["CF-Access-Client-Secret"] = this.cfAccessClientSecret;
+    }
+    return h;
   }
   async assertOk(res, what) {
     if (res.ok) return;
@@ -11849,8 +11858,20 @@ function readConfig(raw) {
     prReviewFrontendPaths: Array.isArray(raw.prReviewFrontendPaths) ? raw.prReviewFrontendPaths.filter((p) => typeof p === "string" && p.length > 0) : void 0,
     ciAgentPrAuthor: raw.ciAgentPrAuthor ? String(raw.ciAgentPrAuthor) : void 0,
     paperclipApiBaseUrl: raw.paperclipApiBaseUrl ? String(raw.paperclipApiBaseUrl) : void 0,
-    paperclipApiToken: raw.paperclipApiToken ? String(raw.paperclipApiToken) : void 0
+    paperclipApiToken: raw.paperclipApiToken ? String(raw.paperclipApiToken) : void 0,
+    paperclipCfAccessClientId: raw.paperclipCfAccessClientId ? String(raw.paperclipCfAccessClientId) : void 0,
+    paperclipCfAccessClientSecret: raw.paperclipCfAccessClientSecret ? String(raw.paperclipCfAccessClientSecret) : void 0
   };
+}
+function restFallbackClient(ctx, cfg) {
+  if (!cfg.paperclipApiBaseUrl || !cfg.paperclipApiToken) return null;
+  return new PaperclipRestClient({
+    baseUrl: cfg.paperclipApiBaseUrl,
+    token: cfg.paperclipApiToken,
+    http: ctx.http,
+    cfAccessClientId: cfg.paperclipCfAccessClientId,
+    cfAccessClientSecret: cfg.paperclipCfAccessClientSecret
+  });
 }
 async function postOpsPing(ctx, webhookUrl, content) {
   if (!webhookUrl) return;
@@ -11944,14 +11965,10 @@ async function createMirrorIssue(ctx, cfg, bridge, payload, labels = [], runInSc
   try {
     issue = await runInScope(() => ctx.issues.create(createInput));
   } catch (err) {
-    if (isScopeExpiryError(err) && cfg.paperclipApiToken && cfg.paperclipApiBaseUrl) {
+    const rest = restFallbackClient(ctx, cfg);
+    if (isScopeExpiryError(err) && rest) {
       ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
         site: "create"
-      });
-      const rest = new PaperclipRestClient({
-        baseUrl: cfg.paperclipApiBaseUrl,
-        token: cfg.paperclipApiToken,
-        http: ctx.http
       });
       const { companyId: _companyId, ...restBody } = createInput;
       issue = await rest.createIssue(cfg.companyId, restBody);
@@ -12044,14 +12061,10 @@ async function handleAppClosure(ctx, cfg, event, runInScope) {
   try {
     issue = await runInScope(() => ctx.issues.get(mapping.paperclipIssueId, cfg.companyId));
   } catch (err) {
-    if (isScopeExpiryError(err) && cfg.paperclipApiToken && cfg.paperclipApiBaseUrl) {
+    const rest = restFallbackClient(ctx, cfg);
+    if (isScopeExpiryError(err) && rest) {
       ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
         site: "get"
-      });
-      const rest = new PaperclipRestClient({
-        baseUrl: cfg.paperclipApiBaseUrl,
-        token: cfg.paperclipApiToken,
-        http: ctx.http
       });
       const fetched = await rest.getIssue(mapping.paperclipIssueId);
       issue = fetched;
@@ -12078,14 +12091,10 @@ async function handleAppClosure(ctx, cfg, event, runInScope) {
   try {
     await runInScope(() => ctx.issues.update(issue.id, { status: target }, cfg.companyId));
   } catch (err) {
-    if (isScopeExpiryError(err) && cfg.paperclipApiToken && cfg.paperclipApiBaseUrl) {
+    const rest = restFallbackClient(ctx, cfg);
+    if (isScopeExpiryError(err) && rest) {
       ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
         site: "update"
-      });
-      const rest = new PaperclipRestClient({
-        baseUrl: cfg.paperclipApiBaseUrl,
-        token: cfg.paperclipApiToken,
-        http: ctx.http
       });
       await rest.updateIssue(issue.id, { status: target });
       ctx.logger.info("Paperclip REST fallback succeeded (GOL-323)", { site: "update" });

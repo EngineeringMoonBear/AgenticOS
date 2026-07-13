@@ -31,10 +31,14 @@ const manifest: PaperclipPluginManifestV1 = {
   //   interim mitigation for GOL-295/GOL-300). runInScope alone does not fully close
   //   the drop: the host still expires the per-delivery scope before some awaited
   //   ctx.issues.* writes land. On that error ONLY, the mirror-create / closure
-  //   paths retry via the Paperclip REST API (paperclipApiBaseUrl + paperclipApiToken,
-  //   two new optional config fields). Catch-fallback only — zero-risk to the
-  //   working scope path. No new capabilities (reuses http.outbound); the new config
-  //   fields deliberately do NOT use format:"secret-ref" (see the field comments).
+  //   paths retry via the Paperclip REST API. The internal loopback (127.0.0.1) is
+  //   NOT reachable — the host's plugin http.outbound SSRF filter blocks private
+  //   IPs — so the fallback targets the CF-Access-gated public host and carries a
+  //   Cloudflare Access service token. Four new optional config fields:
+  //   paperclipApiBaseUrl + paperclipApiToken + paperclipCfAccessClientId +
+  //   paperclipCfAccessClientSecret. Catch-fallback only — zero-risk to the working
+  //   scope path. No new capabilities (reuses http.outbound); the new config fields
+  //   deliberately do NOT use format:"secret-ref" (see the field comments).
   version: "0.10.0",
   displayName: "GitHub Sync",
   description:
@@ -271,6 +275,20 @@ const manifest: PaperclipPluginManifestV1 = {
         title: "Paperclip API bearer token (scope-expiry REST fallback, GOL-323)",
         description:
           "Bearer token used to authenticate the Paperclip REST fallback (GOL-323). Only used on the already-failing inbound path — a scope-expiry retry. Required (with paperclipApiBaseUrl) to enable the fallback.",
+      },
+      paperclipCfAccessClientId: {
+        type: "string",
+        // NOT format:"secret-ref" — same reasoning as paperclipApiToken above.
+        title: "Paperclip CF Access service-token client id (REST fallback, GOL-323)",
+        description:
+          "Cloudflare Access service-token CLIENT ID for the REST fallback. REQUIRED when paperclipApiBaseUrl is the CF-Access-gated public host (paperclip.gatheringatthegrove.com) — which is the ONLY reachable target, because the host's plugin http.outbound SSRF filter blocks the internal loopback (127.0.0.1). Without it CF Access 302-redirects the fallback request to the login page and the write is lost. Sent as the CF-Access-Client-Id header. Pair with paperclipCfAccessClientSecret.",
+      },
+      paperclipCfAccessClientSecret: {
+        type: "string",
+        // NOT format:"secret-ref" — same reasoning as paperclipApiToken above.
+        title: "Paperclip CF Access service-token client secret (REST fallback, GOL-323)",
+        description:
+          "Cloudflare Access service-token CLIENT SECRET for the REST fallback. Sent as the CF-Access-Client-Secret header alongside paperclipCfAccessClientId so CF's non_identity service-token policy admits the request to the gated public host. Required (with the client id) whenever paperclipApiBaseUrl is CF-Access-gated.",
       },
     },
     required: ["bridges"],

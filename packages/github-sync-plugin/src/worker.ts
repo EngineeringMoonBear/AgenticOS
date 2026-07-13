@@ -156,6 +156,16 @@ interface GithubSyncConfig {
    * config field (see manifest note) — it's a raw bearer token, not UUID-shaped.
    */
   paperclipApiToken?: string;
+  /**
+   * Cloudflare Access service-token client id / secret for the REST fallback
+   * (GOL-323). REQUIRED when paperclipApiBaseUrl is the CF-Access-gated public
+   * host — the only reachable target, since the host's plugin http.outbound SSRF
+   * filter blocks the internal loopback (127.0.0.1). Without them CF Access
+   * 302-redirects the fallback and the write is lost. Sent as CF-Access-Client-Id
+   * / CF-Access-Client-Secret headers. Not secret-ref (raw, non-UUID values).
+   */
+  paperclipCfAccessClientId?: string;
+  paperclipCfAccessClientSecret?: string;
 }
 
 function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
@@ -210,7 +220,29 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
     ciAgentPrAuthor: raw.ciAgentPrAuthor ? String(raw.ciAgentPrAuthor) : undefined,
     paperclipApiBaseUrl: raw.paperclipApiBaseUrl ? String(raw.paperclipApiBaseUrl) : undefined,
     paperclipApiToken: raw.paperclipApiToken ? String(raw.paperclipApiToken) : undefined,
+    paperclipCfAccessClientId: raw.paperclipCfAccessClientId ? String(raw.paperclipCfAccessClientId) : undefined,
+    paperclipCfAccessClientSecret: raw.paperclipCfAccessClientSecret
+      ? String(raw.paperclipCfAccessClientSecret)
+      : undefined,
   };
+}
+
+/**
+ * Build the REST-bypass client (GOL-323) from config, or null when the fallback
+ * is not configured (no base URL / token). Centralised so every scope-expiry
+ * catch site constructs the client identically — including the CF Access
+ * service-token headers, which are mandatory for the gated public host (the only
+ * reachable target; the internal loopback is SSRF-blocked by the host).
+ */
+function restFallbackClient(ctx: PluginContext, cfg: GithubSyncConfig): PaperclipRestClient | null {
+  if (!cfg.paperclipApiBaseUrl || !cfg.paperclipApiToken) return null;
+  return new PaperclipRestClient({
+    baseUrl: cfg.paperclipApiBaseUrl,
+    token: cfg.paperclipApiToken,
+    http: ctx.http,
+    cfAccessClientId: cfg.paperclipCfAccessClientId,
+    cfAccessClientSecret: cfg.paperclipCfAccessClientSecret,
+  });
 }
 
 /**
@@ -386,14 +418,10 @@ async function createMirrorIssue(
   } catch (err) {
     // REST-bypass fallback (GOL-323): the host may expire the scope after HTTP-200
     // before this write lands. On that error ONLY, retry via the Paperclip REST API.
-    if (isScopeExpiryError(err) && cfg.paperclipApiToken && cfg.paperclipApiBaseUrl) {
+    const rest = restFallbackClient(ctx, cfg);
+    if (isScopeExpiryError(err) && rest) {
       ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
         site: "create",
-      });
-      const rest = new PaperclipRestClient({
-        baseUrl: cfg.paperclipApiBaseUrl,
-        token: cfg.paperclipApiToken,
-        http: ctx.http,
       });
       // companyId moves into the URL for the REST create; pass the rest of the payload.
       const { companyId: _companyId, ...restBody } = createInput;
@@ -531,14 +559,10 @@ async function handleAppClosure(
     issue = await runInScope(() => ctx.issues.get(mapping.paperclipIssueId, cfg.companyId!));
   } catch (err) {
     // REST-bypass fallback (GOL-323): retry the read via REST only on scope-expiry.
-    if (isScopeExpiryError(err) && cfg.paperclipApiToken && cfg.paperclipApiBaseUrl) {
+    const rest = restFallbackClient(ctx, cfg);
+    if (isScopeExpiryError(err) && rest) {
       ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
         site: "get",
-      });
-      const rest = new PaperclipRestClient({
-        baseUrl: cfg.paperclipApiBaseUrl,
-        token: cfg.paperclipApiToken,
-        http: ctx.http,
       });
       // REST returns the same-shaped issue JSON (id/status/…); the loose RestIssue
       // is cast to Issue so downstream typing (resolveMirrorClosureStatus) holds.
@@ -571,14 +595,10 @@ async function handleAppClosure(
     await runInScope(() => ctx.issues.update(issue.id, { status: target }, cfg.companyId!));
   } catch (err) {
     // REST-bypass fallback (GOL-323): retry the status write via REST on scope-expiry.
-    if (isScopeExpiryError(err) && cfg.paperclipApiToken && cfg.paperclipApiBaseUrl) {
+    const rest = restFallbackClient(ctx, cfg);
+    if (isScopeExpiryError(err) && rest) {
       ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
         site: "update",
-      });
-      const rest = new PaperclipRestClient({
-        baseUrl: cfg.paperclipApiBaseUrl,
-        token: cfg.paperclipApiToken,
-        http: ctx.http,
       });
       await rest.updateIssue(issue.id, { status: target });
       ctx.logger.info("Paperclip REST fallback succeeded (GOL-323)", { site: "update" });
