@@ -1,0 +1,78 @@
+name: Droplet Auto-Resize (Tier 2B)
+
+# GOL-254 (GOL-241 Tier 2B) — guarded, opt-in vertical auto-resize executor.
+#
+# The advisory sibling (rightsize-advisor.yml, GOL-253) RECOMMENDS and never
+# mutates. This workflow can MUTATE — but only through every safety gate in
+# infra/scripts/auto-resize.py, and only when BOTH:
+#   1. the target droplet is enabled:true in infra/config/auto-resize.json
+#      (a reviewed PR = the board's D2 opt-in for that box), AND
+#   2. the AUTO_RESIZE_ENABLED Actions secret is "1" (the global arm switch).
+# With either unset it computes + announces the plan and stops (dry-run). Ships
+# DORMANT: agenticos-droplet is enabled:false and AUTO_RESIZE_ENABLED is unset,
+# so merging this changes nothing until the board opts in.
+#
+# Disk is NEVER grown: the script always issues resize disk=false (CPU/RAM-only,
+# reversible). DO disk grows are one-way, so automation must not touch disk.
+#
+# Credentials (Actions secrets, injected by CI, never held by any agent):
+#   AUTO_RESIZE_DO_TOKEN  DO token w/ droplet:read+write + monitoring:read
+#                         (falls back to DO_MONITORING_TOKEN when only advising)
+#   DISCORD_WEBHOOK_URL   Grove ops webhook
+#   AUTO_RESIZE_ENABLED   "1" to arm real mutation (per-droplet gate still applies)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Force dry-run (compute + announce the plan, never mutate)"
+        type: boolean
+        default: true
+  # Agent/ops-triggerable without actions:write, same pattern as the advisor.
+  repository_dispatch:
+    types: [auto-resize]
+  schedule:
+    # Weekly, Tuesday 08:15 UTC — lands inside the agenticos maintenance window
+    # (utc_days:[2], utc_hours:[8,9]). p95 moves slowly; weekly avoids flap.
+    - cron: "15 8 * * 2"
+
+permissions:
+  contents: read
+
+# A resize is a reboot — never let two overlap.
+concurrency:
+  group: auto-resize
+  cancel-in-progress: false
+
+jobs:
+  self-test:
+    name: Pure decision/gate self-test (no network)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python3 infra/scripts/auto-resize.py --self-test
+
+  execute:
+    name: Guarded auto-resize (dry-run unless armed + opted-in)
+    needs: self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Evaluate + (if armed) resize
+        env:
+          AUTO_RESIZE_DO_TOKEN: ${{ secrets.AUTO_RESIZE_DO_TOKEN }}
+          DO_MONITORING_TOKEN: ${{ secrets.DO_MONITORING_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          AUTO_RESIZE_ENABLED: ${{ secrets.AUTO_RESIZE_ENABLED }}
+          # workflow_dispatch defaults dry_run=true; a manual arm requires
+          # explicitly unchecking it AND the AUTO_RESIZE_ENABLED secret being "1".
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'false' && '' || '1' }}
+        run: python3 infra/scripts/auto-resize.py
