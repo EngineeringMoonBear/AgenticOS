@@ -1,0 +1,52 @@
+{
+  "_comment": [
+    "GOL-254 (GOL-241 Tier 2B) — per-droplet OPT-IN manifest for guarded auto-resize.",
+    "",
+    "This file IS the board decision D2 artifact. A droplet only becomes eligible",
+    "for automated CPU/RAM resize when the board adds it here AND flips its",
+    "'enabled' to true in a reviewed PR. Presence with enabled:false = codified but",
+    "still dry-run. Second key: the AUTO_RESIZE_ENABLED Actions secret must also be",
+    "'1' or the whole executor stays dry-run globally. Two keys, both human-set.",
+    "",
+    "Fields per droplet:",
+    "  name              DO droplet name (matched against the live DO account).",
+    "  enabled           board opt-in switch. false => never mutates (dry-run only).",
+    "  min_slug/max_slug hard cost/blast-radius band; the executor never resizes",
+    "                    outside [min_slug, max_slug] on the shared size ladder.",
+    "  bump_pct          p95 CPU or mem >= this over the window => bump up one tier.",
+    "  downsize_mem_pct  p95 mem below this AND cpu below downsize_cpu_pct => down.",
+    "  downsize_cpu_pct  (separate up/down thresholds = the hysteresis band).",
+    "  window_days       metric lookback; the breach must hold across the whole",
+    "                    window (sustained, not a spike).",
+    "  cooldown_hours    minimum time since the LAST resize action (read from the",
+    "                    DO actions API — stateless) before another is allowed.",
+    "  maintenance_window UTC days-of-week (0=Mon..6=Sun) and hours the ~1-2 min",
+    "                    power-off/resize/power-on reboot is permitted. Empty lists",
+    "                    => always allowed (NOT recommended for revenue-adjacent).",
+    "  health_check      url + expect_status + timeout_s; after power-on the box",
+    "                    must return expect_status within timeout_s or the executor",
+    "                    ROLLS BACK to the previous slug and announces the failure.",
+    "",
+    "NEVER grows disk: every resize is issued disk=false (CPU/RAM-only, reversible).",
+    "DO disk grows are one-way, so automation is forbidden from touching disk."
+  ],
+  "droplets": [
+    {
+      "name": "agenticos-droplet",
+      "enabled": true,
+      "min_slug": "s-1vcpu-2gb",
+      "max_slug": "s-2vcpu-4gb",
+      "bump_pct": 85,
+      "downsize_mem_pct": 30,
+      "downsize_cpu_pct": 20,
+      "window_days": 3,
+      "cooldown_hours": 72,
+      "maintenance_window": { "utc_days": [2], "utc_hours": [8, 9] },
+      "health_check": {
+        "url": "https://agenticos.gatheringatthegrove.com/health",
+        "expect_status": 200,
+        "timeout_s": 300
+      }
+    }
+  ]
+}
