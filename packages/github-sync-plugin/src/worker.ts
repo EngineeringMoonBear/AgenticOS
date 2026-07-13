@@ -1,6 +1,6 @@
 import { AsyncResource } from "node:async_hooks";
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
-import type { PluginContext, PluginEvent, PluginWebhookInput } from "@paperclipai/plugin-sdk";
+import type { Issue, PluginContext, PluginEvent, PluginWebhookInput } from "@paperclipai/plugin-sdk";
 import { GitHubClient } from "./github-client.js";
 import { makeBrokerTokenProvider, staticTokenProvider } from "./broker.js";
 import { getByRepoNumber, upsert } from "./mapping.js";
@@ -57,6 +57,7 @@ import {
   type CiCompletionEvent,
 } from "./ci-failure.js";
 import { getCiFailureRecord, upsertCiFailureRecord } from "./ci-failure-store.js";
+import { isScopeExpiryError, PaperclipRestClient } from "./paperclip-rest.js";
 
 /** Manifest-declared inbound webhook endpoint keys (GitHub → Paperclip). */
 /** Custom Actions-workflow path: a signed {repo,number,title,body,url} payload. */
@@ -142,6 +143,19 @@ interface GithubSyncConfig {
    * "agenticos-developer[bot]" (the shared Developer App identity).
    */
   ciAgentPrAuthor?: string;
+  /**
+   * Paperclip API base URL for the inbound scope-expiry REST fallback (GOL-323),
+   * e.g. "https://paperclip.gatheringatthegrove.com". When set together with
+   * paperclipApiToken, a scope-expiry on an inbound ctx.issues.* write is retried
+   * via the REST API. Unset → fallback disabled (behaviour unchanged).
+   */
+  paperclipApiBaseUrl?: string;
+  /**
+   * Bearer token for the Paperclip REST scope-expiry fallback (GOL-323). Only
+   * used on the already-failing inbound path. Deliberately NOT a secret-ref
+   * config field (see manifest note) — it's a raw bearer token, not UUID-shaped.
+   */
+  paperclipApiToken?: string;
 }
 
 function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
@@ -194,6 +208,8 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
       ? raw.prReviewFrontendPaths.filter((p): p is string => typeof p === "string" && p.length > 0)
       : undefined,
     ciAgentPrAuthor: raw.ciAgentPrAuthor ? String(raw.ciAgentPrAuthor) : undefined,
+    paperclipApiBaseUrl: raw.paperclipApiBaseUrl ? String(raw.paperclipApiBaseUrl) : undefined,
+    paperclipApiToken: raw.paperclipApiToken ? String(raw.paperclipApiToken) : undefined,
   };
 }
 
@@ -355,17 +371,38 @@ async function createMirrorIssue(
   // this the create can fire after the webhook's HTTP-200 has expired the scope
   // ("missing, expired, or unknown invocation scope"), which is the intermittent
   // mirror-drop of GOL-300/GOL-295. See captureInvocationScope (GOL-179).
-  const issue = await runInScope(() =>
-    ctx.issues.create({
-      companyId: cfg.companyId!,
-      projectId: bridge.paperclipProjectId,
-      title: payload.title,
-      description: buildInboundDescription(payload),
-      status: "todo",
-      priority: bridge.defaultPriority ?? "medium",
-      ...(assigneeAgentId ? { assigneeAgentId } : {}),
-    }),
-  );
+  const createInput = {
+    companyId: cfg.companyId!,
+    projectId: bridge.paperclipProjectId,
+    title: payload.title,
+    description: buildInboundDescription(payload),
+    status: "todo" as const,
+    priority: bridge.defaultPriority ?? "medium",
+    ...(assigneeAgentId ? { assigneeAgentId } : {}),
+  };
+  let issue: { id: string };
+  try {
+    issue = await runInScope(() => ctx.issues.create(createInput));
+  } catch (err) {
+    // REST-bypass fallback (GOL-323): the host may expire the scope after HTTP-200
+    // before this write lands. On that error ONLY, retry via the Paperclip REST API.
+    if (isScopeExpiryError(err) && cfg.paperclipApiToken && cfg.paperclipApiBaseUrl) {
+      ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
+        site: "create",
+      });
+      const rest = new PaperclipRestClient({
+        baseUrl: cfg.paperclipApiBaseUrl,
+        token: cfg.paperclipApiToken,
+        http: ctx.http,
+      });
+      // companyId moves into the URL for the REST create; pass the rest of the payload.
+      const { companyId: _companyId, ...restBody } = createInput;
+      issue = await rest.createIssue(cfg.companyId!, restBody);
+      ctx.logger.info("Paperclip REST fallback succeeded (GOL-323)", { site: "create" });
+    } else {
+      throw err;
+    }
+  }
 
   await upsert(ctx.db, {
     paperclipIssueId: issue.id,
@@ -489,7 +526,29 @@ async function handleAppClosure(
     return;
   }
 
-  const issue = await runInScope(() => ctx.issues.get(mapping.paperclipIssueId, cfg.companyId!));
+  let issue: Issue | null;
+  try {
+    issue = await runInScope(() => ctx.issues.get(mapping.paperclipIssueId, cfg.companyId!));
+  } catch (err) {
+    // REST-bypass fallback (GOL-323): retry the read via REST only on scope-expiry.
+    if (isScopeExpiryError(err) && cfg.paperclipApiToken && cfg.paperclipApiBaseUrl) {
+      ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
+        site: "get",
+      });
+      const rest = new PaperclipRestClient({
+        baseUrl: cfg.paperclipApiBaseUrl,
+        token: cfg.paperclipApiToken,
+        http: ctx.http,
+      });
+      // REST returns the same-shaped issue JSON (id/status/…); the loose RestIssue
+      // is cast to Issue so downstream typing (resolveMirrorClosureStatus) holds.
+      const fetched = await rest.getIssue(mapping.paperclipIssueId);
+      issue = fetched as Issue | null;
+      ctx.logger.info("Paperclip REST fallback succeeded (GOL-323)", { site: "get" });
+    } else {
+      throw err;
+    }
+  }
   if (!issue) {
     ctx.logger.warn("app webhook: mirror issue not readable; skipping closure", {
       issueId: mapping.paperclipIssueId,
@@ -508,7 +567,25 @@ async function handleAppClosure(
     return;
   }
 
-  await runInScope(() => ctx.issues.update(issue.id, { status: target }, cfg.companyId!));
+  try {
+    await runInScope(() => ctx.issues.update(issue.id, { status: target }, cfg.companyId!));
+  } catch (err) {
+    // REST-bypass fallback (GOL-323): retry the status write via REST on scope-expiry.
+    if (isScopeExpiryError(err) && cfg.paperclipApiToken && cfg.paperclipApiBaseUrl) {
+      ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
+        site: "update",
+      });
+      const rest = new PaperclipRestClient({
+        baseUrl: cfg.paperclipApiBaseUrl,
+        token: cfg.paperclipApiToken,
+        http: ctx.http,
+      });
+      await rest.updateIssue(issue.id, { status: target });
+      ctx.logger.info("Paperclip REST fallback succeeded (GOL-323)", { site: "update" });
+    } else {
+      throw err;
+    }
+  }
   await upsert(ctx.db, { ...mapping, lastSyncedAt: new Date().toISOString() });
 
   ctx.logger.info("app webhook: propagated GitHub closure to Paperclip mirror", {
