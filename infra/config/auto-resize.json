@@ -33,7 +33,7 @@
   "droplets": [
     {
       "name": "agenticos-droplet",
-      "enabled": false,
+      "enabled": true,
       "min_slug": "s-1vcpu-2gb",
       "max_slug": "s-2vcpu-4gb",
       "bump_pct": 85,

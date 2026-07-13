@@ -10,7 +10,9 @@ CPU/RAM-only resize when 7-day-ish p95 sustains a breach — with full safety ra
 Design guarantees (why this is safe to land dormant):
   • DRY-RUN BY DEFAULT. It mutates only when BOTH the per-droplet `enabled:true`
     (a reviewed PR / board opt-in) AND the AUTO_RESIZE_ENABLED="1" Actions secret
-    are set. Ship with agenticos-droplet enabled:false => this file changes nothing.
+    are set. The board opted agenticos-droplet in (GOL-254 decision D2,
+    2026-07-13) => enabled:true; the remaining gate is the AUTO_RESIZE_ENABLED="1"
+    secret, still unset, so this stays dry-run until an org-owner sets it.
   • NEVER GROWS DISK. Every resize is issued disk=false (CPU/RAM only, reversible).
     DO disk grows are one-way; automation is forbidden from touching disk.
   • HARD MIN/MAX BAND per droplet — runaway-cost cap; never resizes outside it.

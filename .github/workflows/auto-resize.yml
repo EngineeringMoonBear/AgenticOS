@@ -9,8 +9,9 @@ name: Droplet Auto-Resize (Tier 2B)
 #      (a reviewed PR = the board's D2 opt-in for that box), AND
 #   2. the AUTO_RESIZE_ENABLED Actions secret is "1" (the global arm switch).
 # With either unset it computes + announces the plan and stops (dry-run). Ships
-# DORMANT: agenticos-droplet is enabled:false and AUTO_RESIZE_ENABLED is unset,
-# so merging this changes nothing until the board opts in.
+# The board opted agenticos-droplet in (GOL-254 decision D2, 2026-07-13) so it is
+# enabled:true; the AUTO_RESIZE_ENABLED secret is still unset, so this stays
+# dry-run (computes + announces the plan, never mutates) until an org-owner arms it.
 #
 # Disk is NEVER grown: the script always issues resize disk=false (CPU/RAM-only,
 # reversible). DO disk grows are one-way, so automation must not touch disk.
