@@ -1,46 +1,80 @@
-# GitHub Actions secrets on the AgenticOS repo, managed by Terraform.
+# GitHub Actions secrets on the AgenticOS repo, managed by Terraform (GOL-342).
 #
-# GOL-252 (prereq for GOL-241 Tier 2A autoscaling): the "rightsize advisor"
-# workflow needs a DigitalOcean token so it can read 7-day p95 CPU/mem for the
-# AgenticOS Droplet and recommend a size. That token is exposed to CI as the
-# DO_MONITORING_TOKEN Actions secret, managed here.
+# GOL-252 seeded this as a single gated `github_actions_secret` for
+# DO_MONITORING_TOKEN (the Tier 2A rightsize advisor). GOL-342 generalises it to
+# a declarative `for_each` over the `ci_secrets` map so *any* number of Actions
+# secrets are declared in one place with drift detection. Values are never
+# committed — they are injected at apply time from 1Password via TF_VAR (see
+# `op run` recipe below), exactly like agenticos_db_password / openviking_root_api_key.
 #
-# ── GOVERNANCE GATE (same wall as state-backend/main.tf `github_actions_secret`)
-# Pushing Actions secrets requires a github_token with Actions:Secrets *write*
-# on the repo. The AgenticOS Infra github_token
-# (op://Goldberry Grove - Admin/Grove Infra/github_token) is Contents/PR-scoped
-# only — no secrets write — so an apply with `manage_github_ci_secrets = true`
-# will 403 until the CEO grants secrets:write (the GOL-252 blocker).
+# The paired, repo-agnostic runner for one-offs / other repos is
+# ../../tools/sync-ci-secrets.sh reading ../ci-secrets.yaml (op_ref → repo → name).
+# Terraform is the source of truth for AgenticOS's own secrets; the script covers
+# repos where a scheduled Action or ad-hoc `op read | gh secret set` is simpler.
 #
-# The gate defaults to false, so this file is a NO-OP on merge/apply today and
-# is safe to land now: it codifies the resource and documents the seam, and the
-# operator flips the gate once a secrets-scoped token exists. (AgenticOS runs no
-# Terraform in CI today — apply is operator-run — matching state-backend's note.)
+# ── GOVERNANCE GATE — still CLOSED for AgenticOS (verified 2026-07-13, GOL-342)
+# Pushing Actions secrets requires a github_token with Actions:Secrets *WRITE* on
+# the repo. VERIFIED by real API calls on 2026-07-13:
+#   • Shared GitHub App (broker) token:  GET actions/secrets/public-key = 200 (READ)
+#                                         PUT actions/secrets/<name>    = 403  (NO write)
+#   • Grove Infra PAT:                    no access to AgenticOS at all  (403)
+# So `public-key = 200` proves READ scope only — it does NOT imply write, which is
+# what the earlier GOL-342 premise assumed. No token currently has secrets:WRITE on
+# AgenticOS, so `manage_github_ci_secrets` stays DEFAULT FALSE: an apply with it on
+# would 403 on the PUT. Flip it to true only once the App install is granted
+# Secrets:write (or a write-scoped PAT for EngineeringMoonBear/AgenticOS exists).
+# (For contrast, the Grove Infra PAT DOES have proven secrets:write on grove-sites,
+# which is why the script path there is self-serve today — see ../ci-secrets.yaml.)
 #
 # ── LEAST PRIVILEGE (blast radius)
 # The advisor only READS monitoring metrics. Ideal backing token is scoped to
 # `monitoring:read` (+ `droplet:read` to resolve droplet ids) — strictly
 # read-only, no mutation. The existing `do_token_scoped`
 # (op://Goldberry Grove - Admin/Grove Infra/do_token_scoped) is a 5-scope CRUD
-# token (droplet/app/ssh_key/vpc/monitoring), which is broader than a read-only
-# advisor needs. Which token backs `var.do_monitoring_token` is a board decision
-# tracked on the GOL-252 thread; prefer minting the read-only token.
+# token, broader than a read-only advisor needs. Which token backs
+# DO_MONITORING_TOKEN is a board decision on the GOL-252 thread; prefer the
+# read-only mint.
+#
+# ── APPLY RECIPE (values from 1Password, never from state/CLI history)
+#   Build the TF_VAR_ci_secrets JSON straight from the shared manifest so the map
+#   is defined in exactly one place:
+#
+#     export TF_VAR_ci_secrets="$(../../tools/ci-secrets-tfvars.sh \
+#         --repo EngineeringMoonBear/AgenticOS)"
+#     terraform -chdir=infra/terraform apply -var manage_github_ci_secrets=true
+#
+#   (ci-secrets-tfvars.sh runs `op read` per manifest row and emits a
+#   {SECRET_NAME: value} JSON object — the only shape `var.ci_secrets` accepts.)
 
 provider "github" {
   token = var.github_ci_token
   owner = split("/", var.github_ci_secrets_repo)[0]
 }
 
-resource "github_actions_secret" "do_monitoring_token" {
-  # Gated OFF by default (see header). Also guards on a non-empty value so an
-  # apply with the gate on but no token supplied is a no-op rather than pushing
-  # an empty secret.
-  count = var.manage_github_ci_secrets && var.do_monitoring_token != "" ? 1 : 0
+locals {
+  github_ci_repo_name = split("/", var.github_ci_secrets_repo)[1]
 
-  repository  = split("/", var.github_ci_secrets_repo)[1]
-  secret_name = "DO_MONITORING_TOKEN"
-  # `value` (github provider 6.x) — encrypted at rest by GitHub, masked in logs.
-  value = var.do_monitoring_token
+  # Effective secret set = the generic map, plus the legacy single-var wiring
+  # (DO_MONITORING_TOKEN) folded in for backward compatibility so existing
+  # tfvars keep working. A non-empty legacy value overrides / seeds the entry;
+  # an empty one contributes nothing (merge of {} is a no-op).
+  legacy_ci_secrets = var.do_monitoring_token != "" ? {
+    DO_MONITORING_TOKEN = var.do_monitoring_token
+  } : {}
+
+  ci_secrets = merge(var.ci_secrets, local.legacy_ci_secrets)
+}
+
+resource "github_actions_secret" "ci" {
+  # Gated OFF by default (see header). `for_each` over an empty map when the gate
+  # is off makes this a clean no-op — no provider auth, no plan churn. Each value
+  # is encrypted at rest by GitHub and masked in logs; the github provider 6.x
+  # `value` field is write-only (never read back into state).
+  for_each = var.manage_github_ci_secrets ? local.ci_secrets : {}
+
+  repository  = local.github_ci_repo_name
+  secret_name = each.key
+  value       = each.value
 }
 
 # GOL-253: the rightsize advisor posts its recommendation to the Grove ops
