@@ -185,7 +185,26 @@ variable "discord_webhook_url" {
 }
 
 variable "manage_github_ci_secrets" {
-  description = "Gate: when true, Terraform pushes DO_MONITORING_TOKEN + DISCORD_WEBHOOK_URL to github_ci_secrets_repo's Actions secrets. Requires a secrets:write github_ci_token (GOL-252 CEO governance gate). Defaults to false = no-op, so this config is safe to merge before the token exists."
+  description = "Gate: when true, Terraform pushes the effective ci_secrets map (var.ci_secrets + the legacy DO_MONITORING_TOKEN) AND DISCORD_WEBHOOK_URL (GOL-253) to github_ci_secrets_repo's Actions secrets. Requires a secrets:WRITE github_ci_token. VERIFIED 2026-07-13 (GOL-342): no token has secrets:write on AgenticOS yet (App token = read-only, PUT 403; no PAT access), so this stays false = no-op. Flip once the App install gains Secrets:write."
   type        = bool
   default     = false
+}
+
+# ── GOL-342: generalised declarative CI-secret map ──────────────────────────
+variable "ci_secrets" {
+  description = <<-EOT
+    Map of GitHub Actions SECRET_NAME => plaintext value to push to
+    github_ci_secrets_repo when manage_github_ci_secrets = true. Values are
+    injected at apply time from 1Password — NEVER committed. Build the map JSON
+    straight from the shared manifest so it is declared in one place only:
+
+      export TF_VAR_ci_secrets="$(../../tools/ci-secrets-tfvars.sh \
+          --repo EngineeringMoonBear/AgenticOS)"
+
+    The legacy `do_monitoring_token` var is merged in automatically (see
+    github-ci-secrets.tf locals) so existing wiring keeps working.
+  EOT
+  type        = map(string)
+  sensitive   = true
+  default     = {}
 }
