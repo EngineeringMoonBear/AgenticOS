@@ -42,3 +42,13 @@ resource "github_actions_secret" "do_monitoring_token" {
   # `value` (github provider 6.x) — encrypted at rest by GitHub, masked in logs.
   value = var.do_monitoring_token
 }
+
+# GOL-253: the rightsize advisor posts its recommendation to the Grove ops
+# Discord webhook. Same governance gate + non-empty guard as the DO token above.
+resource "github_actions_secret" "discord_webhook_url" {
+  count = var.manage_github_ci_secrets && var.discord_webhook_url != "" ? 1 : 0
+
+  repository  = split("/", var.github_ci_secrets_repo)[1]
+  secret_name = "DISCORD_WEBHOOK_URL"
+  value       = var.discord_webhook_url
+}

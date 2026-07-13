@@ -177,8 +177,15 @@ variable "do_monitoring_token" {
   default     = ""
 }
 
+variable "discord_webhook_url" {
+  description = "Discord ops webhook exposed to CI as the DISCORD_WEBHOOK_URL Actions secret so the Tier 2A rightsize advisor (GOL-253) can post its recommendation. Value: op://Goldberry Grove - Admin/Grove Infra/discord_webhook_url. Same secrets:write gate as do_monitoring_token."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "manage_github_ci_secrets" {
-  description = "Gate: when true, Terraform pushes DO_MONITORING_TOKEN to github_ci_secrets_repo's Actions secrets. Requires a secrets:write github_ci_token (GOL-252 CEO governance gate). Defaults to false = no-op, so this config is safe to merge before the token exists."
+  description = "Gate: when true, Terraform pushes DO_MONITORING_TOKEN + DISCORD_WEBHOOK_URL to github_ci_secrets_repo's Actions secrets. Requires a secrets:write github_ci_token (GOL-252 CEO governance gate). Defaults to false = no-op, so this config is safe to merge before the token exists."
   type        = bool
   default     = false
 }
