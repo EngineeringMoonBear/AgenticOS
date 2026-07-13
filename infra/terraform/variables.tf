@@ -55,6 +55,12 @@ variable "google_sso_email" {
   default     = "josh@goldberrygrove.farm"
 }
 
+variable "cloudflare_access_team_domain" {
+  description = "Cloudflare Zero Trust team domain (team name or full <team>.cloudflareaccess.com) — issuer for Access JWT verification in the dashboard (security review 2026-07-12, H1)"
+  type        = string
+  default     = "goldberrygrove"
+}
+
 variable "ssh_public_key_path" {
   description = "Path to the SSH public key to install on the Droplet"
   type        = string
