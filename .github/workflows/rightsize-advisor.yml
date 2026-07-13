@@ -1,0 +1,72 @@
+name: Droplet Rightsize Advisor
+
+# GOL-253 (GOL-241 Tier 2A) — advisory-only droplet right-size recommender.
+#
+# Reads each stateful droplet's 7-day p95 CPU + memory from the DigitalOcean
+# monitoring API and posts a right-size recommendation to the Discord ops
+# webhook. This is the "observability before optimization" step: it RECOMMENDS
+# a size, it NEVER resizes anything. Zero mutation — no DO write scope, no host
+# root, no SSH. Fixed right-size follow-through folds into GOL-51; guarded
+# opt-in auto-resize is the separate GOL-254.
+#
+# Modeled on disk-reclaim.yml's trigger surface (schedule + repository_dispatch
+# + workflow_dispatch, no host root), but the body just calls two HTTPS APIs
+# (DO read-only + Discord webhook) — so it holds NO standing credential beyond
+# the two CI secrets and can be dispatched by an in-container agent via
+# repository_dispatch without actions:write.
+#
+# Credentials (Actions secrets, injected by CI, never held by any agent):
+#   DO_MONITORING_TOKEN   read-only DO token (GOL-252)
+#   DISCORD_WEBHOOK_URL   Grove ops webhook (GOL-253)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Compute + print the advisory but skip the Discord post"
+        type: boolean
+        default: false
+      targets:
+        description: "Comma-separated droplet names (default: agenticos-droplet)"
+        type: string
+        default: ""
+  # Agent-triggerable WITHOUT actions:write: a contents:write gh-token-broker
+  # token POSTs /repos/<owner>/<repo>/dispatches {"event_type":"rightsize-advisor"}.
+  repository_dispatch:
+    types: [rightsize-advisor]
+  schedule:
+    # Weekly, Monday 13:05 UTC. A 7-day p95 changes slowly, so weekly is the
+    # right cadence — daily would just re-post the same recommendation and add
+    # ops-channel noise.
+    - cron: "5 13 * * 1"
+
+permissions:
+  contents: read
+
+# Read-only advisory; never let two overlap (harmless, but avoids double posts).
+concurrency:
+  group: rightsize-advisor
+  cancel-in-progress: false
+
+jobs:
+  advise:
+    name: 7-day p95 right-size advisory (no mutation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compute p95 and post recommendation
+        env:
+          DO_MONITORING_TOKEN: ${{ secrets.DO_MONITORING_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # workflow_dispatch inputs are empty on schedule/repository_dispatch,
+          # so the script falls back to its own defaults.
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
+          RIGHTSIZE_TARGETS: ${{ github.event.inputs.targets }}
+        run: python3 infra/scripts/rightsize-advisor.py
