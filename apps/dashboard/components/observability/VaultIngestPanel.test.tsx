@@ -13,36 +13,72 @@ function renderWithClient(ui: React.ReactNode) {
 }
 
 describe("VaultIngestPanel", () => {
+  let payload: unknown;
+
   beforeEach(() => {
+    payload = {
+      schedule: "0 * * * *",
+      runs: [
+        {
+          id: "vault-ingest-5464de072e",
+          started_at: "2026-07-14T15:00:00.000Z",
+          ended_at: "2026-07-14T15:00:00.312Z",
+          status: "done",
+          error: null,
+          metadata: null,
+        },
+        {
+          id: "vault-ingest-4b4ec8a43d",
+          started_at: "2026-07-14T14:08:00.000Z",
+          ended_at: "2026-07-14T14:08:05.800Z",
+          status: "failed",
+          error: "viking timeout",
+          metadata: null,
+        },
+        {
+          id: "vault-ingest-0b3780feba",
+          started_at: "2026-07-14T14:00:00.000Z",
+          ended_at: null,
+          status: "running",
+          error: null,
+          metadata: null,
+        },
+      ],
+    };
     vi.spyOn(global, "fetch").mockImplementation(async () => {
-      return new Response(
-        JSON.stringify({
-          schedule: "hourly · next 16:00",
-          runs: [
-            { id: "vault-ingest-5464de072e", time_label: "15:00", detail: "skipped 5", status: "ok", duration_label: "312ms" },
-            { id: "vault-ingest-4b4ec8a43d", time_label: "14:08", detail: "errored 2", status: "err", duration_label: "354ms" },
-            { id: "vault-ingest-0b3780feba", time_label: "14:00", detail: "updated 1", status: "ok", duration_label: "5.8s" },
-          ],
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     });
   });
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("renders ingest runs with status pills and timestamps", async () => {
+  it("renders real task rows with status pills, durations, and cron schedule", async () => {
     renderWithClient(<VaultIngestPanel />);
     await waitFor(() => {
       expect(screen.getByText("Vault ingest")).toBeInTheDocument();
-      expect(screen.getByText(/hourly · next 16:00/)).toBeInTheDocument();
-      expect(screen.getByText(/15:00 · skipped 5/)).toBeInTheDocument();
+      expect(screen.getByText(/cron 0 \* \* \* \*/)).toBeInTheDocument();
       expect(screen.getByText("vault-ingest-5464de072e")).toBeInTheDocument();
       expect(screen.getByText("312ms")).toBeInTheDocument();
-      expect(screen.getByText(/14:08 · errored 2/)).toBeInTheDocument();
       expect(screen.getByText("failed")).toBeInTheDocument();
+      expect(screen.getByText(/viking timeout/)).toBeInTheDocument();
       expect(screen.getByText("5.8s")).toBeInTheDocument();
+      // Still-running row has no duration yet.
+      expect(screen.getByText("running")).toBeInTheDocument();
+      expect(screen.getByText("—")).toBeInTheDocument();
+    });
+  });
+
+  it("renders empty state when no runs are recorded", async () => {
+    payload = { schedule: "0 * * * *", runs: [] };
+    renderWithClient(<VaultIngestPanel />);
+    await waitFor(() => {
+      expect(
+        screen.getByText(/no vault-ingest runs recorded/i),
+      ).toBeInTheDocument();
     });
   });
 });

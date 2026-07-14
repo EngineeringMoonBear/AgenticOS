@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/command";
 import { usePaletteStore } from "@/lib/palette/use-palette-store";
 import { useFilter } from "@/lib/filter/use-filter";
-import { SKILL_FIXTURES } from "@/lib/fixtures/skills";
+import { useVaultSkills } from "@/lib/vault/hooks/use-vault-skills";
 import { useVaultTree } from "@/lib/vault/hooks/use-vault-tree";
 import { useRunFeed } from "@/lib/hooks/use-run-feed";
 
@@ -22,9 +22,14 @@ import { useRunFeed } from "@/lib/hooks/use-run-feed";
  * CommandPalette — opened by ⌘K, the header button, or usePaletteStore.open().
  * Searches skills, wiki pages, and recent runs. Resets input on each open.
  *
+ * Skills come from /api/vault/skills (the real vault-server registry — same
+ * source the Architecture page renders; truth pass 2026-07-14, previously a
+ * local fixtures file of invented skills). Selecting one opens the
+ * Architecture page, where the skill catalog lives.
+ *
  * Filter strategy: uses the built-in cmdk Command primitive filter, which scores
  * each item's `value` prop against the user's query using a simple fuzzy algorithm.
- * This is sufficient for the fixture data sizes and avoids an extra dependency.
+ * This is sufficient for these data sizes and avoids an extra dependency.
  *
  * Zero-result groups are hidden automatically by cmdk (CommandGroup renders nothing
  * when all its children are filtered out) — no manual hide logic needed.
@@ -36,15 +41,17 @@ export function CommandPalette() {
   const { clear: clearFilter } = useFilter();
   const { data: vaultTree } = useVaultTree();
   const wikiPaths = vaultTree?.flatPaths.slice(0, 5) ?? [];
+  const { data: vaultSkills } = useVaultSkills();
+  const skills = vaultSkills?.skills.slice(0, 8) ?? [];
   const { data: recentRuns } = useRunFeed({ limit: 5 });
 
   function handleOpenChange(open: boolean) {
     if (!open) close();
   }
 
-  function handleDispatchSkill(skillName: string) {
+  function handleOpenSkill() {
     close();
-    toast.info(`Skill dispatched: ${skillName} — wires up in Phase 4`);
+    router.push("/architecture");
   }
 
   function handleWikiNavigate(path: string) {
@@ -82,11 +89,11 @@ export function CommandPalette() {
 
         {/* ── Skills ──────────────────────────────────────────── */}
         <CommandGroup heading="Skills">
-          {SKILL_FIXTURES.slice(0, 8).map((skill) => (
+          {skills.map((skill) => (
             <CommandItem
-              key={skill.id}
-              value={`skill ${skill.name} ${skill.description} ${skill.tags.join(" ")}`}
-              onSelect={() => handleDispatchSkill(skill.name)}
+              key={skill.path}
+              value={`skill ${skill.name} ${skill.description} ${skill.triggers.join(" ")}`}
+              onSelect={handleOpenSkill}
               className="gap-2.5"
             >
               <Sparkles
