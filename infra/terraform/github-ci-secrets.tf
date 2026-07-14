@@ -66,15 +66,22 @@ locals {
 }
 
 resource "github_actions_secret" "ci" {
-  # Gated OFF by default (see header). `for_each` over an empty map when the gate
+  # Gated OFF by default (see header). `for_each` over an empty set when the gate
   # is off makes this a clean no-op — no provider auth, no plan churn. Each value
   # is encrypted at rest by GitHub and masked in logs; the github provider 6.x
   # `value` field is write-only (never read back into state).
-  for_each = var.manage_github_ci_secrets ? local.ci_secrets : {}
+  #
+  # Iterate over nonsensitive KEY NAMES, not the map: `var.ci_secrets` is
+  # sensitive, which taints the whole merged map, and Terraform hard-errors on
+  # a sensitive for_each EVEN WHEN the gate is false ("Invalid for_each
+  # argument … has a sensitive value"). Keys are just env-var names (public by
+  # design — they appear in workflow YAML); values stay sensitive via the
+  # lookup below.
+  for_each = var.manage_github_ci_secrets ? toset(nonsensitive(keys(local.ci_secrets))) : toset([])
 
   repository  = local.github_ci_repo_name
   secret_name = each.key
-  value       = each.value
+  value       = local.ci_secrets[each.key]
 }
 
 # GOL-253: the rightsize advisor posts its recommendation to the Grove ops
