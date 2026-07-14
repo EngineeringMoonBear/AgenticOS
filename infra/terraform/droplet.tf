@@ -40,7 +40,11 @@ resource "digitalocean_droplet" "agenticos_droplet" {
   # and Claude Code OAuth state that the app-level backups don't capture).
   backups = true
 
-  tags = ["agenticos", "production"]
+  # tags DISABLED locally for the 2026-07-14 H1 apply: creating tags needs the
+  # DO `tag` scope, which the GOL-75 least-privilege token intentionally lacks
+  # (403 on POST /v2/tags). Fleet must either add the scope to the token or
+  # drop the tags — tracked on GitHub. Restore before committing anything here.
+  # tags = ["agenticos", "production"]
 
   user_data = local.cloud_init
 
