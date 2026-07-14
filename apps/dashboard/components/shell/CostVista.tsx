@@ -3,58 +3,85 @@ import { useMemo } from "react";
 import { VistaShell } from "./VistaShell";
 import { KpiTile } from "./KpiTile";
 import { BurndownProjectionBackdrop } from "./backdrops/BurndownProjectionBackdrop";
+import { useCostVista } from "@/lib/hooks/use-cost-vista";
+import type { BurndownPoint } from "@/app/api/cost/burndown/route";
 
 /**
  * Cost tab hero vista. Composes the {@link VistaShell} chrome with the
- * {@link BurndownProjectionBackdrop} burndown chart and the four Cost-
- * specific KPI tiles. Stub data lives here until a later dispatch wires
- * it to the live cost query.
+ * {@link BurndownProjectionBackdrop} burndown chart and four Cost KPI
+ * tiles — all wired to live endpoints via {@link useCostVista}
+ * (truth pass 2026-07-12; previously hardcoded stub values):
+ *
+ *   - /api/cost/today               → today / MTD / %-of-cap tiles
+ *   - /api/cost/projection          → month-end projection tile + backdrop line
+ *   - /api/cost/burndown?range=30d  → backdrop cumulative curve
+ *
+ * Data-fidelity rule: a source that errors renders "—" on its tiles —
+ * never a fabricated number. RunsVista is the pattern source.
  */
+const PLACEHOLDER = "—";
 
-function buildStubBurndown(): {
+function fmtUsd(n: number): string {
+  return n.toFixed(2);
+}
+
+/** today-vs-yesterday delta, e.g. "−18%" / "+42%". Null when yesterday=0. */
+function deltaPct(today: number, yesterday: number): string | null {
+  if (yesterday <= 0) return null;
+  const pct = Math.round(((today - yesterday) / yesterday) * 100);
+  if (pct === 0) return null;
+  return pct > 0 ? `+${pct}%` : `−${Math.abs(pct)}%`;
+}
+
+/**
+ * Map rolling per-day burndown points onto the current calendar month's
+ * cumulative curve (the backdrop's contract: index = day-of-month, value =
+ * cumulative dollars). Points outside the current UTC month are dropped.
+ */
+function toMonthCurve(points: BurndownPoint[]): {
   actualByDay: number[];
   todayIndex: number;
 } {
-  // 31 days. "Today" is day 28 (0-indexed). Climb toward ~$46.18 today.
-  // Small daily increments with occasional spikes feels like real burn.
-  // Deterministic — no Math.random in render path so SSR/CSR match.
-  const daily: number[] = [];
-  // Pseudo-random but seeded by index for stability.
-  const noise = (i: number) => ((i * 1103515245 + 12345) >>> 0) % 1000 / 1000;
-  for (let d = 0; d < 31; d++) {
-    const n = noise(d);
-    // Most days: $0.50 – $2.00. Occasional spike: $3 – $5.5.
-    let delta: number;
-    if (n > 0.85) delta = 3 + n * 2.5;
-    else if (n > 0.6) delta = 1.5 + n * 0.8;
-    else delta = 0.4 + n * 1.4;
-    // Slow start (first two days quiet).
-    if (d < 2) delta *= 0.3;
-    daily.push(delta);
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth();
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const todayIndex = now.getUTCDate() - 1;
+
+  const perDay = new Array<number>(daysInMonth).fill(0);
+  for (const p of points) {
+    const d = new Date(p.at);
+    if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month) continue;
+    perDay[d.getUTCDate() - 1] += p.cents / 100;
   }
-  // Build cumulative through day 28 (today). Day 29, 30 are unknown — but
-  // backdrop only draws actual up to todayIndex, so cumulative beyond doesn't
-  // matter. Fill them anyway so the array has length 31.
   const actualByDay: number[] = [];
   let acc = 0;
-  for (let d = 0; d <= 28; d++) {
-    acc += daily[d];
+  for (let i = 0; i < daysInMonth; i++) {
+    // Accumulate only through today; pad the unknown future flat (the
+    // backdrop ignores values past todayIndex, but keeps array length).
+    if (i <= todayIndex) acc += perDay[i];
     actualByDay.push(acc);
   }
-  // Scale so day-28 lands very close to $46.18.
-  const target = 46.18;
-  const scale = target / acc;
-  for (let i = 0; i < actualByDay.length; i++) actualByDay[i] *= scale;
-  // Pad future days (unused by backdrop but keeps length consistent).
-  while (actualByDay.length < 31) {
-    actualByDay.push(actualByDay[actualByDay.length - 1]);
-  }
-  return { actualByDay, todayIndex: 28 };
+  return { actualByDay, todayIndex };
 }
 
 export function CostVista() {
   const nowIso = useMemo(() => new Date().toISOString(), []);
-  const { actualByDay, todayIndex } = useMemo(() => buildStubBurndown(), []);
+  const { data } = useCostVista();
+
+  const today = data?.today ?? null;
+  const projection = data?.projection ?? null;
+  const burndown = data?.burndown ?? null;
+
+  const { actualByDay, todayIndex } = useMemo(
+    () => toMonthCurve(burndown ?? []),
+    [burndown]
+  );
+
+  const capUsd = today?.capUsd ?? projection?.cap_usd ?? 0;
+  const pctOfCap =
+    today && capUsd > 0 ? Math.round((today.mtdUsd / capUsd) * 100) : null;
+  const delta = today ? deltaPct(today.todayUsd, today.yesterdayUsd) : null;
 
   return (
     <VistaShell
@@ -64,43 +91,68 @@ export function CostVista() {
         <BurndownProjectionBackdrop
           actualByDay={actualByDay}
           todayIndex={todayIndex}
-          projectedEom={47.74}
-          cap={200}
+          projectedEom={projection?.spend_usd ?? 0}
+          cap={capUsd}
         />
       }
     >
       <KpiTile
         value={
-          <>
-            <span className="unit">$</span>2.41
-            <span className="delta down">−18%</span>
-          </>
+          today ? (
+            <>
+              <span className="unit">$</span>
+              {fmtUsd(today.todayUsd)}
+              {delta ? (
+                <span className={`delta ${delta.startsWith("+") ? "up" : "down"}`}>
+                  {delta}
+                </span>
+              ) : null}
+            </>
+          ) : (
+            PLACEHOLDER
+          )
         }
         label="today's spend"
-        sublabel="vs yesterday"
+        sublabel={today ? "vs yesterday" : "loading…"}
       />
       <KpiTile
         value={
-          <>
-            <span className="unit">$</span>46.18
-          </>
+          today ? (
+            <>
+              <span className="unit">$</span>
+              {fmtUsd(today.mtdUsd)}
+            </>
+          ) : (
+            PLACEHOLDER
+          )
         }
         label="MTD spend"
-        sublabel="of $200 cap"
+        sublabel={capUsd > 0 ? `of $${Math.round(capUsd)} cap` : "no cap set"}
       />
       <KpiTile
         value={
-          <>
-            <span className="unit">$</span>47.74
-          </>
+          projection ? (
+            <>
+              <span className="unit">$</span>
+              {fmtUsd(projection.spend_usd)}
+            </>
+          ) : (
+            PLACEHOLDER
+          )
         }
         label="month-end projection"
-        sublabel="at current burn rate"
+        sublabel={
+          projection
+            ? `$${projection.avg_per_day_usd.toFixed(2)}/day · ${projection.days_remaining}d left`
+            : "at current burn rate"
+        }
       />
       <KpiTile
-        value="24%"
+        value={pctOfCap != null ? `${pctOfCap}%` : PLACEHOLDER}
         label="% of cap"
-        sublabel="82% headroom"
+        sublabel={
+          pctOfCap != null ? `${Math.max(0, 100 - pctOfCap)}% headroom` : "no cap set"
+        }
       />
     </VistaShell>
   );

@@ -26,7 +26,19 @@ var manifest = {
   // 0.9.1 = inbound invocation-scope fix (GOL-300/GOL-295): the mirror-create and
   //   closure paths now re-enter the captured host scope (runInScope), matching the
   //   PR-path fix (GOL-179). Bugfix only — manifest surface unchanged bar version.
-  version: "0.9.1",
+  // 0.10.0 = inbound scope-expiry REST-bypass fallback (GOL-323, board-authorized
+  //   interim mitigation for GOL-295/GOL-300). runInScope alone does not fully close
+  //   the drop: the host still expires the per-delivery scope before some awaited
+  //   ctx.issues.* writes land. On that error ONLY, the mirror-create / closure
+  //   paths retry via the Paperclip REST API. The internal loopback (127.0.0.1) is
+  //   NOT reachable — the host's plugin http.outbound SSRF filter blocks private
+  //   IPs — so the fallback targets the CF-Access-gated public host and carries a
+  //   Cloudflare Access service token. Four new optional config fields:
+  //   paperclipApiBaseUrl + paperclipApiToken + paperclipCfAccessClientId +
+  //   paperclipCfAccessClientSecret. Catch-fallback only — zero-risk to the working
+  //   scope path. No new capabilities (reuses http.outbound); the new config fields
+  //   deliberately do NOT use format:"secret-ref" (see the field comments).
+  version: "0.10.0",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",
@@ -224,6 +236,36 @@ var manifest = {
         type: "string",
         title: "CI-fix \u2014 agent PR author login (GOL-305)",
         description: `GitHub login that authors agent PRs. The CI\u2192Paperclip fix loop only opens a fix issue when a failing PR's author matches this. Defaults to "agenticos-developer[bot]" (the shared Developer App identity). The fix loop reuses prReviewAliceAgentId/prReviewIrisAgentId for owner routing and is off when prReviewAliceAgentId is unset.`
+      },
+      paperclipApiBaseUrl: {
+        type: "string",
+        title: "Paperclip API base URL (inbound scope-expiry REST fallback, GOL-323)",
+        description: "Base URL of the Paperclip REST API, e.g. https://paperclip.gatheringatthegrove.com (no trailing slash needed). When set together with paperclipApiToken, an inbound ctx.issues.* write that fails with a host scope-expiry error is retried via the REST API \u2014 the board-authorized interim mitigation for the ~230 dropped inbound writes/day (GOL-295/GOL-300) until the upstream host scope-lifetime fix ships. Leave unset to disable the fallback (behaviour unchanged)."
+      },
+      paperclipApiToken: {
+        type: "string",
+        // NOT format:"secret-ref" — deliberately mirrors appWebhookSecret /
+        // inboundWebhookSecret above (this host strips secret-ref fields from saved
+        // config, so marking it would leave the worker with NO token and the
+        // fallback permanently disabled). It must ALSO not be the single secret-ref
+        // field: keeping githubToken as the sole format:"secret-ref" preserves the
+        // extractor invariant (it flags UUID-shaped strings — our paperclipProjectId
+        // values — only when NO field declares secret-ref). A raw bearer token is
+        // not UUID-shaped, so it passes the extractor unflagged.
+        title: "Paperclip API bearer token (scope-expiry REST fallback, GOL-323)",
+        description: "Bearer token used to authenticate the Paperclip REST fallback (GOL-323). Only used on the already-failing inbound path \u2014 a scope-expiry retry. Required (with paperclipApiBaseUrl) to enable the fallback."
+      },
+      paperclipCfAccessClientId: {
+        type: "string",
+        // NOT format:"secret-ref" — same reasoning as paperclipApiToken above.
+        title: "Paperclip CF Access service-token client id (REST fallback, GOL-323)",
+        description: "Cloudflare Access service-token CLIENT ID for the REST fallback. REQUIRED when paperclipApiBaseUrl is the CF-Access-gated public host (paperclip.gatheringatthegrove.com) \u2014 which is the ONLY reachable target, because the host's plugin http.outbound SSRF filter blocks the internal loopback (127.0.0.1). Without it CF Access 302-redirects the fallback request to the login page and the write is lost. Sent as the CF-Access-Client-Id header. Pair with paperclipCfAccessClientSecret."
+      },
+      paperclipCfAccessClientSecret: {
+        type: "string",
+        // NOT format:"secret-ref" — same reasoning as paperclipApiToken above.
+        title: "Paperclip CF Access service-token client secret (REST fallback, GOL-323)",
+        description: "Cloudflare Access service-token CLIENT SECRET for the REST fallback. Sent as the CF-Access-Client-Secret header alongside paperclipCfAccessClientId so CF's non_identity service-token policy admits the request to the gated public host. Required (with the client id) whenever paperclipApiBaseUrl is CF-Access-gated."
       }
     },
     required: ["bridges"]

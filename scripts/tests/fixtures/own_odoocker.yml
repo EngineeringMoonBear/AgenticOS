@@ -1,0 +1,109 @@
+# ownership.yml — repo partition + review-routing map for the AgenticOS
+# group-coding flow (GOL-152). See docs/ownership-schema.md for full field
+# definitions. Validate with: python3 scripts/lint-ownership.py
+#
+#   version | repo | defaults.review | partitions[{name, paths, owner, review, wave}]
+#
+# This is the Odoo/Docker-Compose deployment repo — infra-heavy, so most
+# partitions are owned by DevOps with Engineering reviewing (and vice-versa for
+# the Odoo application layer).
+version: 1
+repo: odoocker-goldberrygrove
+
+defaults:
+  review: [devops-terra]
+
+partitions:
+  # --- Compose / build orchestration --------------------------------------
+  - name: compose
+    paths:
+      - docker-compose.yml
+      - docker-compose.*.yml
+      - Makefile
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 1
+
+  # --- Odoo application layer (addons, conf, image) -----------------------
+  - name: odoo
+    paths:
+      - odoo/**
+    owner: engineering-alice
+    review: [devops-terra]
+    wave: 1
+
+  # --- Reverse proxy ------------------------------------------------------
+  - name: proxy
+    paths:
+      - nginx/**
+      - nginx-proxy/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 1
+
+  # --- Data services ------------------------------------------------------
+  - name: data
+    paths:
+      - postgres/**
+      - pgadmin/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 1
+
+  # --- Observability / metrics -------------------------------------------
+  - name: observability
+    paths:
+      - otel/**
+      - openobserve/**
+      - plausible/**
+      - do-metrics/**
+      - synthetic/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 2
+
+  # --- Provisioning / host ------------------------------------------------
+  - name: infra
+    paths:
+      - infra/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 1
+  - name: systemd
+    paths:
+      - systemd/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 1
+  - name: scripts
+    paths:
+      - scripts/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 1
+
+  # --- Ops tooling / misc -------------------------------------------------
+  - name: cost
+    paths:
+      - cost/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 2
+  - name: keep
+    paths:
+      - keep/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 2
+  - name: skills
+    paths:
+      - skills/**
+    owner: engineering-alice
+    review: [devops-terra]
+    wave: 2
+  - name: docs
+    paths:
+      - docs/**
+    owner: engineering-alice
+    review: [devops-terra]
+    wave: 3

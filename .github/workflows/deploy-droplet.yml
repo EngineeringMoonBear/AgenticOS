@@ -135,7 +135,13 @@ jobs:
           USER: ${{ secrets.DROPLET_USER }}
           # Non-secret obs-droplet OTLP-HTTP base. Override via repo variable if the obs
           # endpoint moves; otherwise defaults to the live grove-obs droplet.
-          OTLP_BASE: ${{ vars.OPENOBSERVE_OTLP_BASE || 'http://159.65.46.198:5080/api/default' }}
+          #
+          # Default MUST be the TLS hostname, not the raw droplet IP: the otel
+          # collector sends OpenObserve *root* basicauth on every OTLP export, and a
+          # plain http:// base puts those credentials on the wire between droplets
+          # (security review 2026-07-12, finding M1). Only override with another
+          # https:// or VPC-private endpoint.
+          OTLP_BASE: ${{ vars.OPENOBSERVE_OTLP_BASE || 'https://obs.gatheringatthegrove.com/api/default' }}
         run: |
           ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" "OTLP_BASE='${OTLP_BASE}' bash -s" <<'REMOTE'
           set -euo pipefail

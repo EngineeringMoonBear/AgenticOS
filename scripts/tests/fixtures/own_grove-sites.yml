@@ -1,0 +1,121 @@
+# ownership.yml — repo partition + review-routing map for the AgenticOS
+# group-coding flow (GOL-152). The CEO decomposition routine (GOL-154)
+# intersects a spec's touched paths with the `paths` globs below to emit one
+# owned, reviewable child issue per partition, tagged with owner, reviewer(s),
+# and wave.
+#
+# Schema (see docs/ownership-schema.md for full field definitions):
+#   version    int      schema version (currently 1)
+#   repo       string   repo name (sanity check)
+#   defaults   map      optional; defaults.review = fallback reviewer list
+#   partitions list     one entry per owned path partition:
+#     name    string          unique partition id (becomes the issue label)
+#     paths   list<glob>       gitignore-style globs; the partition boundary
+#     owner   handle|list      implementing agent(s), Paperclip agent url-key
+#     review  list<handle>     required reviewer(s) for review routing
+#     wave    int (optional)   sequencing wave for the decomposition routine
+#
+# Validate:  python3 scripts/lint-ownership.py
+version: 1
+repo: grove-sites
+
+defaults:
+  review: [engineering-alice]
+
+partitions:
+  # --- Tenant frontends (Next.js apps) ------------------------------------
+  - name: app-hub
+    paths:
+      - apps/hub/**
+    owner: frontend-iris
+    review: [engineering-alice]
+    wave: 2
+  - name: app-goldberry
+    paths:
+      - apps/goldberry/**
+    owner: frontend-iris
+    review: [engineering-alice]
+    wave: 2
+  - name: app-ggg
+    paths:
+      - apps/ggg/**
+    owner: frontend-iris
+    review: [engineering-alice]
+    wave: 2
+  - name: app-nursery
+    paths:
+      - apps/nursery/**
+    owner: frontend-iris
+    review: [engineering-alice]
+    wave: 2
+  - name: app-qa-portal
+    paths:
+      - apps/qa-portal/**
+    owner: frontend-iris
+    review: [devops-terra]
+    wave: 2
+
+  # --- Shared packages ----------------------------------------------------
+  - name: pkg-design-system
+    paths:
+      - packages/ui/**
+      - packages/grove-ui/**
+      - packages/grove-brand/**
+      - packages/grove-tokens/**
+      - packages/assets/**
+    owner: frontend-iris
+    review: [engineering-alice]
+    wave: 1
+  - name: pkg-odoo-client
+    paths:
+      - packages/odoo-client/**
+    owner: engineering-alice
+    review: [frontend-iris]
+    wave: 1
+  - name: pkg-checkout
+    paths:
+      - packages/checkout/**
+    owner: engineering-alice
+    review: [frontend-iris]
+    wave: 1
+  - name: pkg-integrations
+    paths:
+      - packages/ghost-client/**
+      - packages/analytics/**
+      - packages/otel/**
+    owner: engineering-alice
+    review: [frontend-iris]
+    wave: 1
+  - name: pkg-config
+    paths:
+      - packages/config/**
+    owner: engineering-alice
+    review: [devops-terra]
+    wave: 1
+
+  # --- Tooling, infra, docs ----------------------------------------------
+  - name: tools
+    paths:
+      - tools/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 1
+  - name: infra
+    paths:
+      - infra/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 1
+  - name: scripts
+    paths:
+      - scripts/**
+    owner: engineering-alice
+    review: [devops-terra]
+    wave: 1
+  - name: docs
+    paths:
+      - docs/**
+      - wireframes/**
+    owner: frontend-iris
+    review: [engineering-alice]
+    wave: 3

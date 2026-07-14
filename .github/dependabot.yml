@@ -58,3 +58,11 @@ updates:
       # eslint major until the plugin ecosystem ships ESLint 10 support.
       - dependency-name: "eslint"
         update-types: ["version-update:semver-major"]
+      # TypeScript 7 (the native-compiler rewrite) has NO typescript-eslint
+      # support yet: every release incl. canary (8.63.1-alpha.x, checked
+      # 2026-07-12) peer-pins `typescript >=4.8.4 <6.1.0`, so Lint crashes
+      # under TS 7 (PR #369, closed). Hold the major until typescript-eslint
+      # ships a TS7-compatible line — tracking issue on the repo. NOTE this
+      # also holds 6.1+ minors out of the peer range; revisit both together.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

@@ -1,0 +1,27 @@
+# CODEOWNERS — sensitive paths that must not merge on agent auto-approval
+# alone (security review 2026-07-12, finding M2).
+#
+# ENFORCEMENT NOTE: CODEOWNERS review-requirement only binds when a branch
+# protection ruleset with "Require review from Code Owners" is enabled. Until
+# that ruleset exists, the auto-approve workflow enforces the SAME list
+# operationally: agent PRs touching these paths are never auto-approved or
+# auto-merged (see .github/workflows/auto-approve.yml). Keep the two lists in
+# sync.
+#
+# Rationale per path:
+#   .github/           — workflows are the merge/deploy gates themselves
+#   infra/             — terraform + cloud-init: infra takeover surface
+#   docker-compose.yml — service topology, port bindings, secret mounts
+#   scripts/agent-git/ — GitHub App token broker (credential surface)
+#   packages/credential-broker/ — 1Password secret broker (credential surface)
+#   .gitleaks.toml     — weakening secret-scanning from a PR
+#   Dockerfile*        — image provenance
+
+/.github/                       @EngineeringMoonBear
+/infra/                         @EngineeringMoonBear
+/docker-compose.yml             @EngineeringMoonBear
+/docker-compose.override.example.yml @EngineeringMoonBear
+/scripts/agent-git/             @EngineeringMoonBear
+/packages/credential-broker/    @EngineeringMoonBear
+/.gitleaks.toml                 @EngineeringMoonBear
+Dockerfile*                     @EngineeringMoonBear

@@ -1,0 +1,32 @@
+name: decompose-test
+
+on:
+  pull_request:
+    paths:
+      - "scripts/decompose.py"
+      - "scripts/tests/**"
+      - ".github/workflows/decompose-test.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/decompose.py"
+      - "scripts/tests/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - name: Unit tests (stdlib only)
+        run: python3 scripts/tests/test_decompose.py
+      - name: Acceptance dry-run (sample spec → 3 real ownership.yml)
+        run: |
+          python3 scripts/decompose.py \
+            --spec scripts/tests/fixtures/sample-spec.yml \
+            --ownership grove-sites=scripts/tests/fixtures/own_grove-sites.yml \
+            --ownership odoocker=scripts/tests/fixtures/own_odoocker.yml \
+            --ownership grove-odoo-modules=scripts/tests/fixtures/own_grove-odoo-modules.yml \
+            --agents-file scripts/tests/fixtures/agents.json

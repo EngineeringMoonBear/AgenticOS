@@ -1,0 +1,18 @@
+# Verbatim GOL-154 §8 sample fixture, preserved for traceability.
+# Against the real ownership.yml on `main` this produces THREE unmapped paths
+# (`packages/ui-kit/**`, `addons/**`, `totally/novel/path.py`) because no
+# partition currently claims `packages/ui-kit/**` or `addons/**`. See
+# `sample-spec.yml` for the corrected acceptance fixture. Flagged to CEO on
+# GOL-343 / GOL-154.
+version: 1
+title: "Sample decomposition smoke"
+umbrella: GOL-154
+summary: "Fixture spec for the decomposition routine acceptance test."
+acceptance: [ "Smoke: partitioning is correct" ]
+changes:
+  - repo: grove-sites
+    paths: [ "apps/hub/**", "packages/ui-kit/**" ]
+  - repo: odoocker
+    paths: [ "postgres/**", "addons/**" ]
+  - repo: grove-odoo-modules
+    paths: [ "grove_headless/**", "web_dark_mode/**", "totally/novel/path.py" ]

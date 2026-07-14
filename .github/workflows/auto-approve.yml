@@ -55,6 +55,43 @@ jobs:
               exit 0 ;;
           esac
 
+          # ── Gate 1: sensitive paths never self-merge (security review 2026-07-12, M2) ──
+          # CI (lint/typecheck/tests) is not an adversarial-code gate. A
+          # prompt-injected agent editing the workflows, infra, compose topology,
+          # or either credential broker could otherwise ship itself to prod on
+          # green CI alone. Mirror of .github/CODEOWNERS — keep both in sync.
+          SENSITIVE=$(gh pr view "$PR" --repo "$REPO" --json files -q '.files[].path' | grep -E \
+            '^(\.github/|infra/|docker-compose|scripts/agent-git/|packages/credential-broker/|\.gitleaks\.toml$)|(^|/)Dockerfile' \
+            || true)
+          if [ -n "$SENSITIVE" ]; then
+            echo "PR #$PR touches sensitive paths — leaving for human review (no auto-approve/auto-merge):"
+            echo "$SENSITIVE"
+            exit 0
+          fi
+
+          # ── Gate 2: ALL checks on the head SHA must be green, not just CI ──
+          # This workflow fires when the "CI" workflow succeeds, but CodeQL /
+          # gitleaks / actionlint run as separate workflows and may still be
+          # running (or failing). Wait until nothing is queued/in_progress on
+          # the head SHA, then require zero failures among completed runs.
+          # Name-agnostic on purpose: any future security workflow is gated
+          # automatically.
+          HEAD_SHA=$(gh pr view "$PR" --repo "$REPO" --json headRefOid -q '.headRefOid')
+          for i in $(seq 1 30); do   # up to 15 min (30 × 30s)
+            PENDING=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100" \
+              -q '[.check_runs[] | select(.status != "completed")] | length')
+            if [ "${PENDING:-0}" -eq 0 ]; then break; fi
+            echo "waiting on $PENDING pending check(s) for $HEAD_SHA (poll $i/30)…"
+            sleep 30
+          done
+          FAILED=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100" \
+            -q '[.check_runs[] | select(.status != "completed" or (.conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped"))] | .[].name')
+          if [ -n "$FAILED" ]; then
+            echo "PR #$PR has non-green checks on $HEAD_SHA — not approving:"
+            echo "$FAILED"
+            exit 0
+          fi
+
           ALREADY=$(gh api "repos/$REPO/pulls/$PR/reviews" \
             -q '[.[] | select(.user.login=="github-actions[bot]" and .state=="APPROVED")] | length')
           if [ "${ALREADY:-0}" -gt 0 ]; then
