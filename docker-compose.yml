@@ -308,8 +308,15 @@ services:
       # exfiltrate the key. The git credential helper (scripts/agent-git) asks the
       # broker over the compose network for short-lived, repo-scoped tokens.
       GH_TOKEN_BROKER_URL: http://gh-token-broker:9099
+      # Bearer the helper presents to the broker (M3). A FILE path — not the
+      # key itself — because agent subprocess env passes through the fork's
+      # sanitizer; the helper reads the mounted file at call time. Agents
+      # being able to read it is by design (minting for allowed owners is
+      # their job); the bearer exists to shut out every OTHER network peer.
+      GH_BROKER_API_KEY_FILE: /paperclip/gh-broker.key
     volumes:
       - paperclip-data:/paperclip
+      - /opt/agenticos/secrets/gh-broker-client.key:/paperclip/gh-broker.key:ro
       - /opt/vault:/opt/vault:ro
       - ./packages/vault-plugin:/paperclip/plugins/vault-plugin:ro
       - ./packages/openviking-plugin:/paperclip/plugins/openviking-plugin:ro
@@ -394,9 +401,15 @@ services:
     environment:
       GITHUB_APP_ID: "4134853"
       PORT: "9099"
+      # Owner allowlist (security review 2026-07-12, M3): even an
+      # authenticated caller can only mint tokens for our own orgs, so a
+      # leaked bearer key can't reach every installation of the App.
+      GH_BROKER_ALLOWED_OWNERS: "EngineeringMoonBear,Goldberry-Playground"
     env_file:
-      # Broker-only secret: GITHUB_APP_PRIVATE_KEY_B64. Created on the Droplet
-      # (chmod 600) and REMOVED from /opt/agenticos/.env — see the runbook.
+      # Broker-only secrets: GITHUB_APP_PRIVATE_KEY_B64 + GH_BROKER_API_KEY
+      # (the bearer callers must present on /token — M3). Created on the
+      # Droplet (chmod 600) and REMOVED from /opt/agenticos/.env — see the
+      # runbook. The broker REFUSES TO START without GH_BROKER_API_KEY.
       - /opt/agenticos/secrets/gh-app.env
     volumes:
       - ./scripts/agent-git:/app:ro

@@ -25,11 +25,23 @@
 //
 // CONFIG (env)
 //   serve:   GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_B64, PORT (default 9099)
+//            GH_BROKER_API_KEY (or GH_BROKER_API_KEY_FILE) — REQUIRED: bearer
+//              key callers must present on /token. The broker refuses to start
+//              without one (GH_BROKER_ALLOW_UNAUTHENTICATED=1 overrides; don't).
+//            GH_BROKER_ALLOWED_OWNERS — optional comma-separated owner
+//              allowlist; requests for other owners get 403.
 //   helper:  GH_TOKEN_BROKER_URL (e.g. http://gh-token-broker:9099)
+//            GH_BROKER_API_KEY / GH_BROKER_API_KEY_FILE — bearer sent to broker
 //            — or, back-compat, GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY_B64
+//
+// Why bearer auth (security review 2026-07-12, M3): the broker sits on the
+// shared compose network, so without caller auth ANY container (or anything
+// that lands on that network) could mint installation tokens for every repo
+// the App is installed on. The key gates the network surface; the owner
+// allowlist caps the blast radius of a leaked key to our own orgs.
 
 import { createServer } from "node:http";
-import { createSign } from "node:crypto";
+import { createSign, timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -42,6 +54,38 @@ const KEY_B64 = (process.env.GITHUB_APP_PRIVATE_KEY_B64 || "").trim();
 const BROKER_URL = (process.env.GH_TOKEN_BROKER_URL || "").trim().replace(/\/$/, "");
 const API = "https://api.github.com";
 const CACHE_DIR = join(process.env.HOME || homedir(), ".cache", "agenticos-gh-app");
+
+// Broker bearer key: env wins; else read from a file (the helper runs inside
+// agent subprocesses whose env is sanitized by the Paperclip fork, so a
+// bind-mounted key file is the reliable channel there).
+function loadBrokerApiKey() {
+  const fromEnv = (process.env.GH_BROKER_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  const file = (process.env.GH_BROKER_API_KEY_FILE || "").trim();
+  if (!file) return "";
+  try {
+    return readFileSync(file, "utf8").trim();
+  } catch {
+    return ""; // unreadable/missing — caller proceeds unauthenticated and the broker 401s loudly
+  }
+}
+const BROKER_API_KEY = loadBrokerApiKey();
+
+const ALLOWED_OWNERS = (process.env.GH_BROKER_ALLOWED_OWNERS || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+
+/** Timing-safe bearer check. Linear parse — no regex on the attacker-controlled
+ * header (same ReDoS rationale as packages/credential-broker). */
+function bearerOk(headerValue) {
+  const h = (headerValue || "").trim();
+  if (!h.startsWith("Bearer ")) return false;
+  const presented = Buffer.from(h.slice(7).trim(), "utf8");
+  const expected = Buffer.from(BROKER_API_KEY, "utf8");
+  if (presented.length !== expected.length) return false;
+  return timingSafeEqual(presented, expected);
+}
 
 const log = (m) => process.stderr.write(`[github-app-token] ${m}\n`);
 const die = (m) => { log(m); process.exit(1); };
@@ -136,7 +180,10 @@ async function mintViaBroker(owner, repo) {
   const u = new URL(`${BROKER_URL}/token`);
   u.searchParams.set("owner", owner);
   if (repo) u.searchParams.set("repo", repo);
-  const res = await fetch(u, { signal: AbortSignal.timeout(15000) });
+  const res = await fetch(u, {
+    signal: AbortSignal.timeout(15000),
+    headers: BROKER_API_KEY ? { Authorization: `Bearer ${BROKER_API_KEY}` } : {},
+  });
   if (!res.ok) throw new Error(`token broker -> ${res.status}`);
   const { token } = await res.json();
   if (!token) throw new Error("token broker returned no token");
@@ -177,14 +224,30 @@ function credentialErase() {
 
 function serve() {
   if (!canMintLocally()) die("serve mode requires GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY_B64");
+  if (!BROKER_API_KEY) {
+    if (process.env.GH_BROKER_ALLOW_UNAUTHENTICATED === "1") {
+      log("WARNING: serving WITHOUT caller auth (GH_BROKER_ALLOW_UNAUTHENTICATED=1). Any compose-network peer can mint tokens.");
+    } else {
+      die("serve mode requires GH_BROKER_API_KEY (or GH_BROKER_API_KEY_FILE) — refusing to run an unauthenticated token minter. Set GH_BROKER_ALLOW_UNAUTHENTICATED=1 to override (not recommended).");
+    }
+  }
   const port = Number(process.env.PORT || 9099);
   createServer(async (req, res) => {
     try {
       const url = new URL(req.url, "http://broker");
       if (url.pathname === "/health") { res.writeHead(200).end("ok"); return; }
       if (req.method !== "GET" || url.pathname !== "/token") { res.writeHead(404).end(); return; }
+      if (BROKER_API_KEY && !bearerOk(req.headers.authorization)) {
+        res.writeHead(401, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "unauthorized" }));
+        return;
+      }
       const owner = url.searchParams.get("owner") || "";
       const repo = url.searchParams.get("repo") || undefined;
+      if (ALLOWED_OWNERS.length && !ALLOWED_OWNERS.includes(owner.toLowerCase())) {
+        log(`denied mint for owner '${owner}' (not in GH_BROKER_ALLOWED_OWNERS)`);
+        res.writeHead(403, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "owner_not_allowed" }));
+        return;
+      }
       const token = await mintLocal(owner, repo); // validates owner/repo
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ token }));
     } catch (e) {
@@ -193,7 +256,7 @@ function serve() {
       res.writeHead(e.status === 404 ? 404 : 400, { "Content-Type": "application/json" })
         .end(JSON.stringify({ error: "mint_failed" }));
     }
-  }).listen(port, () => log(`token broker listening on :${port}`));
+  }).listen(port, () => log(`token broker listening on :${port}${BROKER_API_KEY ? " (bearer auth on)" : ""}${ALLOWED_OWNERS.length ? ` (owners: ${ALLOWED_OWNERS.join(",")})` : ""}`));
 }
 
 // --- entry ----------------------------------------------------------------
