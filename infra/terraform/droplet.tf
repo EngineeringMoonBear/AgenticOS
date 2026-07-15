@@ -40,7 +40,11 @@ resource "digitalocean_droplet" "agenticos_droplet" {
   # and Claude Code OAuth state that the app-level backups don't capture).
   backups = true
 
-  tags = ["agenticos", "production"]
+  # No `tags` here on purpose: DO tags require the `tag` scope on the API token,
+  # which the GOL-75 least-privilege token deliberately omits. The tags we had
+  # ("agenticos", "production") were cosmetic — nothing consumed them — and
+  # setting them made every apply against main fail with POST /v2/tags -> 403.
+  # If a resource ever genuinely needs DO tags, add the scope then (GOL-369/370).
 
   user_data = local.cloud_init
 
