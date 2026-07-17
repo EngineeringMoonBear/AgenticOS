@@ -46,15 +46,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Check out composite actions
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
+
       - name: Configure SSH
-        env:
-          DEPLOY_KEY: ${{ secrets.DROPLET_SSH_KEY }}
-          HOST: ${{ secrets.DROPLET_HOST }}
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+        uses: ./.github/actions/configure-ssh
+        with:
+          deploy-key: ${{ secrets.DROPLET_SSH_KEY }}
+          host: ${{ secrets.DROPLET_HOST }}
 
       - name: Pull repo + rebuild plugin dists (hot-reloads workers)
         env:
