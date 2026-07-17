@@ -103,6 +103,15 @@ jobs:
       - name: Warn on manifest changes
         if: always()
         run: |
+          # `always()` also fires when the deploy was skipped or failed, and
+          # then deploy.log doesn't exist. `grep || true` can't tell "no
+          # matches" from "no file", so both landed in the else branch below
+          # and the summary claimed workers had hot-reloaded on a run that
+          # never reached the droplet (run 29422894878). Say so instead.
+          if [ ! -f deploy.log ]; then
+            echo "⚠️ The deploy step did not run, so there is no manifest state to report. Check the failed step above." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           grep "^MANIFEST_BUMP:" deploy.log > bumps.txt || true
           if [ -s bumps.txt ]; then
             echo "### ⚠️ Manifest changes need a manual finish" >> "$GITHUB_STEP_SUMMARY"
