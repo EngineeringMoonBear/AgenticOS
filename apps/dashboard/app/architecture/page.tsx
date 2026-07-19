@@ -3,8 +3,7 @@
 import { Plus, Sparkles, Loader2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useFilter } from "@/lib/filter/use-filter";
-import type { Skill } from "@/lib/fixtures/skills";
-import { SkillCard } from "@/components/skills/skill-card";
+import { SkillCard, type Skill } from "@/components/skills/skill-card";
 import { ArchitectureVista } from "@/components/shell/ArchitectureVista";
 import { useVaultSkills } from "@/lib/vault/hooks/use-vault-skills";
 import type { SkillEntry } from "@/app/api/vault/skills/route";

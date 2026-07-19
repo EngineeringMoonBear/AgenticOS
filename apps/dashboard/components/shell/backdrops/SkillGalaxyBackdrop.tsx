@@ -13,7 +13,6 @@ import { useId, useMemo } from "react";
 export interface SkillGalaxyDomain {
   name: string;
   count: number;
-  dispatchedToday: number;
 }
 
 export interface SkillGalaxyBackdropProps {
