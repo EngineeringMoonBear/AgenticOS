@@ -1,28 +1,29 @@
 import { NextResponse } from "next/server";
 
-// TODO: wire to real backend (Droplet health endpoints / status pages)
-
 export const runtime = "nodejs";
 
-export interface ResourceMetric {
-  name: string;
-  percent: number;
-  detail: string;
-}
+/**
+ * Droplet CPU/RAM/disk for the System-resources panel.
+ *
+ * The real source is OpenObserve's `system_*` metric streams on the droplet
+ * (system_cpu_usage / system_memory_usage / system_disk_usage collected by
+ * the OTel host-metrics receiver), but the dashboard has no OpenObserve
+ * credentials yet — so this route honestly reports "not available" instead
+ * of the hardcoded "CPU 12%" it used to fabricate (truth pass 2026-07-14).
+ *
+ * TODO(GOL-313): wire to OpenObserve `system_*` streams once OO credentials
+ * are provisioned for the dashboard, then restore per-metric percent values.
+ */
 
 export interface SystemResourcesData {
-  cpu: ResourceMetric;
-  ram: ResourceMetric;
-  disk: ResourceMetric;
-  meta: string;
+  available: false;
+  reason: string;
 }
 
 export async function GET(): Promise<Response> {
   const data: SystemResourcesData = {
-    cpu: { name: "CPU", percent: 12, detail: "12% · 2 vCPU" },
-    ram: { name: "RAM", percent: 65, detail: "2.6 / 4.0 GB · 65%" },
-    disk: { name: "Disk", percent: 28, detail: "22.4 / 80 GB · 28%" },
-    meta: "droplet · 4 GB · uptime 3d 14h",
+    available: false,
+    reason: "metrics source not connected",
   };
   return NextResponse.json(data);
 }

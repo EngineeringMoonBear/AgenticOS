@@ -2,16 +2,17 @@
 import { useId } from "react";
 
 /**
- * Health-vista backdrop: a 4-lane CRT oscilloscope showing rolling
- * latency for the core stack (Hermes, OpenViking, Ollama, Postgres).
- * Each lane has its own pine trace, faint baseline + mono label, a
+ * Health-vista backdrop: a 4-lane CRT oscilloscope. Purely decorative —
+ * the traces are hand-tuned squiggles, NOT real latency data, so the
+ * lanes carry no service labels (truth pass 2026-07-14: the old
+ * hermes/openviking/ollama/postgres captions implied these were live
+ * curves). Each lane has its own pine trace, faint baseline, a
  * current-value tick on the rightmost edge, and a soft phosphor glow.
  *
  * The traces are pre-computed SVG path strings (a horizontal squiggle
  * with occasional small spikes). Each lane animates at a different
  * speed via `stroke-dasharray` + `stroke-dashoffset` keyframes so the
- * 4 vitals visibly run on their own clocks — the visual independence
- * is what conveys "I can see each service's pulse individually."
+ * waves visibly run on their own clocks.
  *
  * Hand-rolled SVG, no chart deps. Decorative; no pointer events.
  */
@@ -25,20 +26,15 @@ const LANE_BOTTOM = 18;
 const LANE_COUNT = 4;
 
 interface Lane {
-  name: string;
   speedSec: number;
   /** Pre-baked path (already in 0..1 normalized x and -1..1 normalized y). */
   bumps: Array<{ x: number; y: number }>;
 }
 
-// Hand-tuned bump sequences. Each service has its own personality:
-//   Hermes:    very stable, occasional whisper
-//   OpenViking: small steady chatter, one mid-spike
-//   Ollama:    semi-quiet, two modest spikes
-//   Postgres:  more variance, no big spikes
+// Hand-tuned bump sequences — each lane gets its own decorative personality
+// (stable whisper / steady chatter / modest spikes / more variance).
 const LANES: Lane[] = [
   {
-    name: "hermes",
     speedSec: 5,
     bumps: [
       { x: 0.08, y: -0.18 }, { x: 0.18, y: 0.12 }, { x: 0.28, y: -0.08 },
@@ -47,7 +43,6 @@ const LANES: Lane[] = [
     ],
   },
   {
-    name: "openviking",
     speedSec: 7,
     bumps: [
       { x: 0.06, y: 0.16 }, { x: 0.14, y: -0.22 }, { x: 0.24, y: 0.34 },
@@ -57,7 +52,6 @@ const LANES: Lane[] = [
     ],
   },
   {
-    name: "ollama",
     speedSec: 9,
     bumps: [
       { x: 0.07, y: -0.12 }, { x: 0.17, y: 0.18 }, { x: 0.27, y: 0.55 },
@@ -66,7 +60,6 @@ const LANES: Lane[] = [
     ],
   },
   {
-    name: "postgres",
     speedSec: 6,
     bumps: [
       { x: 0.05, y: 0.24 }, { x: 0.13, y: -0.36 }, { x: 0.22, y: 0.28 },
@@ -137,7 +130,7 @@ export function LatencyOscilloscopeBackdrop() {
         </defs>
 
         {lanes.map((lane, i) => (
-          <g key={lane.name} className={`osc-lane osc-lane-${i}`}>
+          <g key={i} className={`osc-lane osc-lane-${i}`}>
             <line
               className="osc-baseline"
               x1={LEFT_INSET}
@@ -145,13 +138,6 @@ export function LatencyOscilloscopeBackdrop() {
               x2={rightEdge}
               y2={lane.baselineY}
             />
-            <text
-              className="osc-label"
-              x={LEFT_INSET - 12}
-              y={lane.baselineY + 3}
-            >
-              {lane.name}
-            </text>
             <g filter={`url(#${glowId})`}>
               <path
                 className="osc-trace"

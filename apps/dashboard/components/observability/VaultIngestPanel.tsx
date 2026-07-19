@@ -1,24 +1,18 @@
 "use client";
-import { useQuery } from "@tanstack/react-query";
-
 import { Card, CardAction, CardHead, CardTitle } from "@/components/ui/Card";
-import { Pill } from "@/components/ui/Pill";
+import { Pill, type PillVariant } from "@/components/ui/Pill";
 import { Row, RowList } from "@/components/ui/Row";
+import { useIngestRecent } from "@/lib/hooks/use-ingest-recent";
+import type { IngestRun } from "@/app/api/ingest/recent/route";
 
-type IngestStatus = "ok" | "err";
+/**
+ * Vault ingest panel — recent vault-ingest task rows from Postgres via
+ * /api/ingest/recent (truth pass 2026-07-14; previously rendered three
+ * canned runs). Time, status, and duration all derive from the real
+ * `tasks` telemetry columns; duration shows "—" while a run is still going.
+ */
 
-interface IngestRun {
-  id: string;
-  time_label: string;
-  detail: string;
-  status: IngestStatus;
-  duration_label: string;
-}
-
-interface IngestRecentData {
-  schedule: string;
-  runs: IngestRun[];
-}
+const PLACEHOLDER = "—";
 
 const FolderIcon = (
   <svg
@@ -35,16 +29,36 @@ const FolderIcon = (
   </svg>
 );
 
-function useIngestRecent() {
-  return useQuery<IngestRecentData>({
-    queryKey: ["ingest", "recent"],
-    queryFn: async () => {
-      const res = await fetch("/api/ingest/recent");
-      if (!res.ok) throw new Error("failed");
-      return res.json();
-    },
-    refetchInterval: 30_000,
-  });
+function pillFor(status: string): { variant: PillVariant; label: string } {
+  switch (status) {
+    case "done":
+      return { variant: "ok", label: "ok" };
+    case "failed":
+      return { variant: "err", label: "failed" };
+    case "running":
+      return { variant: "run", label: "running" };
+    default:
+      return { variant: "warn", label: status };
+  }
+}
+
+function timeLabel(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return PLACEHOLDER;
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function durationLabel(run: IngestRun): string {
+  if (!run.ended_at) return PLACEHOLDER;
+  const start = new Date(run.started_at).getTime();
+  const end = new Date(run.ended_at).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return PLACEHOLDER;
+  const ms = end - start;
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const min = Math.floor(ms / 60_000);
+  const sec = Math.round((ms - min * 60_000) / 1000);
+  return `${min}m ${sec.toString().padStart(2, "0")}s`;
 }
 
 export function VaultIngestPanel() {
@@ -54,33 +68,41 @@ export function VaultIngestPanel() {
     <Card lane="pine">
       <CardHead>
         <CardTitle icon={FolderIcon}>Vault ingest</CardTitle>
-        <CardAction>{data?.schedule ?? "hourly"}</CardAction>
+        <CardAction>
+          {data?.schedule ? `cron ${data.schedule}` : PLACEHOLDER}
+        </CardAction>
       </CardHead>
       {isLoading || !data ? (
         <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
           Loading…
         </div>
+      ) : data.runs.length === 0 ? (
+        <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
+          No vault-ingest runs recorded.
+        </div>
       ) : (
         <RowList>
-          {data.runs.map((r) => (
-            <Row key={r.id}>
-              <Pill variant={r.status === "ok" ? "ok" : "err"}>
-                {r.status === "ok" ? "ok" : "failed"}
-              </Pill>
-              <div>
-                <div className="label-strong" style={{ fontSize: 12.5 }}>
-                  {r.time_label} · {r.detail}
+          {data.runs.map((r) => {
+            const pill = pillFor(r.status);
+            return (
+              <Row key={r.id}>
+                <Pill variant={pill.variant}>{pill.label}</Pill>
+                <div>
+                  <div className="label-strong" style={{ fontSize: 12.5 }}>
+                    {timeLabel(r.started_at)}
+                    {r.error ? ` · ${r.error}` : ""}
+                  </div>
+                  <div
+                    className="meta"
+                    style={{ fontFamily: "var(--mono)", fontSize: 10.5 }}
+                  >
+                    {r.id}
+                  </div>
                 </div>
-                <div
-                  className="meta"
-                  style={{ fontFamily: "var(--mono)", fontSize: 10.5 }}
-                >
-                  {r.id}
-                </div>
-              </div>
-              <span className="num muted">{r.duration_label}</span>
-            </Row>
-          ))}
+                <span className="num muted">{durationLabel(r)}</span>
+              </Row>
+            );
+          })}
         </RowList>
       )}
     </Card>

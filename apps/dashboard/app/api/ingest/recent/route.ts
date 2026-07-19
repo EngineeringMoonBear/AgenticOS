@@ -1,32 +1,53 @@
 import { NextResponse } from "next/server";
-
-// TODO: wire to vault-ingest run history.
+import { getPool } from "@/lib/cost/db";
+import { REGISTERED_CRONS } from "@/lib/scheduler/registered-crons";
 
 export const runtime = "nodejs";
 
-export type IngestStatus = "ok" | "err";
+/**
+ * Recent vault-ingest runs for the Vault-ingest panel (truth pass
+ * 2026-07-14; previously returned three canned runs).
+ *
+ * Real sources:
+ *   - Postgres `tasks` rows WHERE kind='vault-ingest' — the same telemetry
+ *     the old /api/ingest/status route read (that route folded into this one).
+ *   - REGISTERED_CRONS for the vault-ingest cron expression shown in the
+ *     panel header (dashboard mirror of infra/scripts/register-cron-jobs.sh).
+ */
 
 export interface IngestRun {
   id: string;
-  time_label: string;
-  detail: string;
-  status: IngestStatus;
-  duration_label: string;
+  started_at: string;
+  ended_at: string | null;
+  status: string;
+  error: string | null;
+  metadata: Record<string, unknown> | null;
 }
 
 export interface IngestRecentData {
-  schedule: string;
+  /** Cron expression of the registered vault-ingest job; null if unregistered. */
+  schedule: string | null;
   runs: IngestRun[];
 }
 
 export async function GET(): Promise<Response> {
-  const data: IngestRecentData = {
-    schedule: "hourly · next 16:00",
-    runs: [
-      { id: "vault-ingest-5464de072e", time_label: "15:00", detail: "skipped 5", status: "ok", duration_label: "312ms" },
-      { id: "vault-ingest-4b4ec8a43d", time_label: "14:08", detail: "errored 2", status: "err", duration_label: "354ms" },
-      { id: "vault-ingest-0b3780feba", time_label: "14:00", detail: "updated 1", status: "ok", duration_label: "5.8s" },
-    ],
-  };
+  const pool = getPool();
+  const { rows } = await pool.query<IngestRun>(
+    `SELECT id,
+            started_at::text AS started_at,
+            ended_at::text AS ended_at,
+            status,
+            error,
+            metadata
+     FROM tasks
+     WHERE kind = 'vault-ingest'
+     ORDER BY started_at DESC
+     LIMIT 10`,
+  );
+
+  const schedule =
+    REGISTERED_CRONS.find((c) => c.name === "vault-ingest")?.schedule ?? null;
+
+  const data: IngestRecentData = { schedule, runs: rows };
   return NextResponse.json(data);
 }

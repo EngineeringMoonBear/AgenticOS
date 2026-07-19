@@ -4,7 +4,20 @@ import { Send, MoreHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
-import type { Skill } from "@/lib/fixtures/skills";
+
+export type Skill = {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  /**
+   * Run metadata is optional: real vault-backed skills (from /api/vault/skills)
+   * have no run history, so the card omits the meta row / lane badge for them.
+   */
+  lastRunAt?: string; // ISO 8601
+  successRate?: number; // 0–100
+  lane?: "hermes" | "sandcastle";
+};
 
 interface SkillCardProps {
   skill: Skill;
