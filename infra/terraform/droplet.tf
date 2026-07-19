@@ -40,11 +40,11 @@ resource "digitalocean_droplet" "agenticos_droplet" {
   # and Claude Code OAuth state that the app-level backups don't capture).
   backups = true
 
-  # tags DISABLED locally for the 2026-07-14 H1 apply: creating tags needs the
-  # DO `tag` scope, which the GOL-75 least-privilege token intentionally lacks
-  # (403 on POST /v2/tags). Fleet must either add the scope to the token or
-  # drop the tags — tracked on GitHub. Restore before committing anything here.
-  # tags = ["agenticos", "production"]
+  # No `tags` here on purpose: DO tags require the `tag` scope on the API token,
+  # which the GOL-75 least-privilege token deliberately omits. The tags we had
+  # ("agenticos", "production") were cosmetic — nothing consumed them — and
+  # setting them made every apply against main fail with POST /v2/tags -> 403.
+  # If a resource ever genuinely needs DO tags, add the scope then (GOL-369/370).
 
   user_data = local.cloud_init
 
