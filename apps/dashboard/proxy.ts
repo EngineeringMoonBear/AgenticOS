@@ -1,70 +1,65 @@
 /**
- * Fix 1: DNS Rebinding Protection (VibeSec finding H1)
+ * API request gate — two layers, both fail-closed in production:
  *
- * Threat model: DNS rebinding lets an attacker swap a domain's DNS record to
- * 127.0.0.1 after the browser has cached the original address. The browser then
- * sends same-origin requests to localhost with the attacker's domain in the
- * Host header. Without host validation, the server cannot distinguish these
- * requests from legitimate localhost requests.
+ * 1. DNS-rebinding / host allowlist (VibeSec finding H1, original fix):
+ *    reject /api/* requests whose Host (or Origin on state-changing methods)
+ *    is not allowlisted.
  *
- * Mitigation:
- *   - All /api/* requests: reject if Host is not in ALLOWED_HOSTS.
- *   - State-changing methods (POST/PUT/PATCH/DELETE) on /api/*: additionally
- *     reject if Origin header is present and its host is not in ALLOWED_HOSTS.
- *     Missing Origin is allowed (same-origin requests from browser address bar,
- *     curl, etc. do not send Origin).
+ * 2. Cloudflare Access JWT (security review 2026-07-12, finding H1):
+ *    Cloudflare Access (Google SSO) fronts the custom domain, but the App
+ *    Platform default URL (`*.ondigitalocean.app`) reaches this app directly,
+ *    never traversing Cloudflare — and a direct client controls its own Host
+ *    header, so host checks alone cannot close that path. Every /api/*
+ *    request from a non-local host must therefore carry a VALID
+ *    `Cf-Access-Jwt-Assertion` (RS256, team-issuer + audience checked,
+ *    signature verified against the team JWKS — see lib/api/cf-access.ts).
+ *
+ *    Config: CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD (wired by Terraform from
+ *    the Access application resource). In production, MISSING config blocks
+ *    /api/* with 503 — unconfigured is exactly the vulnerable state, so it
+ *    fails closed rather than silently open. Local dev (localhost hosts) is
+ *    exempt: no Cloudflare sits in front of `pnpm dev`.
+ *
+ * NOTE the old `APP_PLATFORM_HOST_RE` wave-through is intentionally GONE:
+ * requests on the default App Platform hostname are exactly the ones that
+ * bypassed Access. They now fail both layers.
  *
  * This file uses the Next.js 16 "proxy" convention (formerly "middleware").
- * The function must be named `proxy` (default export also accepted).
- * Runtime defaults to Node.js in Next.js 16; no Edge-only restriction.
  */
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { verifyAccessJwt } from "./lib/api/cf-access";
 
-/** Allowlist of host values considered local/trusted.
- *
- * Local-dev hosts are always permitted. Production hosts come from the
- * ALLOWED_HOSTS env var (comma-separated). In App Platform we set this to
- * include the Cloudflare-fronted custom domain AND the App Platform
- * default URL pattern, so both Cloudflare-routed traffic and direct
- * App-Platform-URL traffic pass the gate.
- *
- * Examples:
- *   ALLOWED_HOSTS="agenticos.gatheringatthegrove.com"
- *   ALLOWED_HOSTS="agenticos.gatheringatthegrove.com,agenticos-dashboard-w2i7d.ondigitalocean.app"
- */
+/** Local-dev hosts: always allowed, and exempt from the Access-JWT layer. */
+const LOCAL_HOSTS: ReadonlySet<string> = new Set([
+  "localhost:3000",
+  "127.0.0.1:3000",
+]);
+
+/** Production hosts come from ALLOWED_HOSTS (comma-separated env). This
+ * should list ONLY the Cloudflare-fronted custom domain — never the
+ * *.ondigitalocean.app default URL. */
 const ENV_HOSTS = (process.env.ALLOWED_HOSTS ?? "")
   .split(",")
   .map((h) => h.trim())
   .filter(Boolean);
 
 const ALLOWED_HOSTS: ReadonlySet<string> = new Set([
-  "localhost:3000",
-  "127.0.0.1:3000",
+  ...LOCAL_HOSTS,
   ...ENV_HOSTS,
 ]);
 
-/** Match any host on App Platform's default-URL pattern.
- * App Platform URLs look like `agenticos-dashboard-w2i7d.ondigitalocean.app`
- * where the suffix is random per app instance. Matching the family avoids
- * needing to update ALLOWED_HOSTS every time the app is recreated. */
-const APP_PLATFORM_HOST_RE = /^[a-z0-9-]+\.ondigitalocean\.app$/;
-
 function isHostAllowed(host: string): boolean {
-  if (ALLOWED_HOSTS.has(host)) return true;
-  if (APP_PLATFORM_HOST_RE.test(host)) return true;
-  return false;
+  return ALLOWED_HOSTS.has(host);
 }
 
 const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /**
  * Pure helper — exported so unit tests can exercise the logic without a full
- * Next.js request object.
- *
- * Returns `{ allowed: true }` when the request should proceed, or
- * `{ allowed: false, reason: string }` when it should be blocked.
+ * Next.js request cycle. Covers layer 1 (host/origin) only; the async Access
+ * JWT check lives in `proxy()` / `checkAccessJwt()` below.
  */
 export function isAllowedRequest(req: Request): {
   allowed: boolean;
@@ -97,13 +92,55 @@ export function isAllowedRequest(req: Request): {
   return { allowed: true };
 }
 
-export function proxy(request: NextRequest): NextResponse | Response {
-  const check = isAllowedRequest(request);
+/**
+ * Layer 2: Cloudflare Access JWT. Exported for tests (deps injectable via
+ * the cf-access module). Local hosts skip; unconfigured production blocks.
+ */
+export async function checkAccessJwt(req: Request): Promise<{
+  allowed: boolean;
+  status?: number;
+  reason?: string;
+}> {
+  const host = req.headers.get("host") ?? "";
+  if (LOCAL_HOSTS.has(host)) return { allowed: true }; // pnpm dev — no CF in front
 
+  const teamDomain = process.env.CF_ACCESS_TEAM_DOMAIN ?? "";
+  const aud = process.env.CF_ACCESS_AUD ?? "";
+  if (!teamDomain || !aud) {
+    // Unconfigured = the vulnerable state. Fail closed with an actionable
+    // error instead of silently serving unauthenticated data.
+    return {
+      allowed: false,
+      status: 503,
+      reason:
+        "Access auth not configured (set CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD)",
+    };
+  }
+
+  const token = req.headers.get("cf-access-jwt-assertion");
+  const result = await verifyAccessJwt(token, { teamDomain, aud });
+  if (!result.ok) {
+    return { allowed: false, status: 401, reason: "Unauthorized" };
+  }
+  return { allowed: true };
+}
+
+export async function proxy(
+  request: NextRequest
+): Promise<NextResponse | Response> {
+  const check = isAllowedRequest(request);
   if (!check.allowed) {
     return Response.json(
       { error: check.reason ?? "Forbidden" },
       { status: 403 }
+    );
+  }
+
+  const access = await checkAccessJwt(request);
+  if (!access.allowed) {
+    return Response.json(
+      { error: access.reason ?? "Unauthorized" },
+      { status: access.status ?? 401 }
     );
   }
 

@@ -1,0 +1,57 @@
+name: Configure SSH
+description: >-
+  Write the droplet deploy key and pin its host key into known_hosts, retrying
+  the keyscan so a slow response doesn't fail the whole deploy.
+
+inputs:
+  deploy-key:
+    description: Private SSH key for the deploy user (secrets.DROPLET_SSH_KEY).
+    required: true
+  host:
+    description: Droplet hostname or IP (secrets.DROPLET_HOST).
+    required: true
+  key-path:
+    description: Where to write the private key.
+    required: false
+    default: ~/.ssh/deploy_key
+
+runs:
+  using: composite
+  steps:
+    - name: Write deploy key and scan host key
+      shell: bash
+      env:
+        DEPLOY_KEY: ${{ inputs.deploy-key }}
+        HOST: ${{ inputs.host }}
+        KEY_PATH: ${{ inputs.key-path }}
+      run: |
+        set -euo pipefail
+
+        key_path="${KEY_PATH/#\~/$HOME}"
+        mkdir -p ~/.ssh "$(dirname "$key_path")"
+        printf '%s\n' "$DEPLOY_KEY" > "$key_path"
+        chmod 600 "$key_path"
+
+        # ssh-keyscan defaults to a 5s timeout and every deploy workflow ran it
+        # bare under `bash -e`, so one slow reply aborted the run with a naked
+        # "exit code 1" — stderr went to /dev/null. That flake killed the
+        # 2026-07-15 plugins deploy while the droplet was up and healthy
+        # (6-week uptime, reachable by hand minutes later). Retry with backoff,
+        # and keep stderr.
+        scan_out="$(mktemp)"
+        scan_err="$(mktemp)"
+        for attempt in 1 2 3 4 5; do
+          if ssh-keyscan -T 15 -H "$HOST" > "$scan_out" 2> "$scan_err" && [ -s "$scan_out" ]; then
+            cat "$scan_out" >> ~/.ssh/known_hosts
+            echo "Host key pinned on attempt ${attempt}/5."
+            exit 0
+          fi
+          # An empty-but-successful scan is a real failure mode: the step would
+          # pass and the *next* step would fail on an unverifiable host key.
+          echo "::warning title=ssh-keyscan retry::Attempt ${attempt}/5 produced no host key. stderr follows."
+          cat "$scan_err" >&2
+          sleep $(( attempt * 5 ))
+        done
+
+        echo "::error title=ssh-keyscan failed::No host key from the droplet after 5 attempts (~75s). The droplet is likely down or unreachable from this runner — check the DigitalOcean console before re-running."
+        exit 1

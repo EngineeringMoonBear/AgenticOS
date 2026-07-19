@@ -35,11 +35,13 @@ describe("isAllowedRequest — host check", () => {
     expect(isAllowedRequest(req).allowed).toBe(true);
   });
 
-  it("allows GET with host matching App Platform pattern", () => {
+  it("REJECTS the App Platform default URL (bypasses Cloudflare Access — security review 2026-07-12 H1)", () => {
     const req = makeRequest("GET", {
       host: "agenticos-dashboard-w2i7d.ondigitalocean.app",
     });
-    expect(isAllowedRequest(req).allowed).toBe(true);
+    const result = isAllowedRequest(req);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe("Forbidden host");
   });
 
   it("rejects GET with host that looks like a fake App Platform URL", () => {

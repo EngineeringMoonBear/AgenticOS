@@ -57,7 +57,7 @@ import {
   type CiCompletionEvent,
 } from "./ci-failure.js";
 import { getCiFailureRecord, upsertCiFailureRecord } from "./ci-failure-store.js";
-import { isScopeExpiryError, PaperclipRestClient } from "./paperclip-rest.js";
+import { PaperclipRestClient, withRestFallback } from "./paperclip-rest.js";
 
 /** Manifest-declared inbound webhook endpoint keys (GitHub → Paperclip). */
 /** Custom Actions-workflow path: a signed {repo,number,title,body,url} payload. */
@@ -245,6 +245,11 @@ function restFallbackClient(ctx: PluginContext, cfg: GithubSyncConfig): Papercli
   });
 }
 
+/** Bind the logger + REST client `withRestFallback` needs at every catch site. */
+function restFallbackDeps(ctx: PluginContext, cfg: GithubSyncConfig) {
+  return { logger: ctx.logger, rest: restFallbackClient(ctx, cfg) };
+}
+
 /**
  * Best-effort ops-visibility ping (GOL-80). Posts a Discord-style `{content}`
  * message to the configured webhook. Any failure is logged and swallowed — mirror
@@ -335,7 +340,12 @@ function makeDispatch(
         ctx.logger.warn(`${eventName} event missing entityId; skipping`);
         return;
       }
-      const issue = await ctx.issues.get(event.entityId, event.companyId);
+      const issue = await withRestFallback(
+        restFallbackDeps(ctx, cfg),
+        `${eventName}.get`,
+        () => ctx.issues.get(event.entityId!, event.companyId),
+        async (rest) => (await rest.getIssue(event.entityId!)) as Issue | null,
+      );
       if (!issue) {
         ctx.logger.warn(`${eventName}: issue not readable; skipping`, {
           issueId: event.entityId,
@@ -412,25 +422,18 @@ async function createMirrorIssue(
     priority: bridge.defaultPriority ?? "medium",
     ...(assigneeAgentId ? { assigneeAgentId } : {}),
   };
-  let issue: { id: string };
-  try {
-    issue = await runInScope(() => ctx.issues.create(createInput));
-  } catch (err) {
-    // REST-bypass fallback (GOL-323): the host may expire the scope after HTTP-200
-    // before this write lands. On that error ONLY, retry via the Paperclip REST API.
-    const rest = restFallbackClient(ctx, cfg);
-    if (isScopeExpiryError(err) && rest) {
-      ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
-        site: "create",
-      });
-      // companyId moves into the URL for the REST create; pass the rest of the payload.
+  // REST-bypass fallback (GOL-323): the host may expire the scope after HTTP-200
+  // before this write lands. On that error ONLY, retry via the Paperclip REST API.
+  const issue = await withRestFallback<{ id: string }>(
+    restFallbackDeps(ctx, cfg),
+    "mirror.create",
+    () => runInScope(() => ctx.issues.create(createInput)),
+    // companyId moves into the URL for the REST create; pass the rest of the payload.
+    (rest) => {
       const { companyId: _companyId, ...restBody } = createInput;
-      issue = await rest.createIssue(cfg.companyId!, restBody);
-      ctx.logger.info("Paperclip REST fallback succeeded (GOL-323)", { site: "create" });
-    } else {
-      throw err;
-    }
-  }
+      return rest.createIssue(cfg.companyId!, restBody);
+    },
+  );
 
   await upsert(ctx.db, {
     paperclipIssueId: issue.id,
@@ -554,25 +557,15 @@ async function handleAppClosure(
     return;
   }
 
-  let issue: Issue | null;
-  try {
-    issue = await runInScope(() => ctx.issues.get(mapping.paperclipIssueId, cfg.companyId!));
-  } catch (err) {
-    // REST-bypass fallback (GOL-323): retry the read via REST only on scope-expiry.
-    const rest = restFallbackClient(ctx, cfg);
-    if (isScopeExpiryError(err) && rest) {
-      ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
-        site: "get",
-      });
-      // REST returns the same-shaped issue JSON (id/status/…); the loose RestIssue
-      // is cast to Issue so downstream typing (resolveMirrorClosureStatus) holds.
-      const fetched = await rest.getIssue(mapping.paperclipIssueId);
-      issue = fetched as Issue | null;
-      ctx.logger.info("Paperclip REST fallback succeeded (GOL-323)", { site: "get" });
-    } else {
-      throw err;
-    }
-  }
+  // REST-bypass fallback (GOL-323): retry the read via REST only on scope-expiry.
+  // REST returns the same-shaped issue JSON (id/status/…); the loose RestIssue is
+  // cast to Issue so downstream typing (resolveMirrorClosureStatus) holds.
+  const issue: Issue | null = await withRestFallback(
+    restFallbackDeps(ctx, cfg),
+    "closure.get",
+    () => runInScope(() => ctx.issues.get(mapping.paperclipIssueId, cfg.companyId!)),
+    async (rest) => (await rest.getIssue(mapping.paperclipIssueId)) as Issue | null,
+  );
   if (!issue) {
     ctx.logger.warn("app webhook: mirror issue not readable; skipping closure", {
       issueId: mapping.paperclipIssueId,
@@ -591,21 +584,17 @@ async function handleAppClosure(
     return;
   }
 
-  try {
-    await runInScope(() => ctx.issues.update(issue.id, { status: target }, cfg.companyId!));
-  } catch (err) {
-    // REST-bypass fallback (GOL-323): retry the status write via REST on scope-expiry.
-    const rest = restFallbackClient(ctx, cfg);
-    if (isScopeExpiryError(err) && rest) {
-      ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
-        site: "update",
-      });
+  // REST-bypass fallback (GOL-323): retry the status write via REST on scope-expiry.
+  await withRestFallback(
+    restFallbackDeps(ctx, cfg),
+    "closure.update",
+    async () => {
+      await runInScope(() => ctx.issues.update(issue.id, { status: target }, cfg.companyId!));
+    },
+    async (rest) => {
       await rest.updateIssue(issue.id, { status: target });
-      ctx.logger.info("Paperclip REST fallback succeeded (GOL-323)", { site: "update" });
-    } else {
-      throw err;
-    }
-  }
+    },
+  );
   await upsert(ctx.db, { ...mapping, lastSyncedAt: new Date().toISOString() });
 
   ctx.logger.info("app webhook: propagated GitHub closure to Paperclip mirror", {
@@ -897,16 +886,24 @@ async function processReviewer(
 
   const now = new Date().toISOString();
   if (action === "create" || !existing) {
-    const issue = await runInScope(() =>
-      ctx.issues.create({
-        companyId: cfg.companyId!,
-        projectId: bridge.paperclipProjectId,
-        title: buildReviewIssueTitle(reviewer, ev),
-        description: buildReviewIssueBody(reviewer, ev, files),
-        status: "todo",
-        priority: bridge.defaultPriority ?? "medium",
-        assigneeAgentId: agentId,
-      }),
+    const createInput = {
+      companyId: cfg.companyId!,
+      projectId: bridge.paperclipProjectId,
+      title: buildReviewIssueTitle(reviewer, ev),
+      description: buildReviewIssueBody(reviewer, ev, files),
+      status: "todo" as const,
+      priority: bridge.defaultPriority ?? "medium",
+      assigneeAgentId: agentId,
+    };
+    // Highest-volume drop site post-deploy (GOL-384): 7 of 13 observed drops.
+    const issue = await withRestFallback<{ id: string }>(
+      restFallbackDeps(ctx, cfg),
+      "review.create",
+      () => runInScope(() => ctx.issues.create(createInput)),
+      (rest) => {
+        const { companyId: _companyId, ...restBody } = createInput;
+        return rest.createIssue(cfg.companyId!, restBody);
+      },
     );
     await upsertReviewRecord(ctx.db, {
       githubRepo: ev.repo,
@@ -928,9 +925,25 @@ async function processReviewer(
   }
 
   // New head SHA on an existing review: reopen + note, reset the pending check.
-  await runInScope(() => ctx.issues.update(existing.paperclipIssueId, { status: "todo" }, cfg.companyId!));
-  await runInScope(() =>
-    ctx.issues.createComment(existing.paperclipIssueId, buildNewCommitsNote(reviewer, ev), cfg.companyId!),
+  const deps = restFallbackDeps(ctx, cfg);
+  await withRestFallback(
+    deps,
+    "review.update",
+    async () => {
+      await runInScope(() => ctx.issues.update(existing.paperclipIssueId, { status: "todo" }, cfg.companyId!));
+    },
+    async (rest) => {
+      await rest.updateIssue(existing.paperclipIssueId, { status: "todo" });
+    },
+  );
+  const newCommitsNote = buildNewCommitsNote(reviewer, ev);
+  await withRestFallback(
+    deps,
+    "review.comment",
+    async () => {
+      await runInScope(() => ctx.issues.createComment(existing.paperclipIssueId, newCommitsNote, cfg.companyId!));
+    },
+    (rest) => rest.createComment(existing.paperclipIssueId, newCommitsNote),
   );
   await upsertReviewRecord(ctx.db, {
     githubRepo: ev.repo,
@@ -1131,8 +1144,26 @@ async function processCiPr(
   if (action === "close") {
     // decideCiFixAction only returns "close" when record is present + open.
     const rec = record!;
-    await runInScope(() => ctx.issues.update(rec.paperclipIssueId, { status: "done" }, cfg.companyId!));
-    await runInScope(() => ctx.issues.createComment(rec.paperclipIssueId, buildCiResolvedNote(ev.headSha), cfg.companyId!));
+    const closeDeps = restFallbackDeps(ctx, cfg);
+    await withRestFallback(
+      closeDeps,
+      "ci.close.update",
+      async () => {
+        await runInScope(() => ctx.issues.update(rec.paperclipIssueId, { status: "done" }, cfg.companyId!));
+      },
+      async (rest) => {
+        await rest.updateIssue(rec.paperclipIssueId, { status: "done" });
+      },
+    );
+    const resolvedNote = buildCiResolvedNote(ev.headSha);
+    await withRestFallback(
+      closeDeps,
+      "ci.close.comment",
+      async () => {
+        await runInScope(() => ctx.issues.createComment(rec.paperclipIssueId, resolvedNote, cfg.companyId!));
+      },
+      (rest) => rest.createComment(rec.paperclipIssueId, resolvedNote),
+    );
     await upsertCiFailureRecord(ctx.db, { ...rec, headSha: ev.headSha, status: "closed", updatedAt: now });
     ctx.logger.info("ci webhook: auto-closed fix issue (CI green)", {
       repo: ev.repo,
@@ -1201,17 +1232,24 @@ async function processCiPr(
   };
 
   if (action === "create") {
-    const issue = await runInScope(() =>
-      ctx.issues.create({
-        companyId: cfg.companyId!,
-        projectId: bridge.paperclipProjectId,
-        title: buildCiFixTitle(fixCtx),
-        description: buildCiFixBody(fixCtx),
-        status: "todo",
-        // CI red blocks the merge — fix issues page higher than routine mirrors.
-        priority: bridge.defaultPriority ?? "high",
-        assigneeAgentId: owner.agentId,
-      }),
+    const createInput = {
+      companyId: cfg.companyId!,
+      projectId: bridge.paperclipProjectId,
+      title: buildCiFixTitle(fixCtx),
+      description: buildCiFixBody(fixCtx),
+      status: "todo" as const,
+      // CI red blocks the merge — fix issues page higher than routine mirrors.
+      priority: bridge.defaultPriority ?? "high",
+      assigneeAgentId: owner.agentId,
+    };
+    const issue = await withRestFallback<{ id: string }>(
+      restFallbackDeps(ctx, cfg),
+      "ci.create",
+      () => runInScope(() => ctx.issues.create(createInput)),
+      (rest) => {
+        const { companyId: _companyId, ...restBody } = createInput;
+        return rest.createIssue(cfg.companyId!, restBody);
+      },
     );
     await upsertCiFailureRecord(ctx.db, {
       githubRepo: ev.repo,
@@ -1234,8 +1272,26 @@ async function processCiPr(
 
   // update — decideCiFixAction only returns "update" when record is present + open.
   const rec = record!;
-  await runInScope(() => ctx.issues.update(rec.paperclipIssueId, { status: "todo" }, cfg.companyId!));
-  await runInScope(() => ctx.issues.createComment(rec.paperclipIssueId, buildCiReFailNote(fixCtx), cfg.companyId!));
+  const updateDeps = restFallbackDeps(ctx, cfg);
+  await withRestFallback(
+    updateDeps,
+    "ci.update",
+    async () => {
+      await runInScope(() => ctx.issues.update(rec.paperclipIssueId, { status: "todo" }, cfg.companyId!));
+    },
+    async (rest) => {
+      await rest.updateIssue(rec.paperclipIssueId, { status: "todo" });
+    },
+  );
+  const reFailNote = buildCiReFailNote(fixCtx);
+  await withRestFallback(
+    updateDeps,
+    "ci.comment",
+    async () => {
+      await runInScope(() => ctx.issues.createComment(rec.paperclipIssueId, reFailNote, cfg.companyId!));
+    },
+    (rest) => rest.createComment(rec.paperclipIssueId, reFailNote),
+  );
   await upsertCiFailureRecord(ctx.db, { ...rec, headSha: ev.headSha, status: "open", updatedAt: now });
   ctx.logger.info("ci webhook: updated CI fix issue (still failing)", {
     repo: ev.repo,
@@ -1295,7 +1351,13 @@ const plugin = definePlugin({
           syncMarkerGithub: bridge.syncMarkerGithub,
         },
         logger: ctx.logger,
-        getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId),
+        getIssue: (issueId, companyId) =>
+          withRestFallback(
+            restFallbackDeps(ctx, cfg),
+            "sync.get",
+            () => ctx.issues.get(issueId, companyId),
+            async (rest) => (await rest.getIssue(issueId)) as Issue | null,
+          ),
         postOpsPing: (content) => postOpsPing(ctx, cfg.opsWebhookUrl, content),
       });
 

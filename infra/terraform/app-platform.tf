@@ -159,12 +159,35 @@ resource "digitalocean_app" "dashboard" {
       }
 
       env {
-        # The dashboard's DNS-rebinding-protection middleware (apps/dashboard/proxy.ts)
-        # checks request Host against an allowlist. App Platform's *.ondigitalocean.app
-        # pattern is handled by a regex in code; the custom Cloudflare-fronted domain
-        # has to be listed explicitly here.
+        # The dashboard's host-allowlist layer (apps/dashboard/proxy.ts) checks
+        # request Host against this list. ONLY the Cloudflare-fronted custom
+        # domain belongs here — the *.ondigitalocean.app default URL is
+        # deliberately NOT allowed (it bypasses Cloudflare Access; security
+        # review 2026-07-12, H1).
         key   = "ALLOWED_HOSTS"
         value = var.domain
+        scope = "RUN_TIME"
+      }
+
+      # ---------------------------------------------------------------------
+      # Cloudflare Access JWT verification (security review 2026-07-12, H1).
+      # proxy.ts requires every /api/* request on a non-local host to carry a
+      # valid Cf-Access-Jwt-Assertion. Issuer = the Zero Trust team domain;
+      # audience = the Access application's AUD tag, exported by the
+      # cloudflare_zero_trust_access_application resource — so this stays in
+      # lockstep with the Access app, no hand-copied values. proxy.ts FAILS
+      # CLOSED (503 on /api/*) if these are missing in production.
+      # ---------------------------------------------------------------------
+
+      env {
+        key   = "CF_ACCESS_TEAM_DOMAIN"
+        value = var.cloudflare_access_team_domain
+        scope = "RUN_TIME"
+      }
+
+      env {
+        key   = "CF_ACCESS_AUD"
+        value = cloudflare_zero_trust_access_application.dashboard.aud
         scope = "RUN_TIME"
       }
 
