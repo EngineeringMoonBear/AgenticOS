@@ -27,6 +27,21 @@ export function isScopeExpiryError(err: unknown): boolean {
   return msg.includes("expired") || msg.includes("missing") || msg.includes("unknown");
 }
 
+/**
+ * A non-2xx response from the Paperclip REST API. Carries the HTTP `status` so
+ * the fallback-failure log line can report it structurally instead of forcing a
+ * grep of the message text (GOL-384).
+ */
+export class PaperclipRestError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "PaperclipRestError";
+    this.status = status;
+  }
+}
+
 /** Minimal shape of a Paperclip issue as returned by the REST API. Mirrors the
  * fields the inbound path reads (`id`, `status`) — kept loose to avoid coupling
  * to the full SDK `Issue` type. */
@@ -97,7 +112,10 @@ export class PaperclipRestClient {
     } catch {
       // body unreadable — status alone is enough context
     }
-    throw new Error(`Paperclip REST ${what} failed: ${res.status} ${res.statusText} ${snippet}`.trim());
+    throw new PaperclipRestError(
+      `Paperclip REST ${what} failed: ${res.status} ${res.statusText} ${snippet}`.trim(),
+      res.status,
+    );
   }
 
   /**
@@ -144,5 +162,68 @@ export class PaperclipRestClient {
     });
     await this.assertOk(res, "updateIssue");
     return (await res.json()) as RestIssue;
+  }
+
+  /**
+   * POST /api/issues/{issueId}/comments — mirror of `ctx.issues.createComment`.
+   * The API field is `body` (NOT `content`/`comment`); a wrong field name is
+   * accepted with a 200 and silently drops the text.
+   */
+  async createComment(issueId: string, body: string): Promise<void> {
+    const url = `${this.baseUrl}/api/issues/${encodeURIComponent(issueId)}/comments`;
+    const res = await this.http.fetch(url, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ body }),
+    });
+    await this.assertOk(res, "createComment");
+  }
+}
+
+/** The subset of `ctx.logger` the fallback helper needs. */
+export interface FallbackLogger {
+  info(message: string, meta?: Record<string, unknown>): void;
+  warn(message: string, meta?: Record<string, unknown>): void;
+  error(message: string, meta?: Record<string, unknown>): void;
+}
+
+/**
+ * Run `fn` (the normal scope-based `ctx.issues.*` call) and, ONLY when it fails
+ * with the host's scope-expiry error and a REST client is configured, retry via
+ * `restFn`.
+ *
+ * Every outcome is logged against `site` so the fallback's real behaviour is
+ * greppable — in particular the failure path (GOL-384): before this, a fallback
+ * that 403'd on every attempt rethrew silently, so a wholly broken fallback
+ * looked identical to one that never fired.
+ *
+ * Behaviour is otherwise preserved exactly: a non-scope-expiry error, or an
+ * unconfigured fallback, rethrows the ORIGINAL error; a failed retry rethrows
+ * the REST error.
+ */
+export async function withRestFallback<T>(
+  deps: { logger: FallbackLogger; rest: PaperclipRestClient | null },
+  site: string,
+  fn: () => Promise<T>,
+  restFn: (rest: PaperclipRestClient) => Promise<T>,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const { logger, rest } = deps;
+    if (!isScopeExpiryError(err) || !rest) throw err;
+    logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", { site });
+    try {
+      const result = await restFn(rest);
+      logger.info("Paperclip REST fallback succeeded (GOL-323)", { site });
+      return result;
+    } catch (restErr) {
+      logger.error("Paperclip REST fallback failed (GOL-323)", {
+        site,
+        status: restErr instanceof PaperclipRestError ? restErr.status : undefined,
+        error: restErr instanceof Error ? restErr.message : String(restErr),
+      });
+      throw restErr;
+    }
   }
 }
