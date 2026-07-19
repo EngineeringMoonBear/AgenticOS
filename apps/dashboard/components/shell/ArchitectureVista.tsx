@@ -6,61 +6,116 @@ import {
   SkillGalaxyBackdrop,
   type SkillGalaxyDomain,
 } from "./backdrops/SkillGalaxyBackdrop";
+import { useArchitectureVista } from "@/lib/hooks/use-architecture-vista";
 
 /**
- * Architecture tab hero vista. Composes the {@link VistaShell} chrome
- * with the {@link SkillGalaxyBackdrop} radial cluster and four
- * Architecture-specific KPI tiles (copper accent).
+ * Architecture tab hero vista — wired to live endpoints via
+ * {@link useArchitectureVista} (truth pass 2026-07-14; previously a
+ * hardcoded DOMAINS grid and "11 registered / 25 dispatched" stubs):
+ *
+ *   - /api/vault/skills → registered-skill count, per-domain galaxy nodes,
+ *     top domain (domain = path segment after `Skills/`, like the
+ *     Architecture page derives it)
+ *   - /api/agent/runs   → runs started since UTC midnight ("dispatched today")
+ *
+ * Tile changes vs the stub version: the per-skill dispatch-count tile
+ * ("farm-task-triage (12)") had NO data source anywhere in the stack and was
+ * dropped; untagged-skill count (real, derived from skill paths) replaces it.
+ * Sources that error render "—" — never a fabricated value (CostVista pattern).
  */
+const PLACEHOLDER = "—";
 
-const DOMAINS: SkillGalaxyDomain[] = [
-  { name: "Farm", count: 5, dispatchedToday: 14 },
-  { name: "Software", count: 3, dispatchedToday: 8 },
-  { name: "Marketing", count: 2, dispatchedToday: 3 },
-  { name: "Video", count: 1, dispatchedToday: 0 },
-  { name: "Personal", count: 0, dispatchedToday: 0 },
-];
+interface DomainStats {
+  domains: SkillGalaxyDomain[];
+  top: { name: string; count: number } | null;
+  untagged: number;
+}
+
+/**
+ * Derive per-domain skill counts from vault paths (wiki/Skills/<Domain>/…).
+ * Skills directly under Skills/ (no domain folder) count as untagged.
+ */
+function toDomainStats(paths: string[]): DomainStats {
+  const counts = new Map<string, number>();
+  let untagged = 0;
+  for (const path of paths) {
+    const segments = path.split("/");
+    const skillsIdx = segments.findIndex((s) => s.toLowerCase() === "skills");
+    const domain =
+      skillsIdx >= 0 && segments.length > skillsIdx + 2
+        ? segments[skillsIdx + 1]
+        : null;
+    if (!domain) {
+      untagged += 1;
+      continue;
+    }
+    counts.set(domain, (counts.get(domain) ?? 0) + 1);
+  }
+  const sorted = [...counts.entries()].sort(([, a], [, b]) => b - a);
+  const domains: SkillGalaxyDomain[] = sorted.map(([name, count]) => ({
+    name,
+    count,
+  }));
+  const top = sorted.length > 0 ? { name: sorted[0][0], count: sorted[0][1] } : null;
+  return { domains, top, untagged };
+}
 
 export function ArchitectureVista() {
   const nowIso = useMemo(() => new Date().toISOString(), []);
+  const { data } = useArchitectureVista();
+
+  const skills = data?.skills ?? null;
+  const runsToday = data?.runsToday ?? null;
+
+  const { domains, top, untagged } = useMemo(
+    () => toDomainStats((skills?.skills ?? []).map((s) => s.path)),
+    [skills],
+  );
 
   return (
     <VistaShell
       accent="copper"
       asOf={nowIso}
-      backdrop={<SkillGalaxyBackdrop domains={DOMAINS} />}
+      backdrop={<SkillGalaxyBackdrop domains={domains} />}
     >
       <KpiTile
-        value="11"
+        value={skills ? String(skills.totalRegistered) : PLACEHOLDER}
         label="registered skills"
-        sublabel="5 domains · 2 untagged"
-      />
-      <KpiTile
-        value={
-          <>
-            25<span className="delta up">+8</span>
-          </>
+        sublabel={
+          skills
+            ? `${domains.length} domain${domains.length === 1 ? "" : "s"}`
+            : "loading…"
         }
+      />
+      <KpiTile
+        value={runsToday ? String(runsToday.count) : PLACEHOLDER}
         label="dispatched today"
-        sublabel="14 farm · 8 software · 3 marketing"
+        sublabel={runsToday ? "agent runs since midnight UTC" : "loading…"}
       />
       <KpiTile
         value={
-          <>
-            Farm<span className="unit"> (5)</span>
-          </>
+          top ? (
+            <>
+              {top.name}
+              <span className="unit"> ({top.count})</span>
+            </>
+          ) : (
+            PLACEHOLDER
+          )
         }
         label="top domain"
-        sublabel="14 dispatches today"
+        sublabel={
+          top
+            ? `${top.count} skill${top.count === 1 ? "" : "s"}`
+            : skills
+              ? "no domain folders"
+              : "loading…"
+        }
       />
       <KpiTile
-        value={
-          <>
-            farm-task-triage<span className="unit"> (12)</span>
-          </>
-        }
-        label="most-used skill"
-        sublabel="last 24h · p50 14s"
+        value={skills ? String(untagged) : PLACEHOLDER}
+        label="untagged skills"
+        sublabel={skills ? "no domain folder" : "loading…"}
       />
     </VistaShell>
   );

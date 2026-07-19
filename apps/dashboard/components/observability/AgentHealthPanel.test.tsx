@@ -13,12 +13,18 @@ function renderWithClient(ui: React.ReactNode) {
 }
 
 interface ServicePayload {
-  services: { name: string; latency_ms: number; ok: boolean }[];
+  services: {
+    name: string;
+    ok: boolean;
+    latencyMs: number | null;
+    detail: string;
+  }[];
+  paperclip: { runningAgents: number | null; stuck: boolean } | null;
   checked_at: string;
 }
 
 describe("AgentHealthPanel", () => {
-  let payload: ServicePayload = { services: [], checked_at: "" };
+  let payload: ServicePayload = { services: [], paperclip: null, checked_at: "" };
 
   beforeEach(() => {
     vi.spyOn(global, "fetch").mockImplementation(async () => {
@@ -32,27 +38,44 @@ describe("AgentHealthPanel", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders service rows with latency", async () => {
+  it("renders probed service rows with measured latency", async () => {
     payload = {
       services: [
-        { name: "Hermes Gateway", latency_ms: 2, ok: true },
-        { name: "OpenViking", latency_ms: 4, ok: true },
-        { name: "Ollama", latency_ms: 12, ok: true },
-        { name: "Postgres", latency_ms: 1, ok: true },
+        { name: "Paperclip", ok: true, latencyMs: 42, detail: "2 agents running" },
+        { name: "OpenViking", ok: true, latencyMs: 12, detail: "reachable" },
       ],
+      paperclip: { runningAgents: 2, stuck: false },
       checked_at: new Date().toISOString(),
     };
     renderWithClient(<AgentHealthPanel />);
     await waitFor(() => {
-      expect(screen.getByText("Hermes Gateway")).toBeInTheDocument();
+      expect(screen.getByText("Paperclip")).toBeInTheDocument();
       expect(screen.getByText("OpenViking")).toBeInTheDocument();
-      expect(screen.getByText("12ms")).toBeInTheDocument();
+      expect(screen.getByText("42ms")).toBeInTheDocument();
+      expect(screen.getByText("2 agents running")).toBeInTheDocument();
       expect(screen.getByText("Agent health")).toBeInTheDocument();
     });
   });
 
+  it('renders "—" latency for a service that could not be probed', async () => {
+    payload = {
+      services: [
+        { name: "Paperclip", ok: false, latencyMs: null, detail: "unreachable" },
+        { name: "OpenViking", ok: false, latencyMs: null, detail: "not configured" },
+      ],
+      paperclip: { runningAgents: null, stuck: false },
+      checked_at: new Date().toISOString(),
+    };
+    renderWithClient(<AgentHealthPanel />);
+    await waitFor(() => {
+      expect(screen.getAllByText("—")).toHaveLength(2);
+      expect(screen.getByText("unreachable")).toBeInTheDocument();
+      expect(screen.getByText("not configured")).toBeInTheDocument();
+    });
+  });
+
   it("renders empty state when no services reported", async () => {
-    payload = { services: [], checked_at: new Date().toISOString() };
+    payload = { services: [], paperclip: null, checked_at: new Date().toISOString() };
     renderWithClient(<AgentHealthPanel />);
     await waitFor(() => {
       expect(screen.getByText(/no services reporting/i)).toBeInTheDocument();

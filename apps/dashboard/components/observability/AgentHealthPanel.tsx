@@ -1,19 +1,17 @@
 "use client";
-import { useQuery } from "@tanstack/react-query";
-
 import { Card, CardAction, CardHead, CardTitle } from "@/components/ui/Card";
 import { Row, RowList } from "@/components/ui/Row";
+import { useHealthServices } from "@/lib/hooks/use-health-services";
 
-interface ServiceHealth {
-  name: string;
-  latency_ms: number;
-  ok: boolean;
-}
+/**
+ * Agent health panel — live service probes from /api/health/services
+ * (truth pass 2026-07-14; previously rendered canned "Hermes 2ms" rows).
+ * Each row is a real probe: platform (Paperclip/Hermes) + OpenViking.
+ * Latency is measured server-side around the actual probe; a service
+ * that could not be probed shows "—" with an honest detail line.
+ */
 
-interface AgentHealthData {
-  services: ServiceHealth[];
-  checked_at: string;
-}
+const PLACEHOLDER = "—";
 
 const TargetIcon = (
   <svg
@@ -32,9 +30,9 @@ const TargetIcon = (
 );
 
 function formatAge(iso: string | undefined): string {
-  if (!iso) return "—";
+  if (!iso) return PLACEHOLDER;
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return PLACEHOLDER;
   const sec = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
   if (sec < 60) return `${sec}s ago`;
   const m = Math.floor(sec / 60);
@@ -43,20 +41,8 @@ function formatAge(iso: string | undefined): string {
   return `${h}h ago`;
 }
 
-function useAgentHealth() {
-  return useQuery<AgentHealthData>({
-    queryKey: ["health", "services"],
-    queryFn: async () => {
-      const res = await fetch("/api/health/services");
-      if (!res.ok) throw new Error("failed");
-      return res.json();
-    },
-    refetchInterval: 5_000,
-  });
-}
-
 export function AgentHealthPanel() {
-  const { data, isLoading } = useAgentHealth();
+  const { data, isLoading } = useHealthServices();
   const services = data?.services ?? [];
   const action = isLoading ? "checking…" : formatAge(data?.checked_at);
 
@@ -86,8 +72,15 @@ export function AgentHealthPanel() {
                   height: 7,
                 }}
               />
-              <span className="label-strong">{s.name}</span>
-              <span className="num">{s.latency_ms}ms</span>
+              <div>
+                <div className="label-strong">{s.name}</div>
+                <div className="meta" style={{ fontSize: 10.5 }}>
+                  {s.detail}
+                </div>
+              </div>
+              <span className="num">
+                {s.latencyMs != null ? `${s.latencyMs}ms` : PLACEHOLDER}
+              </span>
             </Row>
           ))}
         </RowList>

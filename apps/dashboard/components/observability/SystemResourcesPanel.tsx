@@ -2,19 +2,21 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { Card, CardAction, CardHead, CardTitle } from "@/components/ui/Card";
-import { Progress, type ProgressVariant } from "@/components/ui/Progress";
 
-interface ResourceMetric {
-  name: string;
-  percent: number;
-  detail: string;
-}
+/**
+ * System resources panel. The backing route (/api/health/resources) reports
+ * that no metrics source is connected yet — the real source will be the
+ * OpenObserve `system_*` streams (GOL-313). Until then this panel renders
+ * honest "—" placeholders instead of the fabricated CPU/RAM/disk percentages
+ * it used to show (truth pass 2026-07-14).
+ */
+
+const PLACEHOLDER = "—";
+const METRIC_NAMES = ["CPU", "RAM", "Disk"] as const;
 
 interface SystemResourcesData {
-  cpu: ResourceMetric;
-  ram: ResourceMetric;
-  disk: ResourceMetric;
-  meta: string;
+  available: false;
+  reason: string;
 }
 
 const ServerIcon = (
@@ -36,12 +38,6 @@ const ServerIcon = (
   </svg>
 );
 
-function variantFor(pct: number): ProgressVariant {
-  if (pct >= 85) return "gold";
-  if (pct >= 60) return "amber";
-  return "pine";
-}
-
 function useSystemResources() {
   return useQuery<SystemResourcesData>({
     queryKey: ["health", "resources"],
@@ -57,31 +53,37 @@ function useSystemResources() {
 export function SystemResourcesPanel() {
   const { data, isLoading } = useSystemResources();
 
-  const metrics = data ? [data.cpu, data.ram, data.disk] : [];
-  const anyHot = metrics.some((m) => m.percent >= 60);
-  const lane = anyHot ? "amber" : "pine";
-
   return (
-    <Card lane={lane}>
+    <Card lane="pine">
       <CardHead>
         <CardTitle icon={ServerIcon}>System resources</CardTitle>
-        <CardAction>{data?.meta ?? "—"}</CardAction>
+        <CardAction>{data ? data.reason : PLACEHOLDER}</CardAction>
       </CardHead>
-      {isLoading || !data ? (
+      {isLoading ? (
         <div className="text-sm" style={{ color: "var(--parchment-muted)" }}>
           Loading…
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {metrics.map((m) => (
-            <Progress
-              key={m.name}
-              name={m.name}
-              count={m.detail}
-              percent={m.percent}
-              variant={variantFor(m.percent)}
-            />
+          {METRIC_NAMES.map((name) => (
+            <div
+              key={name}
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                justifyContent: "space-between",
+              }}
+            >
+              <span className="label-strong">{name}</span>
+              <span className="num muted">{PLACEHOLDER}</span>
+            </div>
           ))}
+          <div
+            className="meta"
+            style={{ fontFamily: "var(--mono)", fontSize: 10.5 }}
+          >
+            awaiting OpenObserve wiring (GOL-313)
+          </div>
         </div>
       )}
     </Card>
