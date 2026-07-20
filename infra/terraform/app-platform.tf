@@ -57,16 +57,15 @@ resource "digitalocean_app" "dashboard" {
       #   instance_count = 1 / instance_size_slug = "basic-xxs"
       # then re-apply — reverts to the $5/mo fixed single instance.
       instance_size_slug = "professional-xs"
-      autoscaling {
-        min_instance_count = 1
-        max_instance_count = 3
-        metrics {
-          cpu {
-            percent = 70
-          }
-        }
-      }
-      http_port = 3000
+      # autoscaling DISABLED 2026-07-14: DO now rejects CPU-metric autoscaling
+      # on professional-xs ("Autoscaling on CPU metrics is not allowed for
+      # instance_size_slug professional-xs"), which 400s EVERY spec update —
+      # including unrelated env additions — because TF re-PUTs the full spec.
+      # Fixed at 1 instance (the previous autoscale floor, and the observed
+      # steady state). Fleet decision needed: upsize to an allowed slug to
+      # restore autoscaling, or accept fixed-1 — tracked on GitHub.
+      instance_count = 1
+      http_port      = 3000
       # source_dir = "/" (repo root) is required so App Platform's buildpack
       # finds the root pnpm-lock.yaml and uses pnpm. Setting source_dir to a
       # subdirectory makes the buildpack treat that subdir as the project root,
