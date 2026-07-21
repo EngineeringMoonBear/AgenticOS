@@ -117,6 +117,12 @@ interface GithubSyncConfig {
   bridges: BridgeConfig[];
   /** Override for GH_TOKEN_BROKER_URL (set if the env isn't passed to plugin workers). */
   tokenBrokerUrl?: string;
+  /**
+   * Bearer the broker requires since M3 (PR #356). Sandboxed plugin workers can't
+   * read the GH_BROKER_API_KEY env/file, so this must be supplied via config or
+   * every token mint 401s and the PR-review pipeline can't fetch changed files.
+   */
+  tokenBrokerApiKey?: string;
   /** Optional static-PAT fallback, used only when no broker is configured. */
   githubToken?: string;
   /** Company owning the synced projects — required to create inbound mirror issues. */
@@ -207,6 +213,7 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
   return {
     bridges,
     tokenBrokerUrl: raw.tokenBrokerUrl ? String(raw.tokenBrokerUrl) : undefined,
+    tokenBrokerApiKey: raw.tokenBrokerApiKey ? String(raw.tokenBrokerApiKey) : undefined,
     githubToken: raw.githubToken ? String(raw.githubToken) : undefined,
     companyId: raw.companyId ? String(raw.companyId) : undefined,
     inboundWebhookSecret: raw.inboundWebhookSecret ? String(raw.inboundWebhookSecret) : undefined,
@@ -682,7 +689,10 @@ async function handleAppInbound(
 function makeBridgeGithubClient(cfg: GithubSyncConfig, bridge: BridgeConfig): GitHubClient | null {
   const brokerUrl = cfg.tokenBrokerUrl || process.env.GH_TOKEN_BROKER_URL || "";
   if (brokerUrl) {
-    return new GitHubClient({ org: bridge.githubOrg, getToken: makeBrokerTokenProvider(brokerUrl, bridge.githubOrg) });
+    return new GitHubClient({
+      org: bridge.githubOrg,
+      getToken: makeBrokerTokenProvider(brokerUrl, bridge.githubOrg, { apiKey: cfg.tokenBrokerApiKey }),
+    });
   }
   if (cfg.githubToken) {
     return new GitHubClient({ org: bridge.githubOrg, getToken: staticTokenProvider(cfg.githubToken) });
@@ -1331,7 +1341,7 @@ const plugin = definePlugin({
     for (const bridge of cfg.bridges) {
       let getToken;
       if (brokerUrl) {
-        getToken = makeBrokerTokenProvider(brokerUrl, bridge.githubOrg);
+        getToken = makeBrokerTokenProvider(brokerUrl, bridge.githubOrg, { apiKey: cfg.tokenBrokerApiKey });
       } else if (cfg.githubToken) {
         getToken = staticTokenProvider(cfg.githubToken);
       } else {

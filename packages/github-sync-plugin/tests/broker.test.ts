@@ -49,6 +49,27 @@ describe("makeBrokerTokenProvider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("sends an Authorization: Bearer header when an apiKey is supplied (M3/GOL-666)", async () => {
+    const fetchMock = brokerFetch("ghs_abc");
+    const getToken = makeBrokerTokenProvider("http://b", "Org", {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      apiKey: "broker-secret",
+    });
+    await getToken("repo");
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer broker-secret");
+  });
+
+  it("omits the Authorization header when no apiKey is set", async () => {
+    const fetchMock = brokerFetch("ghs_abc");
+    const getToken = makeBrokerTokenProvider("http://b", "Org", {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    await getToken("repo");
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
+  });
+
   it("throws on a non-OK broker response (no token leaked in the message)", async () => {
     const fetchMock = brokerFetch("", false, 404);
     const getToken = makeBrokerTokenProvider("http://b", "Org", {

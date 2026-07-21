@@ -10948,6 +10948,7 @@ function makeBrokerTokenProvider(brokerUrl, owner, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 5e3;
   const now = opts.now ?? (() => Date.now());
   const doFetch = opts.fetchImpl ?? fetch;
+  const apiKey = (opts.apiKey ?? "").trim();
   const base = brokerUrl.replace(/\/$/, "");
   const cache = /* @__PURE__ */ new Map();
   return async (repo) => {
@@ -10960,7 +10961,10 @@ function makeBrokerTokenProvider(brokerUrl, owner, opts = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await doFetch(url.toString(), { signal: controller.signal });
+      const res = await doFetch(url.toString(), {
+        signal: controller.signal,
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+      });
       if (!res.ok) throw new Error(`token broker -> ${res.status}`);
       const body = await res.json();
       if (!body.token) throw new Error("token broker returned no token");
@@ -11731,6 +11735,14 @@ function isScopeExpiryError(err) {
   if (!msg.includes("invocation scope")) return false;
   return msg.includes("expired") || msg.includes("missing") || msg.includes("unknown");
 }
+var PaperclipRestError = class extends Error {
+  status;
+  constructor(message, status) {
+    super(message);
+    this.name = "PaperclipRestError";
+    this.status = status;
+  }
+};
 var PaperclipRestClient = class {
   baseUrl;
   token;
@@ -11762,7 +11774,10 @@ var PaperclipRestClient = class {
       snippet = (await res.text()).slice(0, 300);
     } catch {
     }
-    throw new Error(`Paperclip REST ${what} failed: ${res.status} ${res.statusText} ${snippet}`.trim());
+    throw new PaperclipRestError(
+      `Paperclip REST ${what} failed: ${res.status} ${res.statusText} ${snippet}`.trim(),
+      res.status
+    );
   }
   /**
    * POST /api/companies/{companyId}/issues — mirror of `ctx.issues.create`. `body`
@@ -11807,7 +11822,42 @@ var PaperclipRestClient = class {
     await this.assertOk(res, "updateIssue");
     return await res.json();
   }
+  /**
+   * POST /api/issues/{issueId}/comments — mirror of `ctx.issues.createComment`.
+   * The API field is `body` (NOT `content`/`comment`); a wrong field name is
+   * accepted with a 200 and silently drops the text.
+   */
+  async createComment(issueId, body) {
+    const url = `${this.baseUrl}/api/issues/${encodeURIComponent(issueId)}/comments`;
+    const res = await this.http.fetch(url, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ body })
+    });
+    await this.assertOk(res, "createComment");
+  }
 };
+async function withRestFallback(deps, site, fn, restFn) {
+  try {
+    return await fn();
+  } catch (err) {
+    const { logger, rest } = deps;
+    if (!isScopeExpiryError(err) || !rest) throw err;
+    logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", { site });
+    try {
+      const result = await restFn(rest);
+      logger.info("Paperclip REST fallback succeeded (GOL-323)", { site });
+      return result;
+    } catch (restErr) {
+      logger.error("Paperclip REST fallback failed (GOL-323)", {
+        site,
+        status: restErr instanceof PaperclipRestError ? restErr.status : void 0,
+        error: restErr instanceof Error ? restErr.message : String(restErr)
+      });
+      throw restErr;
+    }
+  }
+}
 
 // src/worker.ts
 var INBOUND_ENDPOINT_KEY = "github-issue";
@@ -11848,6 +11898,7 @@ function readConfig(raw) {
   return {
     bridges,
     tokenBrokerUrl: raw.tokenBrokerUrl ? String(raw.tokenBrokerUrl) : void 0,
+    tokenBrokerApiKey: raw.tokenBrokerApiKey ? String(raw.tokenBrokerApiKey) : void 0,
     githubToken: raw.githubToken ? String(raw.githubToken) : void 0,
     companyId: raw.companyId ? String(raw.companyId) : void 0,
     inboundWebhookSecret: raw.inboundWebhookSecret ? String(raw.inboundWebhookSecret) : void 0,
@@ -11872,6 +11923,9 @@ function restFallbackClient(ctx, cfg) {
     cfAccessClientId: cfg.paperclipCfAccessClientId,
     cfAccessClientSecret: cfg.paperclipCfAccessClientSecret
   });
+}
+function restFallbackDeps(ctx, cfg) {
+  return { logger: ctx.logger, rest: restFallbackClient(ctx, cfg) };
 }
 async function postOpsPing(ctx, webhookUrl, content) {
   if (!webhookUrl) return;
@@ -11915,7 +11969,12 @@ function makeDispatch(ctx, cfg, depsByProject, handle, eventName) {
         ctx.logger.warn(`${eventName} event missing entityId; skipping`);
         return;
       }
-      const issue = await ctx.issues.get(event.entityId, event.companyId);
+      const issue = await withRestFallback(
+        restFallbackDeps(ctx, cfg),
+        `${eventName}.get`,
+        () => ctx.issues.get(event.entityId, event.companyId),
+        async (rest) => await rest.getIssue(event.entityId)
+      );
       if (!issue) {
         ctx.logger.warn(`${eventName}: issue not readable; skipping`, {
           issueId: event.entityId
@@ -11961,22 +12020,16 @@ async function createMirrorIssue(ctx, cfg, bridge, payload, labels = [], runInSc
     priority: bridge.defaultPriority ?? "medium",
     ...assigneeAgentId ? { assigneeAgentId } : {}
   };
-  let issue;
-  try {
-    issue = await runInScope(() => ctx.issues.create(createInput));
-  } catch (err) {
-    const rest = restFallbackClient(ctx, cfg);
-    if (isScopeExpiryError(err) && rest) {
-      ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
-        site: "create"
-      });
+  const issue = await withRestFallback(
+    restFallbackDeps(ctx, cfg),
+    "mirror.create",
+    () => runInScope(() => ctx.issues.create(createInput)),
+    // companyId moves into the URL for the REST create; pass the rest of the payload.
+    (rest) => {
       const { companyId: _companyId, ...restBody } = createInput;
-      issue = await rest.createIssue(cfg.companyId, restBody);
-      ctx.logger.info("Paperclip REST fallback succeeded (GOL-323)", { site: "create" });
-    } else {
-      throw err;
+      return rest.createIssue(cfg.companyId, restBody);
     }
-  }
+  );
   await upsert(ctx.db, {
     paperclipIssueId: issue.id,
     githubRepo: payload.repo,
@@ -12057,22 +12110,12 @@ async function handleAppClosure(ctx, cfg, event, runInScope) {
     });
     return;
   }
-  let issue;
-  try {
-    issue = await runInScope(() => ctx.issues.get(mapping.paperclipIssueId, cfg.companyId));
-  } catch (err) {
-    const rest = restFallbackClient(ctx, cfg);
-    if (isScopeExpiryError(err) && rest) {
-      ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
-        site: "get"
-      });
-      const fetched = await rest.getIssue(mapping.paperclipIssueId);
-      issue = fetched;
-      ctx.logger.info("Paperclip REST fallback succeeded (GOL-323)", { site: "get" });
-    } else {
-      throw err;
-    }
-  }
+  const issue = await withRestFallback(
+    restFallbackDeps(ctx, cfg),
+    "closure.get",
+    () => runInScope(() => ctx.issues.get(mapping.paperclipIssueId, cfg.companyId)),
+    async (rest) => await rest.getIssue(mapping.paperclipIssueId)
+  );
   if (!issue) {
     ctx.logger.warn("app webhook: mirror issue not readable; skipping closure", {
       issueId: mapping.paperclipIssueId
@@ -12088,20 +12131,16 @@ async function handleAppClosure(ctx, cfg, event, runInScope) {
     });
     return;
   }
-  try {
-    await runInScope(() => ctx.issues.update(issue.id, { status: target }, cfg.companyId));
-  } catch (err) {
-    const rest = restFallbackClient(ctx, cfg);
-    if (isScopeExpiryError(err) && rest) {
-      ctx.logger.warn("inbound write hit scope-expiry; retrying via Paperclip REST fallback (GOL-323)", {
-        site: "update"
-      });
+  await withRestFallback(
+    restFallbackDeps(ctx, cfg),
+    "closure.update",
+    async () => {
+      await runInScope(() => ctx.issues.update(issue.id, { status: target }, cfg.companyId));
+    },
+    async (rest) => {
       await rest.updateIssue(issue.id, { status: target });
-      ctx.logger.info("Paperclip REST fallback succeeded (GOL-323)", { site: "update" });
-    } else {
-      throw err;
     }
-  }
+  );
   await upsert(ctx.db, { ...mapping, lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString() });
   ctx.logger.info("app webhook: propagated GitHub closure to Paperclip mirror", {
     issueId: issue.id,
@@ -12155,7 +12194,10 @@ async function handleAppInbound(ctx, cfg, input, runInScope) {
 function makeBridgeGithubClient(cfg, bridge) {
   const brokerUrl = cfg.tokenBrokerUrl || process.env.GH_TOKEN_BROKER_URL || "";
   if (brokerUrl) {
-    return new GitHubClient({ org: bridge.githubOrg, getToken: makeBrokerTokenProvider(brokerUrl, bridge.githubOrg) });
+    return new GitHubClient({
+      org: bridge.githubOrg,
+      getToken: makeBrokerTokenProvider(brokerUrl, bridge.githubOrg, { apiKey: cfg.tokenBrokerApiKey })
+    });
   }
   if (cfg.githubToken) {
     return new GitHubClient({ org: bridge.githubOrg, getToken: staticTokenProvider(cfg.githubToken) });
@@ -12279,16 +12321,23 @@ async function processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, ag
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
   if (action === "create" || !existing) {
-    const issue = await runInScope(
-      () => ctx.issues.create({
-        companyId: cfg.companyId,
-        projectId: bridge.paperclipProjectId,
-        title: buildReviewIssueTitle(reviewer, ev),
-        description: buildReviewIssueBody(reviewer, ev, files),
-        status: "todo",
-        priority: bridge.defaultPriority ?? "medium",
-        assigneeAgentId: agentId
-      })
+    const createInput = {
+      companyId: cfg.companyId,
+      projectId: bridge.paperclipProjectId,
+      title: buildReviewIssueTitle(reviewer, ev),
+      description: buildReviewIssueBody(reviewer, ev, files),
+      status: "todo",
+      priority: bridge.defaultPriority ?? "medium",
+      assigneeAgentId: agentId
+    };
+    const issue = await withRestFallback(
+      restFallbackDeps(ctx, cfg),
+      "review.create",
+      () => runInScope(() => ctx.issues.create(createInput)),
+      (rest) => {
+        const { companyId: _companyId, ...restBody } = createInput;
+        return rest.createIssue(cfg.companyId, restBody);
+      }
     );
     await upsertReviewRecord(ctx.db, {
       githubRepo: ev.repo,
@@ -12308,9 +12357,25 @@ async function processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, ag
     await seedPendingCheck(ctx, github, bridge, ev, reviewer);
     return "created";
   }
-  await runInScope(() => ctx.issues.update(existing.paperclipIssueId, { status: "todo" }, cfg.companyId));
-  await runInScope(
-    () => ctx.issues.createComment(existing.paperclipIssueId, buildNewCommitsNote(reviewer, ev), cfg.companyId)
+  const deps = restFallbackDeps(ctx, cfg);
+  await withRestFallback(
+    deps,
+    "review.update",
+    async () => {
+      await runInScope(() => ctx.issues.update(existing.paperclipIssueId, { status: "todo" }, cfg.companyId));
+    },
+    async (rest) => {
+      await rest.updateIssue(existing.paperclipIssueId, { status: "todo" });
+    }
+  );
+  const newCommitsNote = buildNewCommitsNote(reviewer, ev);
+  await withRestFallback(
+    deps,
+    "review.comment",
+    async () => {
+      await runInScope(() => ctx.issues.createComment(existing.paperclipIssueId, newCommitsNote, cfg.companyId));
+    },
+    (rest) => rest.createComment(existing.paperclipIssueId, newCommitsNote)
   );
   await upsertReviewRecord(ctx.db, {
     githubRepo: ev.repo,
@@ -12441,8 +12506,26 @@ async function processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope) {
   }
   if (action === "close") {
     const rec2 = record;
-    await runInScope(() => ctx.issues.update(rec2.paperclipIssueId, { status: "done" }, cfg.companyId));
-    await runInScope(() => ctx.issues.createComment(rec2.paperclipIssueId, buildCiResolvedNote(ev.headSha), cfg.companyId));
+    const closeDeps = restFallbackDeps(ctx, cfg);
+    await withRestFallback(
+      closeDeps,
+      "ci.close.update",
+      async () => {
+        await runInScope(() => ctx.issues.update(rec2.paperclipIssueId, { status: "done" }, cfg.companyId));
+      },
+      async (rest) => {
+        await rest.updateIssue(rec2.paperclipIssueId, { status: "done" });
+      }
+    );
+    const resolvedNote = buildCiResolvedNote(ev.headSha);
+    await withRestFallback(
+      closeDeps,
+      "ci.close.comment",
+      async () => {
+        await runInScope(() => ctx.issues.createComment(rec2.paperclipIssueId, resolvedNote, cfg.companyId));
+      },
+      (rest) => rest.createComment(rec2.paperclipIssueId, resolvedNote)
+    );
     await upsertCiFailureRecord(ctx.db, { ...rec2, headSha: ev.headSha, status: "closed", updatedAt: now });
     ctx.logger.info("ci webhook: auto-closed fix issue (CI green)", {
       repo: ev.repo,
@@ -12500,17 +12583,24 @@ async function processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope) {
     failed
   };
   if (action === "create") {
-    const issue = await runInScope(
-      () => ctx.issues.create({
-        companyId: cfg.companyId,
-        projectId: bridge.paperclipProjectId,
-        title: buildCiFixTitle(fixCtx),
-        description: buildCiFixBody(fixCtx),
-        status: "todo",
-        // CI red blocks the merge — fix issues page higher than routine mirrors.
-        priority: bridge.defaultPriority ?? "high",
-        assigneeAgentId: owner.agentId
-      })
+    const createInput = {
+      companyId: cfg.companyId,
+      projectId: bridge.paperclipProjectId,
+      title: buildCiFixTitle(fixCtx),
+      description: buildCiFixBody(fixCtx),
+      status: "todo",
+      // CI red blocks the merge — fix issues page higher than routine mirrors.
+      priority: bridge.defaultPriority ?? "high",
+      assigneeAgentId: owner.agentId
+    };
+    const issue = await withRestFallback(
+      restFallbackDeps(ctx, cfg),
+      "ci.create",
+      () => runInScope(() => ctx.issues.create(createInput)),
+      (rest) => {
+        const { companyId: _companyId, ...restBody } = createInput;
+        return rest.createIssue(cfg.companyId, restBody);
+      }
     );
     await upsertCiFailureRecord(ctx.db, {
       githubRepo: ev.repo,
@@ -12531,8 +12621,26 @@ async function processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope) {
     return;
   }
   const rec = record;
-  await runInScope(() => ctx.issues.update(rec.paperclipIssueId, { status: "todo" }, cfg.companyId));
-  await runInScope(() => ctx.issues.createComment(rec.paperclipIssueId, buildCiReFailNote(fixCtx), cfg.companyId));
+  const updateDeps = restFallbackDeps(ctx, cfg);
+  await withRestFallback(
+    updateDeps,
+    "ci.update",
+    async () => {
+      await runInScope(() => ctx.issues.update(rec.paperclipIssueId, { status: "todo" }, cfg.companyId));
+    },
+    async (rest) => {
+      await rest.updateIssue(rec.paperclipIssueId, { status: "todo" });
+    }
+  );
+  const reFailNote = buildCiReFailNote(fixCtx);
+  await withRestFallback(
+    updateDeps,
+    "ci.comment",
+    async () => {
+      await runInScope(() => ctx.issues.createComment(rec.paperclipIssueId, reFailNote, cfg.companyId));
+    },
+    (rest) => rest.createComment(rec.paperclipIssueId, reFailNote)
+  );
   await upsertCiFailureRecord(ctx.db, { ...rec, headSha: ev.headSha, status: "open", updatedAt: now });
   ctx.logger.info("ci webhook: updated CI fix issue (still failing)", {
     repo: ev.repo,
@@ -12559,7 +12667,7 @@ var plugin = definePlugin({
     for (const bridge of cfg.bridges) {
       let getToken;
       if (brokerUrl) {
-        getToken = makeBrokerTokenProvider(brokerUrl, bridge.githubOrg);
+        getToken = makeBrokerTokenProvider(brokerUrl, bridge.githubOrg, { apiKey: cfg.tokenBrokerApiKey });
       } else if (cfg.githubToken) {
         getToken = staticTokenProvider(cfg.githubToken);
       } else {
@@ -12578,7 +12686,12 @@ var plugin = definePlugin({
           syncMarkerGithub: bridge.syncMarkerGithub
         },
         logger: ctx.logger,
-        getIssue: (issueId, companyId) => ctx.issues.get(issueId, companyId),
+        getIssue: (issueId, companyId) => withRestFallback(
+          restFallbackDeps(ctx, cfg),
+          "sync.get",
+          () => ctx.issues.get(issueId, companyId),
+          async (rest) => await rest.getIssue(issueId)
+        ),
         postOpsPing: (content) => postOpsPing(ctx, cfg.opsWebhookUrl, content)
       });
       ctx.logger.info("bridge active", {
