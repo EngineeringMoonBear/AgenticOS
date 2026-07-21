@@ -38,9 +38,9 @@ variable "do_region" {
 }
 
 variable "droplet_size" {
-  description = "DigitalOcean Droplet size slug"
+  description = "DigitalOcean Droplet size slug. Bumped s-2vcpu-4gb -> s-4vcpu-8gb (GOL-657, board-approved 2026-07-21) to clear the recurring >80%/>90% memory OOM monitor alerts and CPU-p95 saturation. The live box is resized out-of-band by .github/workflows/resize-droplet.yml (an external CI runner power-cycles the Droplet — a local `terraform apply` cannot, since the resize reboots the very host running it); this default keeps IaC as the source of truth so `terraform plan` shows no drift afterward. The workflow default is a REVERSIBLE CPU/RAM-only resize (disk stays 80GB), so this can be scaled back down if the cost isn't warranted."
   type        = string
-  default     = "s-2vcpu-4gb"
+  default     = "s-4vcpu-8gb"
 }
 
 variable "domain" {
