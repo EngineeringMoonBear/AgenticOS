@@ -146,7 +146,7 @@ describe("GitHubClient.createCheckRun", () => {
     vi.stubGlobal("fetch", fetchMock);
     const client = new GitHubClient({ token: "t", org: "o" });
     const res = await client.createCheckRun("r", {
-      name: "agent-review/alice",
+      name: "agent-review/ada",
       headSha: "sha1",
       title: "pending",
       summary: "waiting",
@@ -156,7 +156,7 @@ describe("GitHubClient.createCheckRun", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe("https://api.github.com/repos/o/r/check-runs");
     const body = JSON.parse(init.body as string);
-    expect(body).toMatchObject({ name: "agent-review/alice", head_sha: "sha1", status: "in_progress" });
+    expect(body).toMatchObject({ name: "agent-review/ada", head_sha: "sha1", status: "in_progress" });
     expect(body.conclusion).toBeUndefined();
   });
 

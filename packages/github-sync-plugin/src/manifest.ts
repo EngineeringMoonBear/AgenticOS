@@ -100,7 +100,7 @@ const manifest: PaperclipPluginManifestV1 = {
       endpointKey: "github-pr",
       displayName: "GitHub App pull_request event → agent review pipeline (GOL-158)",
       description:
-        "Subscribe the AgenticOS Developer GitHub App to `pull_request` events and point them here. For each non-draft PR (opened/reopened/ready_for_review/synchronize) the plugin creates review issue(s) in the matching bridge's project — Alice always, Iris when a changed path matches `prReviewFrontendPaths` — and seeds a pending `agent-review/*` check-run on the head SHA. Verified with appWebhookSecret (same as `github-app`). Needs the App's `checks:write` permission for check-runs.",
+        "Subscribe the AgenticOS Developer GitHub App to `pull_request` events and point them here. For each non-draft PR (opened/reopened/ready_for_review/synchronize) the plugin creates review issue(s) in the matching bridge's project — Ada always, Iris when a changed path matches `prReviewFrontendPaths` — and seeds a pending `agent-review/*` check-run on the head SHA. Verified with appWebhookSecret (same as `github-app`). Needs the App's `checks:write` permission for check-runs.",
     },
   ],
   // Declaring `database` is REQUIRED for the host to provision + activate the
@@ -161,7 +161,7 @@ const manifest: PaperclipPluginManifestV1 = {
               type: "object",
               title: "Discipline label routing (v0.6.0)",
               description:
-                "Map of GitHub label name → assignee agent UUID. An inbound issue is assigned to the owner of its highest-precedence matching label. Fixed precedence: infra = bug = alert > frontend > feature (first match by precedence wins). Example: {\"frontend\":\"<Iris>\",\"feature\":\"<Alice>\",\"bug\":\"<Terra>\",\"infra\":\"<Terra>\",\"alert\":\"<Terra>\"}. No match → fallbackAssigneeAgentId → defaultAssigneeAgentId.",
+                "Map of GitHub label name → assignee agent UUID. An inbound issue is assigned to the owner of its highest-precedence matching label. Fixed precedence: infra = bug = alert > frontend > feature (first match by precedence wins). Example: {\"frontend\":\"<Iris>\",\"feature\":\"<Ada>\",\"bug\":\"<Terra>\",\"infra\":\"<Terra>\",\"alert\":\"<Terra>\"}. No match → fallbackAssigneeAgentId → defaultAssigneeAgentId.",
               additionalProperties: { type: "string" },
             },
             fallbackAssigneeAgentId: {
@@ -233,9 +233,9 @@ const manifest: PaperclipPluginManifestV1 = {
       },
       prReviewAliceAgentId: {
         type: "string",
-        title: "PR review — Alice agent ID (GOL-158)",
+        title: "PR review — lead reviewer (Ada) agent ID (GOL-158/GOL-713)",
         description:
-          "Agent UUID that ALWAYS reviews every non-draft PR (spec System 2). Leave empty to disable the PR review pipeline (the `github-pr` webhook then no-ops). Company-global — the review issue is created in the matched bridge's project.",
+          "Agent UUID that ALWAYS reviews every non-draft PR (spec System 2). Leave empty to disable the PR review pipeline (the `github-pr` webhook then no-ops). Company-global — the review issue is created in the matched bridge's project. Emits the `agent-review/ada` check (the Phase-3 required gate). Key id keeps its legacy `Alice` name for deployed-config compatibility; the reviewer slug was renamed alice→ada in GOL-713.",
       },
       prReviewIrisAgentId: {
         type: "string",

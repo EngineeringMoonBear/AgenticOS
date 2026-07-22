@@ -697,7 +697,7 @@ type ReviewOutcome = "created" | "reopened" | "noop";
  * Native GitHub App `pull_request` endpoint (`github-pr`): the agent PR review
  * pipeline (GOL-158, spec System 2). Verifies the App webhook secret, filters to
  * non-draft actionable actions, fetches the PR's changed files via the broker
- * token, then per reviewer (Alice always; Iris when a changed path matches the
+ * token, then per reviewer (Ada always; Iris when a changed path matches the
  * frontend globs):
  *   - creates a review issue in the matched bridge's project (first time), or
  *   - reopens it with a "new commits" note when the head SHA changed, and
@@ -813,11 +813,14 @@ async function handlePrInbound(
     });
   }
 
-  // Decide reviewers: Alice always; Iris when a changed path matches the frontend globs.
+  // Decide reviewers: Ada always; Iris when a changed path matches the frontend globs.
+  // The `prReviewAliceAgentId` config key keeps its legacy name (deployed config
+  // binds to it) but now holds Ada's agent UUID; the emitted reviewer slug is `ada`
+  // (→ `agent-review/ada`, GOL-713).
   const frontendPaths = cfg.prReviewFrontendPaths?.length ? cfg.prReviewFrontendPaths : DEFAULT_FRONTEND_PATHS;
   const isFrontend = anyFrontendMatch(files, frontendPaths);
   const reviewers: Array<{ reviewer: Reviewer; agentId: string }> = [
-    { reviewer: "alice", agentId: cfg.prReviewAliceAgentId },
+    { reviewer: "ada", agentId: cfg.prReviewAliceAgentId },
   ];
   if (isFrontend && cfg.prReviewIrisAgentId) {
     reviewers.push({ reviewer: "iris", agentId: cfg.prReviewIrisAgentId });
@@ -1002,7 +1005,7 @@ async function seedPendingCheck(
  * a trigger: for each associated PR we re-derive the aggregate CI state from the
  * head SHA's check-runs (excluding the plugin's own `agent-review/*` checks), then:
  *   - red CI on an agent-authored open PR → open (or update-in-place) a fix issue
- *     assigned to the code owner (Alice, or Iris on frontend paths), and
+ *     assigned to the code owner (Ada, or Iris on frontend paths), and
  *   - a green suite → auto-close the open fix issue.
  * The github_ci_failure store keys one fix issue per (repo, PR#) — the loop-guard.
  *
@@ -1057,7 +1060,7 @@ async function handleCiCompletion(
     return;
   }
   if (!cfg.prReviewAliceAgentId) {
-    // Reuses the PR-review owner config (Alice default, Iris on frontend). Unset →
+    // Reuses the PR-review owner config (Ada default, Iris on frontend). Unset →
     // the CI-fix loop is off, mirroring how the review pipeline gates.
     ctx.logger.info("ci webhook: CI-fix loop disabled (no prReviewAliceAgentId configured)");
     return;
@@ -1201,12 +1204,12 @@ async function processCiPr(
   }
 
   // Owner routing mirrors the PR-review pipeline: Iris when a changed path is
-  // frontend (and Iris is configured), else Alice. A file-list fetch failure
-  // degrades to Alice rather than dropping the fix.
+  // frontend (and Iris is configured), else Ada. A file-list fetch failure
+  // degrades to Ada rather than dropping the fix.
   const filesRes = await github.listPullFiles(bridge.githubRepo, prNumber);
   const files = filesRes.ok ? filesRes.data.files : [];
   if (!filesRes.ok) {
-    ctx.logger.warn("ci webhook: could not list PR files for owner routing; defaulting to Alice", {
+    ctx.logger.warn("ci webhook: could not list PR files for owner routing; defaulting to Ada", {
       repo: ev.repo,
       prNumber,
       error: filesRes.error,
@@ -1216,7 +1219,7 @@ async function processCiPr(
   const owner =
     files.length > 0 && anyFrontendMatch(files, frontendPaths) && cfg.prReviewIrisAgentId
       ? { agentId: cfg.prReviewIrisAgentId, name: "Iris" }
-      : { agentId: cfg.prReviewAliceAgentId!, name: "Alice" };
+      : { agentId: cfg.prReviewAliceAgentId!, name: "Ada" };
 
   const failed = failingChecks(checksRes.data);
   const fixCtx = {

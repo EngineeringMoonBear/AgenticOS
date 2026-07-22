@@ -114,9 +114,9 @@ describe("parseCiCompletionEvent dispatch", () => {
 
 describe("check classification", () => {
   it("identifies agent-review checks and excludes them from CI", () => {
-    expect(isAgentReviewCheck("agent-review/alice")).toBe(true);
+    expect(isAgentReviewCheck("agent-review/ada")).toBe(true);
     expect(isAgentReviewCheck("build")).toBe(false);
-    const checks = [check({ name: "agent-review/alice", conclusion: "failure" }), check({ name: "test" })];
+    const checks = [check({ name: "agent-review/ada", conclusion: "failure" }), check({ name: "test" })];
     expect(ciChecks(checks).map((c) => c.name)).toEqual(["test"]);
   });
 
@@ -141,19 +141,19 @@ describe("check classification", () => {
   });
 
   it("classifyCiState: none when only agent-review checks exist", () => {
-    expect(classifyCiState([check({ name: "agent-review/alice", conclusion: "success" })])).toBe("none");
+    expect(classifyCiState([check({ name: "agent-review/ada", conclusion: "success" })])).toBe("none");
     expect(classifyCiState([])).toBe("none");
   });
 
   it("a failing agent-review check does NOT make CI failing", () => {
-    expect(classifyCiState([check({ name: "agent-review/alice", conclusion: "failure" }), check({ name: "build" })])).toBe("green");
+    expect(classifyCiState([check({ name: "agent-review/ada", conclusion: "failure" }), check({ name: "build" })])).toBe("green");
   });
 
   it("failingChecks returns only the failing real-CI checks", () => {
     const checks = [
       check({ name: "build", conclusion: "failure" }),
       check({ name: "lint", conclusion: "success" }),
-      check({ name: "agent-review/alice", conclusion: "failure" }),
+      check({ name: "agent-review/ada", conclusion: "failure" }),
     ];
     expect(failingChecks(checks).map((c) => c.name)).toEqual(["build"]);
   });
@@ -185,7 +185,7 @@ describe("fix-issue rendering", () => {
     prUrl: "https://github.com/Goldberry-Playground/AgenticOS/pull/42",
     prTitle: "Add widget",
     headSha: "abc1234def5678",
-    ownerName: "Alice",
+    ownerName: "Ada",
     runName: "CI",
     runUrl: "https://github.com/Goldberry-Playground/AgenticOS/actions/runs/99",
     failed: [check({ name: "build", conclusion: "failure", summary: "Type error in worker.ts", detailsUrl: "https://x/logs" })],
@@ -204,7 +204,7 @@ describe("fix-issue rendering", () => {
     const body = buildCiFixBody(ctx);
     expect(body).toContain(ciFixMarker(ctx.repo, ctx.prNumber));
     expect(body).toContain("`abc1234def5678`");
-    expect(body).toContain("**Owner:** Alice");
+    expect(body).toContain("**Owner:** Ada");
     expect(body).toContain("`build`");
     expect(body).toContain("Type error in worker.ts");
     expect(body).toContain("([logs](https://x/logs))");
@@ -234,7 +234,7 @@ describe("fix-issue rendering", () => {
 
   it("pings carry the transition + PR", () => {
     expect(buildCiFixOpenedPing(ctx)).toContain("CI failing");
-    expect(buildCiFixOpenedPing(ctx)).toContain("Alice");
+    expect(buildCiFixOpenedPing(ctx)).toContain("Ada");
     expect(buildCiFixUpdatedPing(ctx)).toContain("still failing");
     expect(buildCiFixResolvedPing(ctx.repo, ctx.prNumber)).toContain("auto-closed");
   });
