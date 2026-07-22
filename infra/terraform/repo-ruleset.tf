@@ -3,7 +3,7 @@
 # Phase 3 execution for GOL-460 / GOL-150 spec
 # `docs/superpowers/specs/2026-07-08-discipline-routing-agent-pr-review-design.md`.
 # This is the infra half of the agent-PR-review rollout: the plugin/app half
-# (label routing + PR review issues + `agent-review/alice` check-runs) is shipped.
+# (label routing + PR review issues + `agent-review/ada` check-runs) is shipped.
 # Here we make that agent sign-off the *required* merge gate on `main`.
 #
 # ─────────────────────────────────────────────────────────────────────────────
@@ -15,7 +15,7 @@
 #   1. SOAK GATE — spec requires ~1 week of reliable, real Ada sign-offs on live
 #      PRs first. `prReviewAliceAgentId` was re-pointed to Engineering-Ada on
 #      2026-07-19 16:06 UTC (GOL-535), so soak starts then; earliest apply is
-#      ≈ 2026-07-26, and only after `agent-review/alice` is observed going green
+#      ≈ 2026-07-26, and only after `agent-review/ada` is observed going green
 #      on real PRs (watch the Discord ✅ pings).
 #   2. BOARD CONFIRMATION — GOL-460 carries a pending request_confirmation to
 #      CEO-Rick (confirm Ada as the reviewer identity + Option A + authorize the
@@ -49,10 +49,10 @@
 #     exactly the Phase 3 target posture.
 #
 #   * THE DELTA this resource introduces = one new required status check,
-#     `agent-review/alice`. Per the spec, Alice's (now Ada's) sign-off protocol
+#     `agent-review/ada`. Per the spec, Alice's (now Ada's) sign-off protocol
 #     includes confirming Iris's `agent-review/iris` check is green when a
 #     frontend review issue exists, so exactly ONE check is globally required.
-#     `agent-review/alice` stays an opaque required-check id (no rename), per the
+#     `agent-review/ada` stays an opaque required-check id (no rename), per the
 #     GOL-535 note — Engineering-Ada posts it; the context string is unchanged.
 #
 # MIGRATION NOTE (coordinate with GOL-392, the base-ruleset-as-code work): this
@@ -65,10 +65,25 @@
 # mirrors ONLY the four checks that are required on live `main` today and adds
 # the agent check, so it introduces no new opinion on that open question.
 
+# -----------------------------------------------------------------------------
+# BLOCKING FINDING (DevOps-Terra, GitHub API, 2026-07-22) -- SOAK GATE NOT MET:
+# Scanned the 25 most-recently-updated AgenticOS PRs. NONE carry an
+# `agent-review/alice` OR `agent-review/ada` commit-status or check-run -- the
+# plugin is not (yet) emitting the agent-review sign-off check on live PRs at
+# all. Consequences:
+#   * The soak gate ("~1 week of real Ada sign-offs observed green on live PRs")
+#     cannot even begin to be measured until the check is actually being posted.
+#   * If this ruleset were applied TODAY it would be permanently fail-closed:
+#     every PR to `main` (incl. routine deps bumps) would block forever because
+#     the required `agent-review/ada` check never appears (admins excepted).
+# UNBLOCK OWNER: the github-sync plugin / Engineering-Ada must make the
+# `agent-review/ada` check appear green on real PRs first. Only then does the
+# soak clock start; DevOps re-verifies emission before the board-approved apply.
+#
 variable "enable_agent_review_merge_gate" {
   description = <<-EOT
     Phase-3 feature flag (GOL-578 / GOL-460). When true, Terraform manages the
-    `main` merge-gate ruleset that makes `agent-review/alice` a required status
+    `main` merge-gate ruleset that makes `agent-review/ada` a required status
     check and keeps human review out of the gate. Default false = no ruleset is
     managed at all (count = 0), so the resource is inert until BOTH the soak gate
     (~2026-07-26) and CEO-Rick's confirmation on GOL-460 have cleared. Flipping
@@ -77,6 +92,23 @@ variable "enable_agent_review_merge_gate" {
   EOT
   type        = bool
   default     = false
+}
+
+variable "agent_review_check_context" {
+  description = <<-EOT
+    The exact status-check context string that the github-sync plugin posts as
+    the agent PR-review sign-off, which this ruleset makes a required merge gate.
+    Corrected alice -> ada per the board comment on GOL-578 (2026-07-22).
+
+    APPLY-SAFETY INVARIANT: this MUST match the context the plugin actually
+    emits on the PR head SHA, byte-for-byte. GitHub matches required checks by
+    context name; if the plugin never posts a check with this name, the gate is
+    permanently fail-closed and NO PR can merge to `main` (admins excepted). As
+    of 2026-07-22 no `agent-review/*` check has been observed on live PRs (see
+    the FINDING block above) -- confirm a green real emission before apply.
+  EOT
+  type        = string
+  default     = "agent-review/ada"
 }
 
 resource "github_repository_ruleset" "main_merge_gate" {
@@ -118,7 +150,7 @@ resource "github_repository_ruleset" "main_merge_gate" {
       # The four CI checks required on live `main` today (app 15368 = GitHub
       # Actions). integration_id is intentionally left unpinned here — GitHub
       # matches by context name — but pinning these to 15368 (and
-      # agent-review/alice to the AgenticOS Developer App id) is a hardening
+      # agent-review/ada to the AgenticOS Developer App id) is a hardening
       # follow-up worth doing when GOL-392 converges the base ruleset.
       required_check {
         context = "Lint"
@@ -139,7 +171,7 @@ resource "github_repository_ruleset" "main_merge_gate" {
       # globally-required *review* signal; Iris's `agent-review/iris` is folded
       # in via Ada's sign-off protocol, not required separately.
       required_check {
-        context = "agent-review/alice"
+        context = var.agent_review_check_context
       }
     }
 
