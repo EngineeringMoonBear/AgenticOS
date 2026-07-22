@@ -807,11 +807,17 @@ async function handlePrInbound(
 
   const filesRes = await github.listPullFiles(bridge.githubRepo, ev.number);
   if (!filesRes.ok) {
-    ctx.logger.error("pr webhook: failed to fetch PR changed files", { repo: ev.repo, number: ev.number, error: filesRes.error });
-    await postOpsPing(
+    // A delivery that 200s but produces NO review issue/check dies HERE — e.g. the
+    // broker mint 401s (missing `tokenBrokerApiKey` config) or GitHub rejects the
+    // fetch. This used to be DB-invisible: only a Discord ops-ping fired, so
+    // `github_sync_error` stayed empty and the silent tail was undiagnosable without
+    // a server.log dig (GOL-721). Persist a queryable row alongside the ping.
+    await recordSwallowedFailure(
       ctx,
-      cfg.opsWebhookUrl,
-      buildPipelineErrorPing(`could not list files for ${ev.repo}#${ev.number}: ${filesRes.error}`),
+      cfg,
+      "pr webhook: failed to fetch PR changed files",
+      filesRes.error,
+      { repo: ev.repo, number: ev.number },
     );
     return;
   }
@@ -841,17 +847,13 @@ async function handlePrInbound(
       if (outcome === "created") created.push(reviewer);
       else if (outcome === "reopened") reopened.push(reviewer);
     } catch (err) {
-      ctx.logger.error("pr webhook: reviewer processing failed", {
+      // Per-reviewer failure (issue create/update or seed-check). Was ops-ping-only;
+      // now also lands in `github_sync_error` so a silent drop is queryable (GOL-721).
+      await recordSwallowedFailure(ctx, cfg, "pr webhook: reviewer processing failed", err, {
         repo: ev.repo,
         number: ev.number,
         reviewer,
-        error: err instanceof Error ? err.message : String(err),
       });
-      await postOpsPing(
-        ctx,
-        cfg.opsWebhookUrl,
-        buildPipelineErrorPing(`review-issue handling failed for ${ev.repo}#${ev.number} (${reviewer})`),
-      );
     }
   }
 
