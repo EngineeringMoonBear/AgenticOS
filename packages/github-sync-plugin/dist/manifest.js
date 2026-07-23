@@ -38,7 +38,15 @@ var manifest = {
   //   paperclipCfAccessClientSecret. Catch-fallback only — zero-risk to the working
   //   scope path. No new capabilities (reuses http.outbound); the new config fields
   //   deliberately do NOT use format:"secret-ref" (see the field comments).
-  version: "0.10.0",
+  // 0.11.0 = gh-token-broker bearer auth (GOL-666, fixes the M3/PR #356 regression).
+  //   Since PR #356 the broker REQUIRES `Authorization: Bearer <GH_BROKER_API_KEY>`
+  //   and rejects unauthenticated mints with HTTP 401 — but the plugin's broker
+  //   client never sent it, so every repo-scoped token mint 401'd and the PR-review
+  //   pipeline died at "failed to fetch PR changed files" (seen on grove-odoo-modules).
+  //   Sandboxed plugin workers can't read GH_BROKER_API_KEY(_FILE) from env, so the
+  //   key arrives via one new config field, tokenBrokerApiKey (NOT secret-ref — same
+  //   host-strips-secret-ref reasoning as the GOL-323 fields). No new capabilities.
+  version: "0.11.0",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",
@@ -175,6 +183,16 @@ var manifest = {
         type: "string",
         title: "Token Broker URL",
         description: "gh-token-broker endpoint that mints repo-scoped GitHub App installation tokens. Defaults to the GH_TOKEN_BROKER_URL env var; set to http://gh-token-broker:9099 if the env is not passed to plugin workers."
+      },
+      tokenBrokerApiKey: {
+        type: "string",
+        // NOT format:"secret-ref" — same reasoning as paperclipApiToken below
+        // (this host strips secret-ref fields from saved config, so marking it
+        // would leave the worker with NO bearer and every broker mint would 401).
+        // Since M3 (PR #356) the broker REQUIRES this bearer; plugin workers are
+        // sandboxed away from GH_BROKER_API_KEY(_FILE), so it MUST arrive here.
+        title: "Token Broker API key (bearer, M3/GOL-666)",
+        description: "Bearer presented to gh-token-broker (matches GH_BROKER_API_KEY on the broker side). REQUIRED whenever the broker is used \u2014 since PR #356 the broker rejects unauthenticated mints with HTTP 401, which surfaces as the PR-review pipeline 'failed to fetch PR changed files'. Set to the same value as /opt/agenticos/secrets/gh-broker-client.key."
       },
       githubToken: {
         type: "string",

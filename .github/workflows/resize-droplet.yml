@@ -1,0 +1,88 @@
+name: Resize Droplet
+
+# GOL-657 / GOL-51 — one-shot, safe vertical resize of agenticos-droplet from an
+# EXTERNAL runner. A resize power-cycles the Droplet; the box IS the one running
+# Paperclip + every agent, so a resize driven from the box itself would be killed
+# mid-power-off and strand it OFF. GitHub's runner survives the reboot, so it is
+# the only safe place to drive this from. Pairs with the terraform `droplet_size`
+# default (bumped in the same change) so `terraform plan` shows no drift after.
+#
+# This is the execution follow-through to the GOL-253 rightsize *advisor*
+# (advisory-only); guarded opt-in auto-resize remains the separate GOL-254.
+#
+# Credentials (never held by any agent):
+#   OP_SERVICE_ACCOUNT_TOKEN  reads the scoped DO write PAT from 1Password at
+#                             runtime (op://Goldberry Grove - Admin/Grove Infra/
+#                             do_token_scoped — droplet:write scope, NOT full
+#                             account). No new standing secret is introduced.
+#   DISCORD_WEBHOOK_URL       Grove ops webhook for start/finish notices.
+#
+# Agent-triggerable WITHOUT actions:write via repository_dispatch (a contents:write
+# gh-token-broker token POSTs /repos/<owner>/<repo>/dispatches
+# {"event_type":"resize-droplet"}), mirroring disk-reclaim.yml / rightsize-advisor.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_size:
+        description: "DigitalOcean size slug to resize to"
+        type: string
+        default: "s-4vcpu-8gb"
+      resize_disk:
+        description: "Grow the disk too (PERMANENT/IRREVERSIBLE). Leave false for a reversible CPU/RAM-only resize."
+        type: boolean
+        default: false
+      dry_run:
+        description: "Compute + print the plan, mutate nothing"
+        type: boolean
+        default: false
+  repository_dispatch:
+    types: [resize-droplet]
+
+permissions:
+  contents: read
+
+# Share the Droplet deploy lock so a resize never races a deploy/reclaim/recreate
+# (which would be catastrophic mid power-cycle).
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+jobs:
+  resize:
+    name: Vertical resize agenticos-droplet (external, reboot-safe)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install 1Password CLI
+        uses: 1password/install-cli-action@v1
+
+      - name: Resize Droplet
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DROPLET_NAME: "agenticos-droplet"
+          # workflow_dispatch inputs are empty on repository_dispatch, so fall
+          # back to the safe defaults (reversible resize to s-4vcpu-8gb).
+          TARGET_SIZE: ${{ github.event.inputs.target_size || 's-4vcpu-8gb' }}
+          RESIZE_DISK: ${{ github.event.inputs.resize_disk || 'false' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
+            echo "::error::OP_SERVICE_ACCOUNT_TOKEN not set — cannot fetch the DO token"
+            exit 1
+          fi
+          # Pull the scoped DO write token from 1Password at runtime; keep it out
+          # of the logs (mask it) and out of any file.
+          DO_TOKEN="$(op read 'op://Goldberry Grove - Admin/Grove Infra/do_token_scoped')"
+          echo "::add-mask::${DO_TOKEN}"
+          export DO_TOKEN
+          python3 infra/scripts/resize-droplet.py

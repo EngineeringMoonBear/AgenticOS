@@ -10948,6 +10948,7 @@ function makeBrokerTokenProvider(brokerUrl, owner, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 5e3;
   const now = opts.now ?? (() => Date.now());
   const doFetch = opts.fetchImpl ?? fetch;
+  const apiKey = (opts.apiKey ?? "").trim();
   const base = brokerUrl.replace(/\/$/, "");
   const cache = /* @__PURE__ */ new Map();
   return async (repo) => {
@@ -10960,7 +10961,10 @@ function makeBrokerTokenProvider(brokerUrl, owner, opts = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await doFetch(url.toString(), { signal: controller.signal });
+      const res = await doFetch(url.toString(), {
+        signal: controller.signal,
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+      });
       if (!res.ok) throw new Error(`token broker -> ${res.status}`);
       const body = await res.json();
       if (!body.token) throw new Error("token broker returned no token");
@@ -11894,6 +11898,7 @@ function readConfig(raw) {
   return {
     bridges,
     tokenBrokerUrl: raw.tokenBrokerUrl ? String(raw.tokenBrokerUrl) : void 0,
+    tokenBrokerApiKey: raw.tokenBrokerApiKey ? String(raw.tokenBrokerApiKey) : void 0,
     githubToken: raw.githubToken ? String(raw.githubToken) : void 0,
     companyId: raw.companyId ? String(raw.companyId) : void 0,
     inboundWebhookSecret: raw.inboundWebhookSecret ? String(raw.inboundWebhookSecret) : void 0,
@@ -12189,7 +12194,10 @@ async function handleAppInbound(ctx, cfg, input, runInScope) {
 function makeBridgeGithubClient(cfg, bridge) {
   const brokerUrl = cfg.tokenBrokerUrl || process.env.GH_TOKEN_BROKER_URL || "";
   if (brokerUrl) {
-    return new GitHubClient({ org: bridge.githubOrg, getToken: makeBrokerTokenProvider(brokerUrl, bridge.githubOrg) });
+    return new GitHubClient({
+      org: bridge.githubOrg,
+      getToken: makeBrokerTokenProvider(brokerUrl, bridge.githubOrg, { apiKey: cfg.tokenBrokerApiKey })
+    });
   }
   if (cfg.githubToken) {
     return new GitHubClient({ org: bridge.githubOrg, getToken: staticTokenProvider(cfg.githubToken) });
@@ -12248,11 +12256,12 @@ async function handlePrInbound(ctx, cfg, input) {
   const runInScope = captureInvocationScope();
   const filesRes = await github.listPullFiles(bridge.githubRepo, ev.number);
   if (!filesRes.ok) {
-    ctx.logger.error("pr webhook: failed to fetch PR changed files", { repo: ev.repo, number: ev.number, error: filesRes.error });
-    await postOpsPing(
+    await recordSwallowedFailure(
       ctx,
-      cfg.opsWebhookUrl,
-      buildPipelineErrorPing(`could not list files for ${ev.repo}#${ev.number}: ${filesRes.error}`)
+      cfg,
+      "pr webhook: failed to fetch PR changed files",
+      filesRes.error,
+      { repo: ev.repo, number: ev.number }
     );
     return;
   }
@@ -12279,17 +12288,11 @@ async function handlePrInbound(ctx, cfg, input) {
       if (outcome === "created") created.push(reviewer);
       else if (outcome === "reopened") reopened.push(reviewer);
     } catch (err) {
-      ctx.logger.error("pr webhook: reviewer processing failed", {
+      await recordSwallowedFailure(ctx, cfg, "pr webhook: reviewer processing failed", err, {
         repo: ev.repo,
         number: ev.number,
-        reviewer,
-        error: err instanceof Error ? err.message : String(err)
+        reviewer
       });
-      await postOpsPing(
-        ctx,
-        cfg.opsWebhookUrl,
-        buildPipelineErrorPing(`review-issue handling failed for ${ev.repo}#${ev.number} (${reviewer})`)
-      );
     }
   }
   if (created.length) {
@@ -12659,7 +12662,7 @@ var plugin = definePlugin({
     for (const bridge of cfg.bridges) {
       let getToken;
       if (brokerUrl) {
-        getToken = makeBrokerTokenProvider(brokerUrl, bridge.githubOrg);
+        getToken = makeBrokerTokenProvider(brokerUrl, bridge.githubOrg, { apiKey: cfg.tokenBrokerApiKey });
       } else if (cfg.githubToken) {
         getToken = staticTokenProvider(cfg.githubToken);
       } else {
