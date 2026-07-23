@@ -86,3 +86,75 @@ function safeParseContext(raw: string): Record<string, unknown> | undefined {
     return undefined;
   }
 }
+
+/** Decision returned by {@link OpsPingThrottle.decide}. */
+export interface ThrottleDecision {
+  /** True → the caller should post this ping; false → suppress it. */
+  emit: boolean;
+  /** How many identical pings were suppressed since the last emit for this key. */
+  suppressed: number;
+}
+
+interface ThrottleWindow {
+  /** Epoch-ms the current window opened (the last emit). */
+  openedAt: number;
+  /** Epoch-ms of the most recent hit (emitted or suppressed). */
+  lastAt: number;
+  /** Count of hits suppressed in the current window (excludes the opening emit). */
+  suppressed: number;
+}
+
+/**
+ * In-memory, per-key rate limiter for repetitive ops-webhook alerts (GOL-724).
+ *
+ * WHY: the PR-review pipeline pings Discord fire-and-forget on every HMAC reject /
+ * broker-401 / handler failure. A single worker-crash window plus GitHub's automatic
+ * webhook redelivery therefore spams N identical `🔥 PR review pipeline error` lines
+ * at ops. This collapses identical alerts to one per `windowMs`: the first hit in a
+ * window emits, further identical hits are counted and suppressed, and the first emit
+ * of the NEXT window reports how many were swallowed so the signal is never lost.
+ *
+ * The plugin worker is a long-lived process, so this Map persists across webhook
+ * invocations. State is intentionally in-memory only: a restart resets the throttle,
+ * which fails open (an extra ping) rather than silently swallowing a fresh alert.
+ */
+export class OpsPingThrottle {
+  private readonly windowMs: number;
+  private readonly windows = new Map<string, ThrottleWindow>();
+
+  constructor(windowMs = 5 * 60_000) {
+    this.windowMs = windowMs;
+  }
+
+  /**
+   * Decide whether the alert identified by `key` should be emitted at `now` (ms).
+   * Pass a stable key — the ping content itself is a good choice, so only byte-for-byte
+   * identical alerts collapse and a different error still pages immediately.
+   */
+  decide(key: string, now: number): ThrottleDecision {
+    const w = this.windows.get(key);
+    if (!w || now - w.openedAt >= this.windowMs) {
+      const suppressed = w ? w.suppressed : 0;
+      this.windows.set(key, { openedAt: now, lastAt: now, suppressed: 0 });
+      return { emit: true, suppressed };
+    }
+    w.lastAt = now;
+    w.suppressed += 1;
+    return { emit: false, suppressed: w.suppressed };
+  }
+
+  /** Drop windows with no hit for a full window, so the Map can't grow unbounded. */
+  prune(now: number): void {
+    for (const [key, w] of this.windows) {
+      if (now - w.lastAt >= this.windowMs) this.windows.delete(key);
+    }
+  }
+}
+
+/**
+ * Append a `(+N earlier alerts suppressed)` note when a throttled ping re-opens after
+ * swallowing repeats, so the collapsed count is still visible in the ops channel.
+ */
+export function withSuppressionNote(content: string, suppressed: number): string {
+  return suppressed > 0 ? `${content} (+${suppressed} identical alert${suppressed === 1 ? "" : "s"} suppressed)` : content;
+}
