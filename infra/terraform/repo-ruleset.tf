@@ -66,19 +66,28 @@
 # the agent check, so it introduces no new opinion on that open question.
 
 # -----------------------------------------------------------------------------
-# BLOCKING FINDING (DevOps-Terra, GitHub API, 2026-07-22) -- SOAK GATE NOT MET:
-# Scanned the 25 most-recently-updated AgenticOS PRs. NONE carry an
-# `agent-review/alice` OR `agent-review/ada` commit-status or check-run -- the
-# plugin is not (yet) emitting the agent-review sign-off check on live PRs at
-# all. Consequences:
-#   * The soak gate ("~1 week of real Ada sign-offs observed green on live PRs")
-#     cannot even begin to be measured until the check is actually being posted.
-#   * If this ruleset were applied TODAY it would be permanently fail-closed:
-#     every PR to `main` (incl. routine deps bumps) would block forever because
-#     the required `agent-review/ada` check never appears (admins excepted).
-# UNBLOCK OWNER: the github-sync plugin / Engineering-Ada must make the
-# `agent-review/ada` check appear green on real PRs first. Only then does the
-# soak clock start; DevOps re-verifies emission before the board-approved apply.
+# EMISSION CONFIRMED (DevOps-Terra, GitHub API, 2026-07-23) -- SOAK CLOCK STARTED:
+# The 2026-07-22 blocking finding (no `agent-review/*` check on any live PR) is
+# RESOLVED. Root cause was two-fold and both parts have shipped:
+#   * Firing regression fixed (GOL-717 / PRs #402-#404 merged) -- the plugin now
+#     seeds the agent-review check-run on opened PRs.
+#   * Reviewer slug renamed alice -> ada (GOL-713 / PR #401 merged 2026-07-23,
+#     plugin reloaded via POST /api/plugins/<id>/upgrade) -- so the byte string
+#     it now posts is `agent-review/ada`, matching var.agent_review_check_context.
+# LIVE PROOF: PR #408 (head 0dad39ec) carries `agent-review/ada` -> completed /
+#   conclusion=success. That is the first real green emission; the ~1-week soak
+#   window begins here (earliest board-approved apply still ~2026-07-26).
+# Note: older pre-rename PRs still show a stale `agent-review/alice` check (e.g.
+#   PR #403 head eb466534, stuck in_progress) -- historical, not a blocker; those
+#   PRs predate the reload and are irrelevant to the forward gate.
+# REMAINING GATES before flipping enable_agent_review_merge_gate = true and
+# applying (all still open, unchanged):
+#   1. SOAK -- accumulate ~1 week of reliable green `agent-review/ada` emissions
+#      on live PRs; DevOps re-verifies breadth (not just one smoke PR) at apply.
+#   2. BOARD -- CEO-Rick accepts the GOL-460 request_confirmation (Ada identity +
+#      Option A + authorize prod apply).
+#   3. HUMAN APPLY -- via Josh with a repo-administration-scoped github token
+#      (GOL-252 wall), escalated through CEO-Rick.
 #
 variable "enable_agent_review_merge_gate" {
   description = <<-EOT
@@ -103,9 +112,10 @@ variable "agent_review_check_context" {
     APPLY-SAFETY INVARIANT: this MUST match the context the plugin actually
     emits on the PR head SHA, byte-for-byte. GitHub matches required checks by
     context name; if the plugin never posts a check with this name, the gate is
-    permanently fail-closed and NO PR can merge to `main` (admins excepted). As
-    of 2026-07-22 no `agent-review/*` check has been observed on live PRs (see
-    the FINDING block above) -- confirm a green real emission before apply.
+    permanently fail-closed and NO PR can merge to `main` (admins excepted).
+    Confirmed green on live PR #408 (head 0dad39ec, `agent-review/ada` =
+    success) on 2026-07-23 -- see the EMISSION CONFIRMED block above; re-verify
+    breadth of emission before the board-approved apply.
   EOT
   type        = string
   default     = "agent-review/ada"
