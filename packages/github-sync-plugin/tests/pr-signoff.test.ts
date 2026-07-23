@@ -10,24 +10,24 @@ import type { MappingDb } from "../src/mapping.js";
 // --- pure gate truth table -------------------------------------------------------
 
 describe("evaluateSignoffGate — Phase 3 merge gate (GOL-186)", () => {
-  it("alice-only PR: alice done → alice green", () => {
-    expect(evaluateSignoffGate({ aliceDone: true, irisPresent: false, irisDone: false })).toEqual(["alice"]);
+  it("ada-only PR: ada done → ada green", () => {
+    expect(evaluateSignoffGate({ adaDone: true, irisPresent: false, irisDone: false })).toEqual(["ada"]);
   });
 
-  it("alice-only PR: alice not done → nothing", () => {
-    expect(evaluateSignoffGate({ aliceDone: false, irisPresent: false, irisDone: false })).toEqual([]);
+  it("ada-only PR: ada not done → nothing", () => {
+    expect(evaluateSignoffGate({ adaDone: false, irisPresent: false, irisDone: false })).toEqual([]);
   });
 
-  it("alice+iris: iris pending → neither green (alice gated on iris)", () => {
-    expect(evaluateSignoffGate({ aliceDone: true, irisPresent: true, irisDone: false })).toEqual([]);
+  it("ada+iris: iris pending → neither green (ada gated on iris)", () => {
+    expect(evaluateSignoffGate({ adaDone: true, irisPresent: true, irisDone: false })).toEqual([]);
   });
 
-  it("alice+iris: iris done, alice pending → iris green only", () => {
-    expect(evaluateSignoffGate({ aliceDone: false, irisPresent: true, irisDone: true })).toEqual(["iris"]);
+  it("ada+iris: iris done, ada pending → iris green only", () => {
+    expect(evaluateSignoffGate({ adaDone: false, irisPresent: true, irisDone: true })).toEqual(["iris"]);
   });
 
-  it("alice+iris: both done → both green (converges regardless of order)", () => {
-    expect(evaluateSignoffGate({ aliceDone: true, irisPresent: true, irisDone: true })).toEqual(["iris", "alice"]);
+  it("ada+iris: both done → both green (converges regardless of order)", () => {
+    expect(evaluateSignoffGate({ adaDone: true, irisPresent: true, irisDone: true })).toEqual(["iris", "ada"]);
   });
 });
 
@@ -84,19 +84,19 @@ function makeStoreDb(): MappingDb {
   };
 }
 
-const ALICE_SHA = "a11ce0000000000000000000000000000000000a";
+const ADA_SHA = "adae0000000000000000000000000000000000da";
 const IRIS_SHA = "1715e0000000000000000000000000000000001a";
 
 async function seedRows(
   db: MappingDb,
-  opts: { iris?: boolean; aliceHead?: string; irisHead?: string } = {},
+  opts: { iris?: boolean; adaHead?: string; irisHead?: string } = {},
 ): Promise<void> {
   await upsertReviewRecord(db, {
     githubRepo: REPO,
     prNumber: PR,
-    reviewer: "alice",
-    headSha: opts.aliceHead ?? ALICE_SHA,
-    paperclipIssueId: "pi-alice",
+    reviewer: "ada",
+    headSha: opts.adaHead ?? ADA_SHA,
+    paperclipIssueId: "pi-ada",
     updatedAt: "2026-07-09T00:00:00Z",
   });
   if (opts.iris) {
@@ -151,53 +151,53 @@ describe("handleReviewSignoff", () => {
     const db = makeStoreDb();
     await seedRows(db);
     const createCheckRun = okCheck();
-    const deps = makeDeps(db, { "pi-alice": "todo" }, createCheckRun);
-    await handleReviewSignoff(deps, { issueId: "pi-alice", companyId: "co-1" });
+    const deps = makeDeps(db, { "pi-ada": "todo" }, createCheckRun);
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
     expect(createCheckRun).not.toHaveBeenCalled();
   });
 
-  it("alice-only PR: alice done → posts agent-review/alice success on alice's head SHA", async () => {
+  it("ada-only PR: ada done → posts agent-review/ada success on ada's head SHA", async () => {
     const db = makeStoreDb();
     await seedRows(db); // no iris
     const createCheckRun = okCheck();
     const ping = vi.fn().mockResolvedValue(undefined);
-    const deps = makeDeps(db, { "pi-alice": "done" }, createCheckRun, ping);
-    await handleReviewSignoff(deps, { issueId: "pi-alice", companyId: "co-1" });
+    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping);
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
 
     expect(createCheckRun).toHaveBeenCalledTimes(1);
     const [repo, input] = createCheckRun.mock.calls[0];
     expect(repo).toBe("AgenticOS"); // bare repo, not owner/repo
-    expect(input).toMatchObject({ name: "agent-review/alice", headSha: ALICE_SHA, conclusion: "success" });
-    expect(ping).toHaveBeenCalledWith(expect.stringContaining("agent-review/alice"));
+    expect(input).toMatchObject({ name: "agent-review/ada", headSha: ADA_SHA, conclusion: "success" });
+    expect(ping).toHaveBeenCalledWith(expect.stringContaining("agent-review/ada"));
   });
 
-  it("alice+iris, alice signs off first with iris pending → posts nothing (alice gated)", async () => {
+  it("ada+iris, ada signs off first with iris pending → posts nothing (ada gated)", async () => {
     const db = makeStoreDb();
     await seedRows(db, { iris: true });
     const createCheckRun = okCheck();
-    const deps = makeDeps(db, { "pi-alice": "done", "pi-iris": "todo" }, createCheckRun);
-    await handleReviewSignoff(deps, { issueId: "pi-alice", companyId: "co-1" });
+    const deps = makeDeps(db, { "pi-ada": "done", "pi-iris": "todo" }, createCheckRun);
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
     expect(createCheckRun).not.toHaveBeenCalled();
   });
 
-  it("alice+iris, iris closes last with alice already done → posts BOTH on their own head SHAs", async () => {
+  it("ada+iris, iris closes last with ada already done → posts BOTH on their own head SHAs", async () => {
     const db = makeStoreDb();
     await seedRows(db, { iris: true });
     const createCheckRun = okCheck();
-    const deps = makeDeps(db, { "pi-alice": "done", "pi-iris": "done" }, createCheckRun);
+    const deps = makeDeps(db, { "pi-ada": "done", "pi-iris": "done" }, createCheckRun);
     await handleReviewSignoff(deps, { issueId: "pi-iris", companyId: "co-1" });
 
     expect(createCheckRun).toHaveBeenCalledTimes(2);
     const byName = Object.fromEntries(createCheckRun.mock.calls.map(([, i]) => [i.name, i]));
     expect(byName["agent-review/iris"]).toMatchObject({ headSha: IRIS_SHA, conclusion: "success" });
-    expect(byName["agent-review/alice"]).toMatchObject({ headSha: ALICE_SHA, conclusion: "success" });
+    expect(byName["agent-review/ada"]).toMatchObject({ headSha: ADA_SHA, conclusion: "success" });
   });
 
-  it("alice+iris, iris signs off first with alice pending → posts iris only", async () => {
+  it("ada+iris, iris signs off first with ada pending → posts iris only", async () => {
     const db = makeStoreDb();
     await seedRows(db, { iris: true });
     const createCheckRun = okCheck();
-    const deps = makeDeps(db, { "pi-alice": "todo", "pi-iris": "done" }, createCheckRun);
+    const deps = makeDeps(db, { "pi-ada": "todo", "pi-iris": "done" }, createCheckRun);
     await handleReviewSignoff(deps, { issueId: "pi-iris", companyId: "co-1" });
 
     expect(createCheckRun).toHaveBeenCalledTimes(1);
@@ -209,8 +209,8 @@ describe("handleReviewSignoff", () => {
     await seedRows(db);
     const createCheckRun = vi.fn().mockResolvedValue({ ok: false, error: "HTTP 403" });
     const ping = vi.fn().mockResolvedValue(undefined);
-    const deps = makeDeps(db, { "pi-alice": "done" }, createCheckRun, ping);
-    await handleReviewSignoff(deps, { issueId: "pi-alice", companyId: "co-1" });
+    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping);
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
 
     expect(createCheckRun).toHaveBeenCalledTimes(1);
     expect(ping).toHaveBeenCalledWith(expect.stringContaining("pipeline error"));

@@ -5,23 +5,28 @@
  *
  * Pure, I/O-free logic for the `github-pr` webhook: parse GitHub's native
  * `pull_request` event, filter the actionable action set, decide which reviewers
- * apply (Alice always; Iris when a changed path matches `frontendPaths`), build
+ * apply (Ada always; Iris when a changed path matches `frontendPaths`), build
  * the review-issue title/body + loop-prevention marker, and format the low-noise
  * state-change Discord pings (spec System 3). Everything here is unit-tested; the
  * worker wires it to GitHub + Paperclip I/O.
  */
 
-/** The reviewing agents. Alice always reviews; Iris only when frontend paths change. */
-export type Reviewer = "alice" | "iris";
+/**
+ * The reviewing agents. Ada (the lead reviewer) always reviews; Iris only when
+ * frontend paths change. The `ada` slug was renamed from the retired `alice`
+ * reviewer identity (GOL-713); the emitted check context is `agent-review/ada`,
+ * which the Phase-3 merge gate requires byte-for-byte.
+ */
+export type Reviewer = "ada" | "iris";
 
 /** Check-run context per reviewer (sign-off on the PR head SHA; spec System 2). */
 export const CHECK_CONTEXT: Record<Reviewer, string> = {
-  alice: "agent-review/alice",
+  ada: "agent-review/ada",
   iris: "agent-review/iris",
 };
 
 /** Human-facing reviewer names for pings. */
-const REVIEWER_NAME: Record<Reviewer, string> = { alice: "Alice", iris: "Iris" };
+const REVIEWER_NAME: Record<Reviewer, string> = { ada: "Ada", iris: "Iris" };
 
 /**
  * PR actions we act on. `draft` PRs are skipped regardless (a PR marked
@@ -206,8 +211,8 @@ export function buildNewCommitsNote(reviewer: Reviewer, ev: GithubPrEvent): stri
 
 /** Current review-issue states feeding the sign-off gate. */
 export interface SignoffGateInput {
-  /** Alice's review issue is `done`. Alice always reviews every PR. */
-  aliceDone: boolean;
+  /** Ada's review issue is `done`. Ada always reviews every PR. */
+  adaDone: boolean;
   /** A frontend (Iris) review issue exists for this PR (changed a frontend path). */
   irisPresent: boolean;
   /** Iris's review issue is `done` (only meaningful when `irisPresent`). */
@@ -220,17 +225,17 @@ export interface SignoffGateInput {
  * check-run on that reviewer's row head SHA.
  *
  *  - `iris`  → green when the frontend review issue is done.
- *  - `alice` (the REQUIRED check under Phase 3) → green only when Alice is done AND
+ *  - `ada` (the REQUIRED check under Phase 3) → green only when Ada is done AND
  *    there is no frontend review OR the frontend review is also done. This encodes
- *    the spec rule "Alice's sign-off confirms Iris's check is green when a frontend
- *    review issue exists," so a single required `agent-review/alice` gates the whole
+ *    the spec rule "Ada's sign-off confirms Iris's check is green when a frontend
+ *    review issue exists," so a single required `agent-review/ada` gates the whole
  *    PR. A done→done in either order converges: whichever issue.updated lands last
- *    re-evaluates the full gate and posts alice green.
+ *    re-evaluates the full gate and posts ada green.
  */
 export function evaluateSignoffGate(input: SignoffGateInput): Reviewer[] {
   const out: Reviewer[] = [];
   if (input.irisPresent && input.irisDone) out.push("iris");
-  if (input.aliceDone && (!input.irisPresent || input.irisDone)) out.push("alice");
+  if (input.adaDone && (!input.irisPresent || input.irisDone)) out.push("ada");
   return out;
 }
 

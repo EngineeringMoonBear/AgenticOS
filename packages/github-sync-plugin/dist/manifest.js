@@ -38,7 +38,15 @@ var manifest = {
   //   paperclipCfAccessClientSecret. Catch-fallback only — zero-risk to the working
   //   scope path. No new capabilities (reuses http.outbound); the new config fields
   //   deliberately do NOT use format:"secret-ref" (see the field comments).
-  version: "0.10.0",
+  // 0.11.0 = gh-token-broker bearer auth (GOL-666, fixes the M3/PR #356 regression).
+  //   Since PR #356 the broker REQUIRES `Authorization: Bearer <GH_BROKER_API_KEY>`
+  //   and rejects unauthenticated mints with HTTP 401 — but the plugin's broker
+  //   client never sent it, so every repo-scoped token mint 401'd and the PR-review
+  //   pipeline died at "failed to fetch PR changed files" (seen on grove-odoo-modules).
+  //   Sandboxed plugin workers can't read GH_BROKER_API_KEY(_FILE) from env, so the
+  //   key arrives via one new config field, tokenBrokerApiKey (NOT secret-ref — same
+  //   host-strips-secret-ref reasoning as the GOL-323 fields). No new capabilities.
+  version: "0.11.0",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",
@@ -95,7 +103,7 @@ var manifest = {
     {
       endpointKey: "github-pr",
       displayName: "GitHub App pull_request event \u2192 agent review pipeline (GOL-158)",
-      description: "Subscribe the AgenticOS Developer GitHub App to `pull_request` events and point them here. For each non-draft PR (opened/reopened/ready_for_review/synchronize) the plugin creates review issue(s) in the matching bridge's project \u2014 Alice always, Iris when a changed path matches `prReviewFrontendPaths` \u2014 and seeds a pending `agent-review/*` check-run on the head SHA. Verified with appWebhookSecret (same as `github-app`). Needs the App's `checks:write` permission for check-runs."
+      description: "Subscribe the AgenticOS Developer GitHub App to `pull_request` events and point them here. For each non-draft PR (opened/reopened/ready_for_review/synchronize) the plugin creates review issue(s) in the matching bridge's project \u2014 Ada always, Iris when a changed path matches `prReviewFrontendPaths` \u2014 and seeds a pending `agent-review/*` check-run on the head SHA. Verified with appWebhookSecret (same as `github-app`). Needs the App's `checks:write` permission for check-runs."
     }
   ],
   // Declaring `database` is REQUIRED for the host to provision + activate the
@@ -153,7 +161,7 @@ var manifest = {
             labelRouting: {
               type: "object",
               title: "Discipline label routing (v0.6.0)",
-              description: 'Map of GitHub label name \u2192 assignee agent UUID. An inbound issue is assigned to the owner of its highest-precedence matching label. Fixed precedence: infra = bug = alert > frontend > feature (first match by precedence wins). Example: {"frontend":"<Iris>","feature":"<Alice>","bug":"<Terra>","infra":"<Terra>","alert":"<Terra>"}. No match \u2192 fallbackAssigneeAgentId \u2192 defaultAssigneeAgentId.',
+              description: 'Map of GitHub label name \u2192 assignee agent UUID. An inbound issue is assigned to the owner of its highest-precedence matching label. Fixed precedence: infra = bug = alert > frontend > feature (first match by precedence wins). Example: {"frontend":"<Iris>","feature":"<Ada>","bug":"<Terra>","infra":"<Terra>","alert":"<Terra>"}. No match \u2192 fallbackAssigneeAgentId \u2192 defaultAssigneeAgentId.',
               additionalProperties: { type: "string" }
             },
             fallbackAssigneeAgentId: {
@@ -175,6 +183,16 @@ var manifest = {
         type: "string",
         title: "Token Broker URL",
         description: "gh-token-broker endpoint that mints repo-scoped GitHub App installation tokens. Defaults to the GH_TOKEN_BROKER_URL env var; set to http://gh-token-broker:9099 if the env is not passed to plugin workers."
+      },
+      tokenBrokerApiKey: {
+        type: "string",
+        // NOT format:"secret-ref" — same reasoning as paperclipApiToken below
+        // (this host strips secret-ref fields from saved config, so marking it
+        // would leave the worker with NO bearer and every broker mint would 401).
+        // Since M3 (PR #356) the broker REQUIRES this bearer; plugin workers are
+        // sandboxed away from GH_BROKER_API_KEY(_FILE), so it MUST arrive here.
+        title: "Token Broker API key (bearer, M3/GOL-666)",
+        description: "Bearer presented to gh-token-broker (matches GH_BROKER_API_KEY on the broker side). REQUIRED whenever the broker is used \u2014 since PR #356 the broker rejects unauthenticated mints with HTTP 401, which surfaces as the PR-review pipeline 'failed to fetch PR changed files'. Set to the same value as /opt/agenticos/secrets/gh-broker-client.key."
       },
       githubToken: {
         type: "string",
@@ -218,8 +236,8 @@ var manifest = {
       },
       prReviewAliceAgentId: {
         type: "string",
-        title: "PR review \u2014 Alice agent ID (GOL-158)",
-        description: "Agent UUID that ALWAYS reviews every non-draft PR (spec System 2). Leave empty to disable the PR review pipeline (the `github-pr` webhook then no-ops). Company-global \u2014 the review issue is created in the matched bridge's project."
+        title: "PR review \u2014 lead reviewer (Ada) agent ID (GOL-158/GOL-713)",
+        description: "Agent UUID that ALWAYS reviews every non-draft PR (spec System 2). Leave empty to disable the PR review pipeline (the `github-pr` webhook then no-ops). Company-global \u2014 the review issue is created in the matched bridge's project. Emits the `agent-review/ada` check (the Phase-3 required gate). Key id keeps its legacy `Alice` name for deployed-config compatibility; the reviewer slug was renamed alice\u2192ada in GOL-713."
       },
       prReviewIrisAgentId: {
         type: "string",

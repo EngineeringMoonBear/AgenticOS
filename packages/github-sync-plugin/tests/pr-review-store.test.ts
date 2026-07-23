@@ -59,9 +59,9 @@ function makeStoreDb(): MappingDb & { rows: Map<string, PrReviewRow> } {
 const ROW: PrReviewRow = {
   githubRepo: "EngineeringMoonBear/AgenticOS",
   prNumber: 295,
-  reviewer: "alice",
+  reviewer: "ada",
   headSha: "201ce63aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  paperclipIssueId: "pi-alice-1",
+  paperclipIssueId: "pi-ada-1",
   updatedAt: "2026-07-09T00:00:00Z",
 };
 
@@ -69,7 +69,7 @@ describe("pr-review-store round-trip", () => {
   it("upserts then reads back by (repo, pr, reviewer)", async () => {
     const db = makeStoreDb();
     await upsertReviewRecord(db, ROW);
-    expect(await getReviewRecord(db, ROW.githubRepo, ROW.prNumber, "alice")).toEqual(ROW);
+    expect(await getReviewRecord(db, ROW.githubRepo, ROW.prNumber, "ada")).toEqual(ROW);
   });
 
   it("returns null for a (repo, pr, reviewer) with no row", async () => {
@@ -83,7 +83,7 @@ describe("getReviewRecordByIssueId — reverse lookup (GOL-186)", () => {
   it("finds the row for its Paperclip review-issue id", async () => {
     const db = makeStoreDb();
     await upsertReviewRecord(db, ROW);
-    const found = await getReviewRecordByIssueId(db, "pi-alice-1");
+    const found = await getReviewRecordByIssueId(db, "pi-ada-1");
     expect(found).toEqual(ROW);
   });
 
@@ -99,7 +99,7 @@ describe("getReviewRecordByIssueId — reverse lookup (GOL-186)", () => {
     // synchronize: same issue reused, new head SHA + updatedAt (worker resets the row).
     const newHead = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
     await upsertReviewRecord(db, { ...ROW, headSha: newHead, updatedAt: "2026-07-09T01:00:00Z" });
-    const found = await getReviewRecordByIssueId(db, "pi-alice-1");
+    const found = await getReviewRecordByIssueId(db, "pi-ada-1");
     expect(found?.headSha).toBe(newHead);
     // exactly one row for the reviewer — the upsert replaced, not appended.
     expect(db.rows.size).toBe(1);

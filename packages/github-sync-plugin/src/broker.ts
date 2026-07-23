@@ -20,6 +20,15 @@ export interface BrokerOptions {
   timeoutMs?: number;
   /** Injectable clock for tests. */
   now?: () => number;
+  /**
+   * Bearer presented to the broker (M3, PR #356). The broker REFUSES every
+   * request without a matching `Authorization: Bearer` — an unauthenticated
+   * mint returns HTTP 401 `{"error":"unauthorized"}`, which the pipeline
+   * surfaces as "failed to fetch PR changed files". Plugin workers are
+   * sandboxed away from host process.env, so this MUST arrive via ctx.config
+   * (GithubSyncConfig.tokenBrokerApiKey), not the GH_BROKER_API_KEY env var.
+   */
+  apiKey?: string;
 }
 
 /**
@@ -36,6 +45,7 @@ export function makeBrokerTokenProvider(
   const timeoutMs = opts.timeoutMs ?? 5000;
   const now = opts.now ?? (() => Date.now());
   const doFetch = opts.fetchImpl ?? fetch;
+  const apiKey = (opts.apiKey ?? "").trim();
   const base = brokerUrl.replace(/\/$/, "");
   const cache = new Map<string, { token: string; expiresAt: number }>();
 
@@ -51,7 +61,10 @@ export function makeBrokerTokenProvider(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await doFetch(url.toString(), { signal: controller.signal });
+      const res = await doFetch(url.toString(), {
+        signal: controller.signal,
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      });
       if (!res.ok) throw new Error(`token broker -> ${res.status}`);
       const body = (await res.json()) as { token?: string };
       if (!body.token) throw new Error("token broker returned no token");

@@ -40,7 +40,7 @@ import {
 } from "./pr-review.js";
 import { getReviewRecord, upsertReviewRecord } from "./pr-review-store.js";
 import { handleReviewSignoff } from "./pr-signoff.js";
-import { recordError, buildSwallowedFailurePing } from "./error-log.js";
+import { recordError, buildSwallowedFailurePing, OpsPingThrottle, withSuppressionNote } from "./error-log.js";
 import {
   buildCiFixBody,
   buildCiFixOpenedPing,
@@ -117,6 +117,12 @@ interface GithubSyncConfig {
   bridges: BridgeConfig[];
   /** Override for GH_TOKEN_BROKER_URL (set if the env isn't passed to plugin workers). */
   tokenBrokerUrl?: string;
+  /**
+   * Bearer the broker requires since M3 (PR #356). Sandboxed plugin workers can't
+   * read the GH_BROKER_API_KEY env/file, so this must be supplied via config or
+   * every token mint 401s and the PR-review pipeline can't fetch changed files.
+   */
+  tokenBrokerApiKey?: string;
   /** Optional static-PAT fallback, used only when no broker is configured. */
   githubToken?: string;
   /** Company owning the synced projects — required to create inbound mirror issues. */
@@ -207,6 +213,7 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
   return {
     bridges,
     tokenBrokerUrl: raw.tokenBrokerUrl ? String(raw.tokenBrokerUrl) : undefined,
+    tokenBrokerApiKey: raw.tokenBrokerApiKey ? String(raw.tokenBrokerApiKey) : undefined,
     githubToken: raw.githubToken ? String(raw.githubToken) : undefined,
     companyId: raw.companyId ? String(raw.companyId) : undefined,
     inboundWebhookSecret: raw.inboundWebhookSecret ? String(raw.inboundWebhookSecret) : undefined,
@@ -255,6 +262,25 @@ function restFallbackDeps(ctx: PluginContext, cfg: GithubSyncConfig) {
  * message to the configured webhook. Any failure is logged and swallowed — mirror
  * creation must never depend on the ops channel being reachable.
  */
+/**
+ * Process-wide throttle for repetitive ERROR-class ops alerts (GOL-724). Keyed by the
+ * exact ping content, so one crash window plus GitHub redelivery can't spam N identical
+ * `🔥 PR review pipeline error` / `🚨 github-sync failure` lines at ops. Long-lived
+ * because the plugin worker is; state-change pings (mirror/review created) bypass it.
+ */
+const opsAlertThrottle = new OpsPingThrottle();
+
+/**
+ * Emit an error-class ops ping through {@link opsAlertThrottle}: the first of a burst of
+ * identical alerts posts, the rest are suppressed for the window, and the next emit
+ * carries a `(+N suppressed)` note so nothing is silently lost.
+ */
+async function postThrottledOpsAlert(ctx: PluginContext, cfg: GithubSyncConfig, content: string): Promise<void> {
+  const decision = opsAlertThrottle.decide(content, Date.now());
+  if (!decision.emit) return;
+  await postOpsPing(ctx, cfg.opsWebhookUrl, withSuppressionNote(content, decision.suppressed));
+}
+
 async function postOpsPing(ctx: PluginContext, webhookUrl: string | undefined, content: string): Promise<void> {
   if (!webhookUrl) return;
   try {
@@ -311,7 +337,38 @@ async function recordSwallowedFailure(
       error: writeErr instanceof Error ? writeErr.message : String(writeErr),
     });
   }
-  await postOpsPing(ctx, cfg.opsWebhookUrl, buildSwallowedFailurePing(scope, detail));
+  await postThrottledOpsAlert(ctx, cfg, buildSwallowedFailurePing(scope, detail));
+}
+
+/**
+ * Record a PR-review / CI pipeline error (HMAC reject, broker-401 changed-file fetch
+ * fail, check-post fail) to the same durable sinks as a swallowed failure, then page
+ * ops through the throttle (GOL-724). Before this, these `🔥 PR review pipeline error`
+ * pings were fire-and-forget: invisible to DB triage AND un-deduped, so a single crash
+ * window spammed Discord. Now every one lands in `github_sync_error` (queryable without
+ * a server.log dig) and identical alerts collapse to one per window.
+ */
+async function recordPipelineError(
+  ctx: PluginContext,
+  cfg: GithubSyncConfig,
+  scope: string,
+  detail: string,
+  context: Record<string, unknown> = {},
+): Promise<void> {
+  ctx.logger.warn(scope, { ...context, detail });
+  try {
+    await recordError(ctx.db, {
+      occurredAt: new Date().toISOString(),
+      scope,
+      detail,
+      context,
+    });
+  } catch (writeErr) {
+    ctx.logger.warn("failed to persist pipeline error to github_sync_error", {
+      error: writeErr instanceof Error ? writeErr.message : String(writeErr),
+    });
+  }
+  await postThrottledOpsAlert(ctx, cfg, buildPipelineErrorPing(detail));
 }
 
 /**
@@ -682,7 +739,10 @@ async function handleAppInbound(
 function makeBridgeGithubClient(cfg: GithubSyncConfig, bridge: BridgeConfig): GitHubClient | null {
   const brokerUrl = cfg.tokenBrokerUrl || process.env.GH_TOKEN_BROKER_URL || "";
   if (brokerUrl) {
-    return new GitHubClient({ org: bridge.githubOrg, getToken: makeBrokerTokenProvider(brokerUrl, bridge.githubOrg) });
+    return new GitHubClient({
+      org: bridge.githubOrg,
+      getToken: makeBrokerTokenProvider(brokerUrl, bridge.githubOrg, { apiKey: cfg.tokenBrokerApiKey }),
+    });
   }
   if (cfg.githubToken) {
     return new GitHubClient({ org: bridge.githubOrg, getToken: staticTokenProvider(cfg.githubToken) });
@@ -697,7 +757,7 @@ type ReviewOutcome = "created" | "reopened" | "noop";
  * Native GitHub App `pull_request` endpoint (`github-pr`): the agent PR review
  * pipeline (GOL-158, spec System 2). Verifies the App webhook secret, filters to
  * non-draft actionable actions, fetches the PR's changed files via the broker
- * token, then per reviewer (Alice always; Iris when a changed path matches the
+ * token, then per reviewer (Ada always; Iris when a changed path matches the
  * frontend globs):
  *   - creates a review issue in the matched bridge's project (first time), or
  *   - reopens it with a "new commits" note when the head SHA changed, and
@@ -744,8 +804,10 @@ async function handlePrInbound(
     return;
   }
   if (!verifyGithubSignature(input.rawBody, cfg.appWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
-    ctx.logger.warn("pr webhook: signature verification failed");
-    await postOpsPing(ctx, cfg.opsWebhookUrl, buildPipelineErrorPing("HMAC verification failed on a github-pr delivery"));
+    await recordPipelineError(ctx, cfg, "pr webhook: signature verification failed", "HMAC verification failed on a github-pr delivery", {
+      endpointKey: PR_WEBHOOK_ENDPOINT_KEY,
+      delivery: getHeader(input.headers, "x-github-delivery"),
+    });
     return;
   }
 
@@ -797,11 +859,17 @@ async function handlePrInbound(
 
   const filesRes = await github.listPullFiles(bridge.githubRepo, ev.number);
   if (!filesRes.ok) {
-    ctx.logger.error("pr webhook: failed to fetch PR changed files", { repo: ev.repo, number: ev.number, error: filesRes.error });
-    await postOpsPing(
+    // A delivery that 200s but produces NO review issue/check dies HERE — e.g. the
+    // broker mint 401s (missing `tokenBrokerApiKey` config) or GitHub rejects the
+    // fetch. This used to be DB-invisible: only a Discord ops-ping fired, so
+    // `github_sync_error` stayed empty and the silent tail was undiagnosable without
+    // a server.log dig (GOL-721). Persist a queryable row alongside the ping.
+    await recordSwallowedFailure(
       ctx,
-      cfg.opsWebhookUrl,
-      buildPipelineErrorPing(`could not list files for ${ev.repo}#${ev.number}: ${filesRes.error}`),
+      cfg,
+      "pr webhook: failed to fetch PR changed files",
+      filesRes.error,
+      { repo: ev.repo, number: ev.number },
     );
     return;
   }
@@ -813,11 +881,14 @@ async function handlePrInbound(
     });
   }
 
-  // Decide reviewers: Alice always; Iris when a changed path matches the frontend globs.
+  // Decide reviewers: Ada always; Iris when a changed path matches the frontend globs.
+  // The `prReviewAliceAgentId` config key keeps its legacy name (deployed config
+  // binds to it) but now holds Ada's agent UUID; the emitted reviewer slug is `ada`
+  // (→ `agent-review/ada`, GOL-713).
   const frontendPaths = cfg.prReviewFrontendPaths?.length ? cfg.prReviewFrontendPaths : DEFAULT_FRONTEND_PATHS;
   const isFrontend = anyFrontendMatch(files, frontendPaths);
   const reviewers: Array<{ reviewer: Reviewer; agentId: string }> = [
-    { reviewer: "alice", agentId: cfg.prReviewAliceAgentId },
+    { reviewer: "ada", agentId: cfg.prReviewAliceAgentId },
   ];
   if (isFrontend && cfg.prReviewIrisAgentId) {
     reviewers.push({ reviewer: "iris", agentId: cfg.prReviewIrisAgentId });
@@ -831,17 +902,13 @@ async function handlePrInbound(
       if (outcome === "created") created.push(reviewer);
       else if (outcome === "reopened") reopened.push(reviewer);
     } catch (err) {
-      ctx.logger.error("pr webhook: reviewer processing failed", {
+      // Per-reviewer failure (issue create/update or seed-check). Was ops-ping-only;
+      // now also lands in `github_sync_error` so a silent drop is queryable (GOL-721).
+      await recordSwallowedFailure(ctx, cfg, "pr webhook: reviewer processing failed", err, {
         repo: ev.repo,
         number: ev.number,
         reviewer,
-        error: err instanceof Error ? err.message : String(err),
       });
-      await postOpsPing(
-        ctx,
-        cfg.opsWebhookUrl,
-        buildPipelineErrorPing(`review-issue handling failed for ${ev.repo}#${ev.number} (${reviewer})`),
-      );
     }
   }
 
@@ -1002,7 +1069,7 @@ async function seedPendingCheck(
  * a trigger: for each associated PR we re-derive the aggregate CI state from the
  * head SHA's check-runs (excluding the plugin's own `agent-review/*` checks), then:
  *   - red CI on an agent-authored open PR → open (or update-in-place) a fix issue
- *     assigned to the code owner (Alice, or Iris on frontend paths), and
+ *     assigned to the code owner (Ada, or Iris on frontend paths), and
  *   - a green suite → auto-close the open fix issue.
  * The github_ci_failure store keys one fix issue per (repo, PR#) — the loop-guard.
  *
@@ -1021,8 +1088,10 @@ async function handleCiCompletion(
     return;
   }
   if (!verifyGithubSignature(input.rawBody, cfg.appWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
-    ctx.logger.warn("ci webhook: signature verification failed");
-    await postOpsPing(ctx, cfg.opsWebhookUrl, buildPipelineErrorPing(`HMAC verification failed on a ${eventType} delivery`));
+    await recordPipelineError(ctx, cfg, "ci webhook: signature verification failed", `HMAC verification failed on a ${eventType} delivery`, {
+      eventType,
+      delivery: getHeader(input.headers, "x-github-delivery"),
+    });
     return;
   }
 
@@ -1057,7 +1126,7 @@ async function handleCiCompletion(
     return;
   }
   if (!cfg.prReviewAliceAgentId) {
-    // Reuses the PR-review owner config (Alice default, Iris on frontend). Unset →
+    // Reuses the PR-review owner config (Ada default, Iris on frontend). Unset →
     // the CI-fix loop is off, mirroring how the review pipeline gates.
     ctx.logger.info("ci webhook: CI-fix loop disabled (no prReviewAliceAgentId configured)");
     return;
@@ -1077,15 +1146,12 @@ async function handleCiCompletion(
     try {
       await processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope);
     } catch (err) {
-      ctx.logger.error("ci webhook: PR processing failed", {
-        repo: ev.repo,
-        prNumber,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      await postOpsPing(
+      await recordPipelineError(
         ctx,
-        cfg.opsWebhookUrl,
-        buildPipelineErrorPing(`CI-fix handling failed for ${ev.repo}#${prNumber}`),
+        cfg,
+        "ci webhook: PR processing failed",
+        `CI-fix handling failed for ${ev.repo}#${prNumber}`,
+        { repo: ev.repo, prNumber, error: err instanceof Error ? err.message : String(err) },
       );
     }
   }
@@ -1112,16 +1178,12 @@ async function processCiPr(
 ): Promise<void> {
   const checksRes = await github.listCommitCheckRuns(bridge.githubRepo, ev.headSha);
   if (!checksRes.ok) {
-    ctx.logger.error("ci webhook: failed to list check-runs", {
-      repo: ev.repo,
-      prNumber,
-      headSha: ev.headSha,
-      error: checksRes.error,
-    });
-    await postOpsPing(
+    await recordPipelineError(
       ctx,
-      cfg.opsWebhookUrl,
-      buildPipelineErrorPing(`could not list check-runs for ${ev.repo}@${ev.headSha}: ${checksRes.error}`),
+      cfg,
+      "ci webhook: failed to list check-runs",
+      `could not list check-runs for ${ev.repo}@${ev.headSha}: ${checksRes.error}`,
+      { repo: ev.repo, prNumber, headSha: ev.headSha, error: checksRes.error },
     );
     return;
   }
@@ -1201,12 +1263,12 @@ async function processCiPr(
   }
 
   // Owner routing mirrors the PR-review pipeline: Iris when a changed path is
-  // frontend (and Iris is configured), else Alice. A file-list fetch failure
-  // degrades to Alice rather than dropping the fix.
+  // frontend (and Iris is configured), else Ada. A file-list fetch failure
+  // degrades to Ada rather than dropping the fix.
   const filesRes = await github.listPullFiles(bridge.githubRepo, prNumber);
   const files = filesRes.ok ? filesRes.data.files : [];
   if (!filesRes.ok) {
-    ctx.logger.warn("ci webhook: could not list PR files for owner routing; defaulting to Alice", {
+    ctx.logger.warn("ci webhook: could not list PR files for owner routing; defaulting to Ada", {
       repo: ev.repo,
       prNumber,
       error: filesRes.error,
@@ -1216,7 +1278,7 @@ async function processCiPr(
   const owner =
     files.length > 0 && anyFrontendMatch(files, frontendPaths) && cfg.prReviewIrisAgentId
       ? { agentId: cfg.prReviewIrisAgentId, name: "Iris" }
-      : { agentId: cfg.prReviewAliceAgentId!, name: "Alice" };
+      : { agentId: cfg.prReviewAliceAgentId!, name: "Ada" };
 
   const failed = failingChecks(checksRes.data);
   const fixCtx = {
@@ -1331,7 +1393,7 @@ const plugin = definePlugin({
     for (const bridge of cfg.bridges) {
       let getToken;
       if (brokerUrl) {
-        getToken = makeBrokerTokenProvider(brokerUrl, bridge.githubOrg);
+        getToken = makeBrokerTokenProvider(brokerUrl, bridge.githubOrg, { apiKey: cfg.tokenBrokerApiKey });
       } else if (cfg.githubToken) {
         getToken = staticTokenProvider(cfg.githubToken);
       } else {
