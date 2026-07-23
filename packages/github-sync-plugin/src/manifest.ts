@@ -55,7 +55,13 @@ const manifest: PaperclipPluginManifestV1 = {
   //   row (reuses migrations/003) and all error-class ops alerts pass through an in-memory
   //   per-content throttle that collapses a burst to one ping per window with a
   //   `(+N suppressed)` note. Bugfix only — manifest surface unchanged bar version.
-  version: "0.11.1",
+  // 0.11.2 = complete the 0.11.1 throttle: OpsPingThrottle.prune() was defined+tested
+  //   but never called, so the per-content window Map grew unbounded over the long-lived
+  //   worker (contradicting its own "can't grow unbounded" docstring) — GOL-728. decide()
+  //   now prunes stale keys opportunistically after refreshing the current key, so the
+  //   Map is bounded by the count of distinct alert keys seen within one window. Bugfix
+  //   only — manifest surface unchanged bar version.
+  version: "0.11.2",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",
