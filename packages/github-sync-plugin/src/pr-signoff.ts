@@ -6,8 +6,8 @@
  * the seed docblock assumed the reviewing agent's own tooling would post the
  * sign-off check, and that tooling does not exist in the reviewer runtime. So a
  * `agent-review/*` check stays `in_progress` forever even after the reviewer's
- * Paperclip issue closes (verified on PR #295 — alice's check never left pending).
- * Phase 3 (GOL-159) makes `agent-review/alice` the single globally-required check
+ * Paperclip issue closes (verified on PR #295 — the reviewer's check never left pending).
+ * Phase 3 (GOL-159) makes `agent-review/ada` the single globally-required check
  * (fail-closed); against a pending-forever check that would block every merge.
  *
  * This module completes the check-run SERVER-SIDE and event-driven (Option 2):
@@ -67,18 +67,18 @@ export async function handleReviewSignoff(
   }
   if (triggerIssue.status !== "done") return; // sign-off is the review issue closing `done`
 
-  const aliceRow = await getReviewRecord(db, record.githubRepo, record.prNumber, "alice");
+  const adaRow = await getReviewRecord(db, record.githubRepo, record.prNumber, "ada");
   const irisRow = await getReviewRecord(db, record.githubRepo, record.prNumber, "iris");
 
-  const aliceDone = aliceRow ? await isIssueDone(deps, aliceRow, input.companyId) : false;
+  const adaDone = adaRow ? await isIssueDone(deps, adaRow, input.companyId) : false;
   const irisDone = irisRow ? await isIssueDone(deps, irisRow, input.companyId) : false;
 
-  const greenlit = evaluateSignoffGate({ aliceDone, irisPresent: irisRow !== null, irisDone });
+  const greenlit = evaluateSignoffGate({ adaDone, irisPresent: irisRow !== null, irisDone });
   if (greenlit.length === 0) {
     logger.info("signoff: gate not yet green; no check-run posted", {
       repo: record.githubRepo,
       prNumber: record.prNumber,
-      aliceDone,
+      adaDone,
       irisPresent: irisRow !== null,
       irisDone,
     });
@@ -86,7 +86,7 @@ export async function handleReviewSignoff(
   }
 
   for (const reviewer of greenlit) {
-    const row = reviewer === "alice" ? aliceRow : irisRow;
+    const row = reviewer === "ada" ? adaRow : irisRow;
     if (!row) continue; // the gate never greenlights a reviewer without a row; be safe
     await postSignoffCheck(deps, row, reviewer);
   }

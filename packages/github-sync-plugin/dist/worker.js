@@ -11267,10 +11267,10 @@ function resolveRouting(cfg, labels) {
 
 // src/pr-review.ts
 var CHECK_CONTEXT = {
-  alice: "agent-review/alice",
+  ada: "agent-review/ada",
   iris: "agent-review/iris"
 };
-var REVIEWER_NAME = { alice: "Alice", iris: "Iris" };
+var REVIEWER_NAME = { ada: "Ada", iris: "Iris" };
 var PR_ACTIONS = ["opened", "reopened", "ready_for_review", "synchronize"];
 var DEFAULT_FRONTEND_PATHS = ["apps/dashboard/**", "**/*.tsx", "**/*.css"];
 function isActionablePrAction(action) {
@@ -11370,7 +11370,7 @@ function buildNewCommitsNote(reviewer, ev) {
 function evaluateSignoffGate(input) {
   const out = [];
   if (input.irisPresent && input.irisDone) out.push("iris");
-  if (input.aliceDone && (!input.irisPresent || input.irisDone)) out.push("alice");
+  if (input.adaDone && (!input.irisPresent || input.irisDone)) out.push("ada");
   return out;
 }
 function reviewerList(reviewers) {
@@ -11453,23 +11453,23 @@ async function handleReviewSignoff(deps, input) {
     return;
   }
   if (triggerIssue.status !== "done") return;
-  const aliceRow = await getReviewRecord(db, record.githubRepo, record.prNumber, "alice");
+  const adaRow = await getReviewRecord(db, record.githubRepo, record.prNumber, "ada");
   const irisRow = await getReviewRecord(db, record.githubRepo, record.prNumber, "iris");
-  const aliceDone = aliceRow ? await isIssueDone(deps, aliceRow, input.companyId) : false;
+  const adaDone = adaRow ? await isIssueDone(deps, adaRow, input.companyId) : false;
   const irisDone = irisRow ? await isIssueDone(deps, irisRow, input.companyId) : false;
-  const greenlit = evaluateSignoffGate({ aliceDone, irisPresent: irisRow !== null, irisDone });
+  const greenlit = evaluateSignoffGate({ adaDone, irisPresent: irisRow !== null, irisDone });
   if (greenlit.length === 0) {
     logger.info("signoff: gate not yet green; no check-run posted", {
       repo: record.githubRepo,
       prNumber: record.prNumber,
-      aliceDone,
+      adaDone,
       irisPresent: irisRow !== null,
       irisDone
     });
     return;
   }
   for (const reviewer of greenlit) {
-    const row = reviewer === "alice" ? aliceRow : irisRow;
+    const row = reviewer === "ada" ? adaRow : irisRow;
     if (!row) continue;
     await postSignoffCheck(deps, row, reviewer);
   }
@@ -12275,7 +12275,7 @@ async function handlePrInbound(ctx, cfg, input) {
   const frontendPaths = cfg.prReviewFrontendPaths?.length ? cfg.prReviewFrontendPaths : DEFAULT_FRONTEND_PATHS;
   const isFrontend = anyFrontendMatch(files, frontendPaths);
   const reviewers = [
-    { reviewer: "alice", agentId: cfg.prReviewAliceAgentId }
+    { reviewer: "ada", agentId: cfg.prReviewAliceAgentId }
   ];
   if (isFrontend && cfg.prReviewIrisAgentId) {
     reviewers.push({ reviewer: "iris", agentId: cfg.prReviewIrisAgentId });
@@ -12557,14 +12557,14 @@ async function processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope) {
   const filesRes = await github.listPullFiles(bridge.githubRepo, prNumber);
   const files = filesRes.ok ? filesRes.data.files : [];
   if (!filesRes.ok) {
-    ctx.logger.warn("ci webhook: could not list PR files for owner routing; defaulting to Alice", {
+    ctx.logger.warn("ci webhook: could not list PR files for owner routing; defaulting to Ada", {
       repo: ev.repo,
       prNumber,
       error: filesRes.error
     });
   }
   const frontendPaths = cfg.prReviewFrontendPaths?.length ? cfg.prReviewFrontendPaths : DEFAULT_FRONTEND_PATHS;
-  const owner = files.length > 0 && anyFrontendMatch(files, frontendPaths) && cfg.prReviewIrisAgentId ? { agentId: cfg.prReviewIrisAgentId, name: "Iris" } : { agentId: cfg.prReviewAliceAgentId, name: "Alice" };
+  const owner = files.length > 0 && anyFrontendMatch(files, frontendPaths) && cfg.prReviewIrisAgentId ? { agentId: cfg.prReviewIrisAgentId, name: "Iris" } : { agentId: cfg.prReviewAliceAgentId, name: "Ada" };
   const failed = failingChecks(checksRes.data);
   const fixCtx = {
     repo: ev.repo,

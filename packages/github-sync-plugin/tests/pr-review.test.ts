@@ -144,17 +144,17 @@ describe("review issue + marker content", () => {
   it("embeds the loop-prevention marker keyed on (repo, PR, head sha)", () => {
     const marker = prReviewMarker(ev.repo, ev.number, ev.headSha);
     expect(marker).toBe("<!-- pr-review: Goldberry-Playground/AgenticOS#260@abc1234def -->");
-    expect(buildReviewIssueBody("alice", ev, ["a.ts"])).toContain(marker);
+    expect(buildReviewIssueBody("ada", ev, ["a.ts"])).toContain(marker);
   });
 
   it("names the reviewer's check-run context in the body", () => {
-    expect(buildReviewIssueBody("alice", ev, ["a.ts"])).toContain(CHECK_CONTEXT.alice);
+    expect(buildReviewIssueBody("ada", ev, ["a.ts"])).toContain(CHECK_CONTEXT.ada);
     expect(buildReviewIssueBody("iris", ev, ["a.tsx"])).toContain(CHECK_CONTEXT.iris);
   });
 
   it("truncates a huge changed-file list with a summary line", () => {
     const files = Array.from({ length: 60 }, (_, i) => `f${i}.ts`);
-    const body = buildReviewIssueBody("alice", ev, files);
+    const body = buildReviewIssueBody("ada", ev, files);
     expect(body).toContain("Changed files (60)");
     expect(body).toContain("…and 10 more");
   });
@@ -171,16 +171,16 @@ describe("state-change pings", () => {
     url: "https://x/pull/7",
   };
   it("created ping lists reviewers", () => {
-    expect(buildReviewIssuesCreatedPing(ev, ["alice", "iris"])).toContain("Alice + Iris");
-    expect(buildReviewIssuesCreatedPing(ev, ["alice"])).toContain("org/repo#7");
+    expect(buildReviewIssuesCreatedPing(ev, ["ada", "iris"])).toContain("Ada + Iris");
+    expect(buildReviewIssuesCreatedPing(ev, ["ada"])).toContain("org/repo#7");
   });
   it("re-review ping shows the short SHA", () => {
-    const msg = buildReReviewPing(ev, ["alice"]);
+    const msg = buildReReviewPing(ev, ["ada"]);
     expect(msg).toContain(shortSha(ev.headSha));
     expect(msg).toContain("new commits");
   });
   it("sign-off + changes-requested pings name the context/reviewer", () => {
-    expect(buildSignoffPing("alice", "org/repo", 7)).toContain("agent-review/alice");
+    expect(buildSignoffPing("ada", "org/repo", 7)).toContain("agent-review/ada");
     expect(buildChangesRequestedPing("iris", "org/repo", 7)).toContain("Iris requested changes");
   });
 });
