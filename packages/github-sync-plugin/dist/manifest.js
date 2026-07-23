@@ -46,7 +46,29 @@ var manifest = {
   //   Sandboxed plugin workers can't read GH_BROKER_API_KEY(_FILE) from env, so the
   //   key arrives via one new config field, tokenBrokerApiKey (NOT secret-ref — same
   //   host-strips-secret-ref reasoning as the GOL-323 fields). No new capabilities.
-  version: "0.11.0",
+  // 0.11.1 = PR-review pipeline-error observability + alert hygiene (GOL-724). The
+  //   `🔥 PR review pipeline error` pings for HMAC-reject / broker-401 changed-file
+  //   fetch fail / CI check-run fetch fail were fire-and-forget: invisible to DB triage
+  //   AND un-deduped, so one worker-crash window + GitHub webhook redelivery spammed N
+  //   identical lines at ops. Now every such error persists a queryable `github_sync_error`
+  //   row (reuses migrations/003) and all error-class ops alerts pass through an in-memory
+  //   per-content throttle that collapses a burst to one ping per window with a
+  //   `(+N suppressed)` note. Bugfix only — manifest surface unchanged bar version.
+  // 0.11.2 = complete the 0.11.1 throttle: OpsPingThrottle.prune() was defined+tested
+  //   but never called, so the per-content window Map grew unbounded over the long-lived
+  //   worker (contradicting its own "can't grow unbounded" docstring) — GOL-728. decide()
+  //   now prunes stale keys opportunistically after refreshing the current key, so the
+  //   Map is bounded by the count of distinct alert keys seen within one window. Bugfix
+  //   only — manifest surface unchanged bar version.
+  // 0.11.3 = post-merge sign-off no longer false-alarms (GOL-781). handleReviewSignoff
+  //   posted a green `agent-review/*` check-run on the reviewed head SHA even after the
+  //   PR merged; GitHub's Checks API rejects a completion on a merged/superseded head
+  //   ("No commit found for SHA"), firing a false `🔥 sign-off check-run failed` alert on
+  //   every post-merge sign-off (grove-odoo-modules#44/47/48). postSignoffCheck now
+  //   short-circuits merged/closed PRs before the doomed post and re-derives PR state on
+  //   failure to mute the alert when the PR is no longer an open merge gate. Bugfix only —
+  //   manifest surface unchanged bar version.
+  version: "0.11.3",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",
