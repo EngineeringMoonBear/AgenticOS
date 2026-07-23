@@ -160,6 +160,26 @@ describe("OpsPingThrottle (GOL-724 alert dedup)", () => {
     // Dropped → treated as brand new (suppressed resets to 0), proving the entry is gone.
     expect(t.decide("k", WINDOW + 1)).toEqual({ emit: true, suppressed: 0 });
   });
+
+  it("decide opportunistically prunes stale keys so the Map stays bounded (GOL-728)", () => {
+    const t = new OpsPingThrottle(WINDOW);
+    t.decide("stale", 0);
+    t.decide("stale", 1_000); // suppressed #1 → window would carry suppressed=1 if retained
+    // An unrelated alert a full window later drives decide → prune(now), which must
+    // evict "stale" (lastAt=1_000, now-lastAt >= WINDOW). If prune had NOT run, the
+    // stale window would survive and its next re-open would report suppressed:1.
+    t.decide("other", WINDOW + 1_000);
+    expect(t.decide("stale", WINDOW + 1_001)).toEqual({ emit: true, suppressed: 0 });
+  });
+
+  it("decide keeps the just-decided key even while pruning peers", () => {
+    const t = new OpsPingThrottle(WINDOW);
+    t.decide("k", 0);
+    t.decide("k", 1_000); // suppressed #1 — this same call runs prune(1_000)
+    // prune must not evict the key decide just refreshed; its suppressed count survives
+    // so the next window re-open still reports the collapsed total.
+    expect(t.decide("k", WINDOW + 1_000)).toEqual({ emit: true, suppressed: 1 });
+  });
 });
 
 describe("withSuppressionNote", () => {
