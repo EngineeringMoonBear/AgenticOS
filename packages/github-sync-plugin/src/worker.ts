@@ -40,7 +40,7 @@ import {
 } from "./pr-review.js";
 import { getReviewRecord, upsertReviewRecord } from "./pr-review-store.js";
 import { handleReviewSignoff } from "./pr-signoff.js";
-import { recordError, buildSwallowedFailurePing } from "./error-log.js";
+import { recordError, buildSwallowedFailurePing, OpsPingThrottle, withSuppressionNote } from "./error-log.js";
 import {
   buildCiFixBody,
   buildCiFixOpenedPing,
@@ -262,6 +262,25 @@ function restFallbackDeps(ctx: PluginContext, cfg: GithubSyncConfig) {
  * message to the configured webhook. Any failure is logged and swallowed — mirror
  * creation must never depend on the ops channel being reachable.
  */
+/**
+ * Process-wide throttle for repetitive ERROR-class ops alerts (GOL-724). Keyed by the
+ * exact ping content, so one crash window plus GitHub redelivery can't spam N identical
+ * `🔥 PR review pipeline error` / `🚨 github-sync failure` lines at ops. Long-lived
+ * because the plugin worker is; state-change pings (mirror/review created) bypass it.
+ */
+const opsAlertThrottle = new OpsPingThrottle();
+
+/**
+ * Emit an error-class ops ping through {@link opsAlertThrottle}: the first of a burst of
+ * identical alerts posts, the rest are suppressed for the window, and the next emit
+ * carries a `(+N suppressed)` note so nothing is silently lost.
+ */
+async function postThrottledOpsAlert(ctx: PluginContext, cfg: GithubSyncConfig, content: string): Promise<void> {
+  const decision = opsAlertThrottle.decide(content, Date.now());
+  if (!decision.emit) return;
+  await postOpsPing(ctx, cfg.opsWebhookUrl, withSuppressionNote(content, decision.suppressed));
+}
+
 async function postOpsPing(ctx: PluginContext, webhookUrl: string | undefined, content: string): Promise<void> {
   if (!webhookUrl) return;
   try {
@@ -318,7 +337,38 @@ async function recordSwallowedFailure(
       error: writeErr instanceof Error ? writeErr.message : String(writeErr),
     });
   }
-  await postOpsPing(ctx, cfg.opsWebhookUrl, buildSwallowedFailurePing(scope, detail));
+  await postThrottledOpsAlert(ctx, cfg, buildSwallowedFailurePing(scope, detail));
+}
+
+/**
+ * Record a PR-review / CI pipeline error (HMAC reject, broker-401 changed-file fetch
+ * fail, check-post fail) to the same durable sinks as a swallowed failure, then page
+ * ops through the throttle (GOL-724). Before this, these `🔥 PR review pipeline error`
+ * pings were fire-and-forget: invisible to DB triage AND un-deduped, so a single crash
+ * window spammed Discord. Now every one lands in `github_sync_error` (queryable without
+ * a server.log dig) and identical alerts collapse to one per window.
+ */
+async function recordPipelineError(
+  ctx: PluginContext,
+  cfg: GithubSyncConfig,
+  scope: string,
+  detail: string,
+  context: Record<string, unknown> = {},
+): Promise<void> {
+  ctx.logger.warn(scope, { ...context, detail });
+  try {
+    await recordError(ctx.db, {
+      occurredAt: new Date().toISOString(),
+      scope,
+      detail,
+      context,
+    });
+  } catch (writeErr) {
+    ctx.logger.warn("failed to persist pipeline error to github_sync_error", {
+      error: writeErr instanceof Error ? writeErr.message : String(writeErr),
+    });
+  }
+  await postThrottledOpsAlert(ctx, cfg, buildPipelineErrorPing(detail));
 }
 
 /**
@@ -754,8 +804,10 @@ async function handlePrInbound(
     return;
   }
   if (!verifyGithubSignature(input.rawBody, cfg.appWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
-    ctx.logger.warn("pr webhook: signature verification failed");
-    await postOpsPing(ctx, cfg.opsWebhookUrl, buildPipelineErrorPing("HMAC verification failed on a github-pr delivery"));
+    await recordPipelineError(ctx, cfg, "pr webhook: signature verification failed", "HMAC verification failed on a github-pr delivery", {
+      endpointKey: PR_WEBHOOK_ENDPOINT_KEY,
+      delivery: getHeader(input.headers, "x-github-delivery"),
+    });
     return;
   }
 
@@ -1036,8 +1088,10 @@ async function handleCiCompletion(
     return;
   }
   if (!verifyGithubSignature(input.rawBody, cfg.appWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
-    ctx.logger.warn("ci webhook: signature verification failed");
-    await postOpsPing(ctx, cfg.opsWebhookUrl, buildPipelineErrorPing(`HMAC verification failed on a ${eventType} delivery`));
+    await recordPipelineError(ctx, cfg, "ci webhook: signature verification failed", `HMAC verification failed on a ${eventType} delivery`, {
+      eventType,
+      delivery: getHeader(input.headers, "x-github-delivery"),
+    });
     return;
   }
 
@@ -1092,15 +1146,12 @@ async function handleCiCompletion(
     try {
       await processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope);
     } catch (err) {
-      ctx.logger.error("ci webhook: PR processing failed", {
-        repo: ev.repo,
-        prNumber,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      await postOpsPing(
+      await recordPipelineError(
         ctx,
-        cfg.opsWebhookUrl,
-        buildPipelineErrorPing(`CI-fix handling failed for ${ev.repo}#${prNumber}`),
+        cfg,
+        "ci webhook: PR processing failed",
+        `CI-fix handling failed for ${ev.repo}#${prNumber}`,
+        { repo: ev.repo, prNumber, error: err instanceof Error ? err.message : String(err) },
       );
     }
   }
@@ -1127,16 +1178,12 @@ async function processCiPr(
 ): Promise<void> {
   const checksRes = await github.listCommitCheckRuns(bridge.githubRepo, ev.headSha);
   if (!checksRes.ok) {
-    ctx.logger.error("ci webhook: failed to list check-runs", {
-      repo: ev.repo,
-      prNumber,
-      headSha: ev.headSha,
-      error: checksRes.error,
-    });
-    await postOpsPing(
+    await recordPipelineError(
       ctx,
-      cfg.opsWebhookUrl,
-      buildPipelineErrorPing(`could not list check-runs for ${ev.repo}@${ev.headSha}: ${checksRes.error}`),
+      cfg,
+      "ci webhook: failed to list check-runs",
+      `could not list check-runs for ${ev.repo}@${ev.headSha}: ${checksRes.error}`,
+      { repo: ev.repo, prNumber, headSha: ev.headSha, error: checksRes.error },
     );
     return;
   }
