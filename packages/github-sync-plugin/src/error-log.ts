@@ -133,14 +133,22 @@ export class OpsPingThrottle {
    */
   decide(key: string, now: number): ThrottleDecision {
     const w = this.windows.get(key);
+    let decision: ThrottleDecision;
     if (!w || now - w.openedAt >= this.windowMs) {
       const suppressed = w ? w.suppressed : 0;
       this.windows.set(key, { openedAt: now, lastAt: now, suppressed: 0 });
-      return { emit: true, suppressed };
+      decision = { emit: true, suppressed };
+    } else {
+      w.lastAt = now;
+      w.suppressed += 1;
+      decision = { emit: false, suppressed: w.suppressed };
     }
-    w.lastAt = now;
-    w.suppressed += 1;
-    return { emit: false, suppressed: w.suppressed };
+    // Opportunistically drop stale keys so the Map stays bounded over the
+    // long-lived worker (GOL-728). Runs AFTER the current key is refreshed to
+    // `now` above, so this call never evicts the window we just decided on and
+    // its `suppressed` count is preserved for the next re-open.
+    this.prune(now);
+    return decision;
   }
 
   /** Drop windows with no hit for a full window, so the Map can't grow unbounded. */
