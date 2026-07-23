@@ -7,15 +7,24 @@ name: Deploy Droplet Plugins
 # place. Paperclip's plugin-dev-watcher HOT-RELOADS each worker whose dist/
 # changed — no restart, no manual step.
 #
-# MANIFEST CHANGES (new capability / config field / database / webhook): the
-# hot-reload refreshes worker CODE but NOT the stored manifest. This workflow
-# DETECTS a manifest change (scripts/detect-manifest-bumps.sh diffs
-# packages/<p>/src/manifest.ts across the deploy) and emits a ::warning:: +
-# job-summary telling you to finish it from a Mac:
-#     scripts/deploy-plugin.sh <plugin>
-# which does recreate-guard -> reinstall -> config -> enable. CI cannot do this
-# itself: applying plugin config needs the service tokens, and tokens flow ONLY
-# from 1Password, never through CI. See docs/runbooks/deploy-plugin-manifest-change.md.
+# MANIFEST CHANGES (new capability / config field / database / webhook / version
+# bump): the hot-reload refreshes worker CODE but NOT the stored registry
+# version. Left unfinished, the registry stays pinned to the OLD version and a
+# fresh install/worker keeps serving the previous code path even though main and
+# dist/ are already new — a silent stale-worker trap that cost two full
+# investigations (GOL-717, GOL-727).
+#
+# This workflow now FINISHES that itself (GOL-733): scripts/detect-manifest-bumps.sh
+# flags each plugin whose packages/<p>/src/manifest.ts changed, and the
+# "Finish manifest bumps" step below calls the idempotent, zero-downtime
+# POST /api/plugins/<id>/upgrade (safe from `ready`) on the droplet to converge
+# the stored registry version + reload the worker. The board key is read ON THE
+# BOX from 1Password via the credential-broker OP service-account token (GOL-313
+# pattern) — never a GitHub Actions secret (this repo has no CI secrets:write).
+# scripts/deploy-plugin.sh (Mac) remains the fallback for the rarer case that
+# needs a full reinstall+config (a brand-new plugin / new bind mount, which also
+# needs the "Recreate paperclip-server" workflow). See
+# docs/runbooks/deploy-plugin-manifest-change.md.
 #
 # Convention: bump `version:` in the manifest on every manifest change. (CI
 # detects by whole-file diff, so a forgotten bump is still caught.)
@@ -100,7 +109,7 @@ jobs:
             bash scripts/detect-manifest-bumps.sh "$OLD" HEAD
           '"'"'' | tee deploy.log
 
-      - name: Warn on manifest changes
+      - name: Detect manifest changes
         if: always()
         run: |
           # `always()` also fires when the deploy was skipped or failed, and
@@ -108,20 +117,54 @@ jobs:
           # matches" from "no file", so both landed in the else branch below
           # and the summary claimed workers had hot-reloaded on a run that
           # never reached the droplet (run 29422894878). Say so instead.
+          # bumps.txt is the gate the "Finish manifest bumps" step reads.
           if [ ! -f deploy.log ]; then
             echo "⚠️ The deploy step did not run, so there is no manifest state to report. Check the failed step above." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           grep "^MANIFEST_BUMP:" deploy.log > bumps.txt || true
           if [ -s bumps.txt ]; then
-            echo "### ⚠️ Manifest changes need a manual finish" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Manifest bump detected — auto-finishing via \`/upgrade\`" >> "$GITHUB_STEP_SUMMARY"
             while read -r _ plugin; do
-              echo "::warning title=Manifest changed::${plugin}: worker code hot-reloaded, but the stored manifest is stale. Finish it self-serve — run the 'Recreate paperclip-server' workflow (workflow_dispatch or repository_dispatch: recreate-paperclip-server), then reinstall+config+enable ${plugin} over the board-key API. See docs/runbooks/deploy-plugin-manifest-change.md. (Mac fallback: scripts/deploy-plugin.sh ${plugin}.)"
-              echo "- **${plugin}** — stored manifest is stale. **Primary:** trigger the [\`Recreate paperclip-server\`](../../actions/workflows/recreate-paperclip-server.yml) workflow (no Mac, no host root), then reinstall+config+enable ${plugin} over the board-key API — see [\`docs/runbooks/deploy-plugin-manifest-change.md\`](../../blob/main/docs/runbooks/deploy-plugin-manifest-change.md). _Fallback:_ \`scripts/deploy-plugin.sh ${plugin}\` from a Mac." >> "$GITHUB_STEP_SUMMARY"
+              echo "- **${plugin}** — worker code hot-reloaded; the next step converges the stored registry version via the idempotent plugin \`/upgrade\` (GOL-733)." >> "$GITHUB_STEP_SUMMARY"
             done < bumps.txt
           else
             echo "No manifest changes — workers hot-reloaded (cheap path)." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Finish manifest bumps — auto plugin /upgrade (GOL-733)
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+        run: |
+          # Fires ONLY when a manifest actually changed (bumps.txt, prev step).
+          # Converges the STORED plugin-registry version with the freshly-built
+          # dist by calling the idempotent POST /api/plugins/<id>/upgrade on the
+          # droplet, so the running worker never keeps executing the previous
+          # code path while main + dist are already the new version (GOL-717/727).
+          # The board key is read on the box from 1Password via the credential-
+          # broker OP service-account token (GOL-313) — never a GH Actions secret.
+          # Default shell is `bash -eo pipefail`, so a non-zero exit from the
+          # finish script (registry did NOT converge) fails this step RED instead
+          # of leaving the stale worker to be discovered later.
+          if [ ! -s bumps.txt ]; then
+            echo "No manifest bumps — nothing to finish (workers hot-reloaded)."
+            echo "No manifest bumps to finish." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          plugins="$(awk '{print $2}' bumps.txt | tr '\n' ' ')"
+          echo "Finishing manifest bump(s): ${plugins}"
+          # `bash -lc` so node is on PATH; the finish script is in the deployed
+          # checkout (the deploy step already reset /opt/agenticos/repo to main).
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" \
+            "bash -lc 'set -euo pipefail; cd /opt/agenticos/repo && bash scripts/finish-plugin-upgrade.sh ${plugins}'" \
+            | tee upgrade.log
+          {
+            echo "### ✅ Manifest bump finished via \`/upgrade\`"
+            echo '```'
+            grep -E '^\{|converged|^== |paperclip API:' upgrade.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Confirm workers hot-reloaded
         env:
