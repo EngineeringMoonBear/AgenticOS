@@ -53,6 +53,34 @@ describe("GitHubClient.createIssue", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toBe("Bad creds");
   });
+
+  it("surfaces status + GitHub errors[] and folds them into the message on a 422 (GOL-793)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch(
+        {
+          message: "Validation Failed",
+          errors: [
+            { resource: "Issue", field: "state", code: "invalid" },
+          ],
+        },
+        false,
+        422,
+      ),
+    );
+    const client = new GitHubClient({ token: "t", org: "o", timeoutMs: 5000 });
+    const result = await client.updateIssue("r", 210, { state: "open", title: "T" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(422);
+      expect(result.errors).toEqual([
+        { resource: "Issue", field: "state", code: "invalid" },
+      ]);
+      // errors[] detail is folded into the human-readable string so log lines
+      // that only carry `error` still reveal the failing field.
+      expect(result.error).toBe("Validation Failed (Issue.state.invalid)");
+    }
+  });
 });
 
 describe("GitHubClient.updateIssue", () => {
