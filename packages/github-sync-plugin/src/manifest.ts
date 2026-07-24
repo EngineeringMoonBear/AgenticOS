@@ -69,7 +69,7 @@ const manifest: PaperclipPluginManifestV1 = {
   //   short-circuits merged/closed PRs before the doomed post and re-derives PR state on
   //   failure to mute the alert when the PR is no longer an open merge gate. Bugfix only —
   //   manifest surface unchanged bar version.
-  version: "0.11.3",
+  version: "0.11.4",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",
