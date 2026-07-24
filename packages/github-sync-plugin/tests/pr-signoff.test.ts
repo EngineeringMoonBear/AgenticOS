@@ -224,35 +224,55 @@ describe("handleReviewSignoff", () => {
     expect(ping).toHaveBeenCalledWith(expect.stringContaining("HTTP 403"));
   });
 
-  // --- GOL-781: post-merge sign-off must not false-alarm ------------------------
+  // --- GOL-798: merged/closed PR must be greened (not stranded), GOL-781: no false alarm
 
-  it("skips the check-run (no post, no alert) when the PR is already merged", async () => {
+  it("posts success on an already-merged PR whose head still exists (backfills the strand)", async () => {
+    // GOL-798: the gate commonly greens AFTER the PR merges (coupled ada+iris gate,
+    // agent reviewer's in_progress→done). GitHub records a check-run on a merged
+    // PR's live head, so we post it and drive the stuck-pending check to terminal
+    // success instead of stranding it in_progress (which blocks Phase 3 merges).
     const db = makeStoreDb();
     await seedRows(db);
     const createCheckRun = okCheck();
     const ping = vi.fn().mockResolvedValue(undefined);
-    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping, mergedPull());
-    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
-
-    expect(createCheckRun).not.toHaveBeenCalled(); // doomed "No commit found" post avoided
-    expect(ping).not.toHaveBeenCalled(); // no 🔥 false alarm
-  });
-
-  it("mutes the failure alert when the check-run fails but the PR merged mid-sign-off", async () => {
-    const db = makeStoreDb();
-    await seedRows(db);
-    const createCheckRun = vi.fn().mockResolvedValue({ ok: false, error: "No commit found for SHA: deadbeef" });
-    const ping = vi.fn().mockResolvedValue(undefined);
-    // Open at the pre-check, merged by the time we re-derive state on failure.
-    const getPull = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, data: { state: "open", merged: false, number: PR } })
-      .mockResolvedValueOnce({ ok: true, data: { state: "closed", merged: true, number: PR } });
+    const getPull = mergedPull();
     const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping, getPull);
     await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
 
     expect(createCheckRun).toHaveBeenCalledTimes(1);
-    expect(ping).not.toHaveBeenCalled(); // merged → benign, no alert
+    expect(createCheckRun.mock.calls[0][1]).toMatchObject({ conclusion: "success" });
+    expect(getPull).not.toHaveBeenCalled(); // no pre-merge short-circuit; post is attempted directly
+    expect(ping).toHaveBeenCalledWith(expect.stringContaining("agent-review/ada"));
+  });
+
+  it("skips silently (no alert) when the reviewed head no longer exists (superseded/deleted)", async () => {
+    // GOL-781: a synchronize/force-push or deleted branch leaves a stale row head →
+    // GitHub 422 "No commit found for SHA". Nothing to gate → benign, no 🔥 alarm.
+    const db = makeStoreDb();
+    await seedRows(db);
+    const createCheckRun = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status: 422, error: "No commit found for SHA: deadbeef" });
+    const ping = vi.fn().mockResolvedValue(undefined);
+    const getPull = mergedPull();
+    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping, getPull);
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    expect(createCheckRun).toHaveBeenCalledTimes(1);
+    expect(getPull).not.toHaveBeenCalled(); // missing-commit is classified before the getPull fallback
+    expect(ping).not.toHaveBeenCalled(); // benign, no false alarm
+  });
+
+  it("mutes the failure alert when a non-missing-commit post fails but the PR is merged/closed", async () => {
+    const db = makeStoreDb();
+    await seedRows(db);
+    const createCheckRun = vi.fn().mockResolvedValue({ ok: false, status: 500, error: "HTTP 500" });
+    const ping = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping, mergedPull());
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    expect(createCheckRun).toHaveBeenCalledTimes(1);
+    expect(ping).not.toHaveBeenCalled(); // PR no longer open → moot → no alert
   });
 
   it("still posts normally on an OPEN PR (getPull pre-check does not block the happy path)", async () => {
@@ -324,15 +344,41 @@ describe("handleReviewSignoff — two bridges sharing one paperclipProjectId", (
     const deps = makeCollidedDeps(db, { "pi-ada": "done" }, wrong, resolver);
     await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
 
-    // The collided bridge's client is never consulted — not even for the GOL-781
-    // merged-PR pre-check, which would read the WRONG repo's PR #46.
+    // The collided bridge's client is never consulted. Under GOL-798 we always
+    // attempt the post (no pre-merge getPull short-circuit), so on success no
+    // getPull happens at all — the failure path's closed-PR probe would use the
+    // resolved client, which the "muted failure still resolves the right repo"
+    // case below pins down.
     expect(wrong.createCheckRun).not.toHaveBeenCalled();
     expect(wrong.getPull).not.toHaveBeenCalled();
-    expect(right.getPull).toHaveBeenCalledWith("grove-odoo-modules", 46);
+    expect(right.getPull).not.toHaveBeenCalled();
     expect(right.createCheckRun).toHaveBeenCalledTimes(1);
     const [repo, input] = right.createCheckRun.mock.calls[0];
     expect(repo).toBe("grove-odoo-modules");
     expect(input).toMatchObject({ name: "agent-review/ada", headSha: GROVE_SHA, conclusion: "success" });
+  });
+
+  it("muted failure still resolves the right repo: the closed-PR probe uses the ROW's client, not the collided one", async () => {
+    const db = makeStoreDb();
+    await seedGroveRow(db);
+    const wrong = { createCheckRun: okCheck(), getPull: openPull() };
+    const right = {
+      createCheckRun: vi.fn().mockResolvedValue({ ok: false, status: 500, error: "HTTP 500" }),
+      getPull: mergedPull(),
+    };
+    const ping = vi.fn().mockResolvedValue(undefined);
+    const resolver: SyncDeps["resolveRepoClient"] = (slug) =>
+      slug.toLowerCase() === GROVE_SLUG.toLowerCase()
+        ? { github: right as unknown as GitHubClient, repo: "grove-odoo-modules" }
+        : null;
+    const deps = makeCollidedDeps(db, { "pi-ada": "done" }, wrong, resolver, ping);
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    // Failure path probes PR state on the RESOLVED client/repo (a collided-config
+    // probe would read the WRONG repo's #46 and mis-classify), sees merged → mutes.
+    expect(wrong.getPull).not.toHaveBeenCalled();
+    expect(right.getPull).toHaveBeenCalledWith("grove-odoo-modules", 46);
+    expect(ping).not.toHaveBeenCalled();
   });
 
   it("resolver miss (row repo no longer bridged) → 🔥-pings and posts nothing to a guessed repo", async () => {
