@@ -114,7 +114,17 @@ jobs:
              # config changed. The connector dials out, so this never interrupts
              # inbound traffic.
              docker compose up -d cloudflared
-             docker compose ps vault-server paperclip-server cloudflared'
+             # gh-token-broker bind-mounts scripts/agent-git:/app:ro and runs a
+             # long-lived `node github-app-token.mjs serve`. A `git pull` updates
+             # the file on disk, but the running process already loaded the old
+             # script — a bare `up -d` sees no compose-config change and will NOT
+             # restart it, so shipped broker-script fixes (e.g. the GOL-799
+             # expires_at record) never take effect. Force-recreate so the broker
+             # re-reads the mount and restarts with the freshly-pulled code. The
+             # broker holds no in-memory state that must survive (its token cache
+             # is a disk file), so recreation is safe.
+             docker compose up -d --force-recreate gh-token-broker
+             docker compose ps vault-server paperclip-server cloudflared gh-token-broker'
 
       # GOL-313: seed the obs-droplet ingest config into the Droplet-only .env so the
       # conditional reconcile step below can bring the otel-collector up. /opt/agenticos/.env
