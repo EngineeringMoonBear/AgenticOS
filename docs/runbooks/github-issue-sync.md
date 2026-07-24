@@ -189,7 +189,6 @@ at it (tracked as the GOL-781 least-privilege follow-up).
 
 ### 4. Inbound leg = the plugin's public webhook (NO routine)
 There is **no routine**. A routine run always dispatches an agent (`Default agent
-There is **no routine**. A routine run always dispatches an agent (`Default agent
 required`) — it can't just create a mirror issue, and on the Odoocker bridge it
 would double-trigger the QA webhook. Instead the plugin declares a public,
 board-auth-free webhook endpoint that creates the mirror issue directly:
