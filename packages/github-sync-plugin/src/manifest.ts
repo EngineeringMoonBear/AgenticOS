@@ -61,7 +61,15 @@ const manifest: PaperclipPluginManifestV1 = {
   //   now prunes stale keys opportunistically after refreshing the current key, so the
   //   Map is bounded by the count of distinct alert keys seen within one window. Bugfix
   //   only — manifest surface unchanged bar version.
-  version: "0.11.2",
+  // 0.11.3 = post-merge sign-off no longer false-alarms (GOL-781). handleReviewSignoff
+  //   posted a green `agent-review/*` check-run on the reviewed head SHA even after the
+  //   PR merged; GitHub's Checks API rejects a completion on a merged/superseded head
+  //   ("No commit found for SHA"), firing a false `🔥 sign-off check-run failed` alert on
+  //   every post-merge sign-off (grove-odoo-modules#44/47/48). postSignoffCheck now
+  //   short-circuits merged/closed PRs before the doomed post and re-derives PR state on
+  //   failure to mute the alert when the PR is no longer an open merge gate. Bugfix only —
+  //   manifest surface unchanged bar version.
+  version: "0.11.3",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",

@@ -125,10 +125,11 @@ function makeDeps(
   statuses: Record<string, Issue["status"]>,
   createCheckRun: ReturnType<typeof vi.fn>,
   postOpsPing?: ReturnType<typeof vi.fn>,
+  getPull?: ReturnType<typeof vi.fn>,
 ): SyncDeps {
   return {
     db,
-    github: { createCheckRun } as unknown as GitHubClient,
+    github: { createCheckRun, getPull: getPull ?? openPull() } as unknown as GitHubClient,
     config: CONFIG,
     logger: silentLogger,
     getIssue: issueGetter(statuses),
@@ -137,6 +138,12 @@ function makeDeps(
 }
 
 const okCheck = () => vi.fn().mockResolvedValue({ ok: true, data: { id: 1 } });
+/** getPull stub: PR still open (the check genuinely gates it). */
+const openPull = () =>
+  vi.fn().mockResolvedValue({ ok: true, data: { state: "open", merged: false, number: PR } });
+/** getPull stub: PR merged (sign-off is moot — no gate). */
+const mergedPull = () =>
+  vi.fn().mockResolvedValue({ ok: true, data: { state: "closed", merged: true, number: PR } });
 
 describe("handleReviewSignoff", () => {
   it("ignores an issue with no review record (a mirror issue)", async () => {
@@ -204,16 +211,59 @@ describe("handleReviewSignoff", () => {
     expect(createCheckRun.mock.calls[0][1]).toMatchObject({ name: "agent-review/iris", conclusion: "success" });
   });
 
-  it("pings a pipeline error and does not throw when the check-run API fails", async () => {
+  it("pings a pipeline error and does not throw when the check-run API fails on an OPEN PR", async () => {
     const db = makeStoreDb();
     await seedRows(db);
     const createCheckRun = vi.fn().mockResolvedValue({ ok: false, error: "HTTP 403" });
     const ping = vi.fn().mockResolvedValue(undefined);
-    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping);
+    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping, openPull());
     await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
 
     expect(createCheckRun).toHaveBeenCalledTimes(1);
     expect(ping).toHaveBeenCalledWith(expect.stringContaining("pipeline error"));
     expect(ping).toHaveBeenCalledWith(expect.stringContaining("HTTP 403"));
+  });
+
+  // --- GOL-781: post-merge sign-off must not false-alarm ------------------------
+
+  it("skips the check-run (no post, no alert) when the PR is already merged", async () => {
+    const db = makeStoreDb();
+    await seedRows(db);
+    const createCheckRun = okCheck();
+    const ping = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping, mergedPull());
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    expect(createCheckRun).not.toHaveBeenCalled(); // doomed "No commit found" post avoided
+    expect(ping).not.toHaveBeenCalled(); // no 🔥 false alarm
+  });
+
+  it("mutes the failure alert when the check-run fails but the PR merged mid-sign-off", async () => {
+    const db = makeStoreDb();
+    await seedRows(db);
+    const createCheckRun = vi.fn().mockResolvedValue({ ok: false, error: "No commit found for SHA: deadbeef" });
+    const ping = vi.fn().mockResolvedValue(undefined);
+    // Open at the pre-check, merged by the time we re-derive state on failure.
+    const getPull = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, data: { state: "open", merged: false, number: PR } })
+      .mockResolvedValueOnce({ ok: true, data: { state: "closed", merged: true, number: PR } });
+    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping, getPull);
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    expect(createCheckRun).toHaveBeenCalledTimes(1);
+    expect(ping).not.toHaveBeenCalled(); // merged → benign, no alert
+  });
+
+  it("still posts normally on an OPEN PR (getPull pre-check does not block the happy path)", async () => {
+    const db = makeStoreDb();
+    await seedRows(db);
+    const createCheckRun = okCheck();
+    const ping = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping, openPull());
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    expect(createCheckRun).toHaveBeenCalledTimes(1);
+    expect(ping).toHaveBeenCalledWith(expect.stringContaining("agent-review/ada"));
   });
 });

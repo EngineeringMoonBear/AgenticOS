@@ -11480,6 +11480,11 @@ async function isIssueDone(deps, row, companyId) {
 }
 async function postSignoffCheck(deps, row, reviewer) {
   const { github, config, logger } = deps;
+  const pre = await github.getPull(config.githubRepo, row.prNumber);
+  if (pre.ok && isClosedPull(pre.data)) {
+    logSkippedForClosedPr(deps, row, reviewer, pre.data);
+    return;
+  }
   const res = await github.createCheckRun(config.githubRepo, {
     name: CHECK_CONTEXT[reviewer],
     headSha: row.headSha,
@@ -11488,6 +11493,11 @@ async function postSignoffCheck(deps, row, reviewer) {
     summary: `${reviewer} signed off ${row.githubRepo}#${row.prNumber} @ \`${shortSha(row.headSha)}\` (GOL-186).`
   });
   if (!res.ok) {
+    const post = await github.getPull(config.githubRepo, row.prNumber);
+    if (post.ok && isClosedPull(post.data)) {
+      logSkippedForClosedPr(deps, row, reviewer, post.data);
+      return;
+    }
     logger.error("signoff: check-run completion failed", {
       repo: row.githubRepo,
       prNumber: row.prNumber,
@@ -11511,6 +11521,19 @@ async function postSignoffCheck(deps, row, reviewer) {
   });
   await deps.postOpsPing?.(buildSignoffPing(reviewer, row.githubRepo, row.prNumber));
 }
+function isClosedPull(pull) {
+  return pull.merged || pull.state === "closed";
+}
+function logSkippedForClosedPr(deps, row, reviewer, pull) {
+  deps.logger.info("signoff: PR already merged/closed; skipping check-run (nothing to gate)", {
+    repo: row.githubRepo,
+    prNumber: row.prNumber,
+    reviewer,
+    headSha: row.headSha,
+    state: pull.state,
+    merged: pull.merged
+  });
+}
 
 // src/error-log.ts
 var ERROR_TABLE = "github_sync_error";
@@ -11532,6 +11555,42 @@ async function recordError(db, row) {
       row.context && Object.keys(row.context).length > 0 ? JSON.stringify(row.context) : null
     ]
   );
+}
+var OpsPingThrottle = class {
+  windowMs;
+  windows = /* @__PURE__ */ new Map();
+  constructor(windowMs = 5 * 6e4) {
+    this.windowMs = windowMs;
+  }
+  /**
+   * Decide whether the alert identified by `key` should be emitted at `now` (ms).
+   * Pass a stable key — the ping content itself is a good choice, so only byte-for-byte
+   * identical alerts collapse and a different error still pages immediately.
+   */
+  decide(key, now) {
+    const w = this.windows.get(key);
+    let decision;
+    if (!w || now - w.openedAt >= this.windowMs) {
+      const suppressed = w ? w.suppressed : 0;
+      this.windows.set(key, { openedAt: now, lastAt: now, suppressed: 0 });
+      decision = { emit: true, suppressed };
+    } else {
+      w.lastAt = now;
+      w.suppressed += 1;
+      decision = { emit: false, suppressed: w.suppressed };
+    }
+    this.prune(now);
+    return decision;
+  }
+  /** Drop windows with no hit for a full window, so the Map can't grow unbounded. */
+  prune(now) {
+    for (const [key, w] of this.windows) {
+      if (now - w.lastAt >= this.windowMs) this.windows.delete(key);
+    }
+  }
+};
+function withSuppressionNote(content, suppressed) {
+  return suppressed > 0 ? `${content} (+${suppressed} identical alert${suppressed === 1 ? "" : "s"} suppressed)` : content;
 }
 
 // src/ci-failure.ts
@@ -11927,6 +11986,12 @@ function restFallbackClient(ctx, cfg) {
 function restFallbackDeps(ctx, cfg) {
   return { logger: ctx.logger, rest: restFallbackClient(ctx, cfg) };
 }
+var opsAlertThrottle = new OpsPingThrottle();
+async function postThrottledOpsAlert(ctx, cfg, content) {
+  const decision = opsAlertThrottle.decide(content, Date.now());
+  if (!decision.emit) return;
+  await postOpsPing(ctx, cfg.opsWebhookUrl, withSuppressionNote(content, decision.suppressed));
+}
 async function postOpsPing(ctx, webhookUrl, content) {
   if (!webhookUrl) return;
   try {
@@ -11960,7 +12025,23 @@ async function recordSwallowedFailure(ctx, cfg, scope, err, context = {}) {
       error: writeErr instanceof Error ? writeErr.message : String(writeErr)
     });
   }
-  await postOpsPing(ctx, cfg.opsWebhookUrl, buildSwallowedFailurePing(scope, detail));
+  await postThrottledOpsAlert(ctx, cfg, buildSwallowedFailurePing(scope, detail));
+}
+async function recordPipelineError(ctx, cfg, scope, detail, context = {}) {
+  ctx.logger.warn(scope, { ...context, detail });
+  try {
+    await recordError(ctx.db, {
+      occurredAt: (/* @__PURE__ */ new Date()).toISOString(),
+      scope,
+      detail,
+      context
+    });
+  } catch (writeErr) {
+    ctx.logger.warn("failed to persist pipeline error to github_sync_error", {
+      error: writeErr instanceof Error ? writeErr.message : String(writeErr)
+    });
+  }
+  await postThrottledOpsAlert(ctx, cfg, buildPipelineErrorPing(detail));
 }
 function makeDispatch(ctx, cfg, depsByProject, handle, eventName) {
   return async (event) => {
@@ -12213,8 +12294,10 @@ async function handlePrInbound(ctx, cfg, input) {
     return;
   }
   if (!verifyGithubSignature(input.rawBody, cfg.appWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
-    ctx.logger.warn("pr webhook: signature verification failed");
-    await postOpsPing(ctx, cfg.opsWebhookUrl, buildPipelineErrorPing("HMAC verification failed on a github-pr delivery"));
+    await recordPipelineError(ctx, cfg, "pr webhook: signature verification failed", "HMAC verification failed on a github-pr delivery", {
+      endpointKey: PR_WEBHOOK_ENDPOINT_KEY,
+      delivery: getHeader(input.headers, "x-github-delivery")
+    });
     return;
   }
   const eventType = getHeader(input.headers, "x-github-event");
@@ -12413,8 +12496,10 @@ async function handleCiCompletion(ctx, cfg, input, eventType) {
     return;
   }
   if (!verifyGithubSignature(input.rawBody, cfg.appWebhookSecret, getHeader(input.headers, "x-hub-signature-256"))) {
-    ctx.logger.warn("ci webhook: signature verification failed");
-    await postOpsPing(ctx, cfg.opsWebhookUrl, buildPipelineErrorPing(`HMAC verification failed on a ${eventType} delivery`));
+    await recordPipelineError(ctx, cfg, "ci webhook: signature verification failed", `HMAC verification failed on a ${eventType} delivery`, {
+      eventType,
+      delivery: getHeader(input.headers, "x-github-delivery")
+    });
     return;
   }
   const ev = parseCiCompletionEvent(input.parsedBody ?? safeJson(input.rawBody), eventType);
@@ -12457,15 +12542,12 @@ async function handleCiCompletion(ctx, cfg, input, eventType) {
     try {
       await processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope);
     } catch (err) {
-      ctx.logger.error("ci webhook: PR processing failed", {
-        repo: ev.repo,
-        prNumber,
-        error: err instanceof Error ? err.message : String(err)
-      });
-      await postOpsPing(
+      await recordPipelineError(
         ctx,
-        cfg.opsWebhookUrl,
-        buildPipelineErrorPing(`CI-fix handling failed for ${ev.repo}#${prNumber}`)
+        cfg,
+        "ci webhook: PR processing failed",
+        `CI-fix handling failed for ${ev.repo}#${prNumber}`,
+        { repo: ev.repo, prNumber, error: err instanceof Error ? err.message : String(err) }
       );
     }
   }
@@ -12473,16 +12555,12 @@ async function handleCiCompletion(ctx, cfg, input, eventType) {
 async function processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope) {
   const checksRes = await github.listCommitCheckRuns(bridge.githubRepo, ev.headSha);
   if (!checksRes.ok) {
-    ctx.logger.error("ci webhook: failed to list check-runs", {
-      repo: ev.repo,
-      prNumber,
-      headSha: ev.headSha,
-      error: checksRes.error
-    });
-    await postOpsPing(
+    await recordPipelineError(
       ctx,
-      cfg.opsWebhookUrl,
-      buildPipelineErrorPing(`could not list check-runs for ${ev.repo}@${ev.headSha}: ${checksRes.error}`)
+      cfg,
+      "ci webhook: failed to list check-runs",
+      `could not list check-runs for ${ev.repo}@${ev.headSha}: ${checksRes.error}`,
+      { repo: ev.repo, prNumber, headSha: ev.headSha, error: checksRes.error }
     );
     return;
   }
