@@ -10754,7 +10754,17 @@ var GitHubClient = class {
       });
       const json = await res.json();
       if (!res.ok) {
-        return { ok: false, error: json.message ?? `HTTP ${res.status}` };
+        const errors = Array.isArray(json.errors) ? json.errors : void 0;
+        const detail = errors?.length ? errors.map(
+          (e) => [e.resource, e.field, e.code, e.message].filter(Boolean).join(".")
+        ).join("; ") : void 0;
+        const base = json.message ?? `HTTP ${res.status}`;
+        return {
+          ok: false,
+          status: res.status,
+          error: detail ? `${base} (${detail})` : base,
+          ...errors ? { errors } : {}
+        };
       }
       return { ok: true, data: json };
     } catch (err) {
@@ -11207,17 +11217,47 @@ async function handleIssueUpdated(deps, input) {
     logger.warn("issue.updated: issue not readable; skipping", { issueId: input.issueId });
     return;
   }
-  const updated = await github.updateIssue(mapping.githubRepo, mapping.githubIssueNumber, {
+  const fullPatch = {
     title: issue.title,
     body: buildGithubBody(issue),
     state: statusToGithubState(issue.status)
-  });
+  };
+  let updated = await github.updateIssue(
+    mapping.githubRepo,
+    mapping.githubIssueNumber,
+    fullPatch
+  );
+  if (!updated.ok && updated.status === 422 && updated.errors?.some((e) => e.field)) {
+    const rejected = new Set(
+      updated.errors.map((e) => e.field).filter((f) => Boolean(f))
+    );
+    const sanitized = {};
+    if (!rejected.has("title")) sanitized.title = fullPatch.title;
+    if (!rejected.has("body")) sanitized.body = fullPatch.body;
+    if (!rejected.has("state")) sanitized.state = fullPatch.state;
+    if (Object.keys(sanitized).length > 0) {
+      logger.warn("issue.updated: GitHub rejected field(s); retrying sanitized payload", {
+        issueId: issue.id,
+        githubRepo: mapping.githubRepo,
+        githubIssueNumber: mapping.githubIssueNumber,
+        rejectedFields: [...rejected],
+        githubErrors: updated.errors
+      });
+      updated = await github.updateIssue(
+        mapping.githubRepo,
+        mapping.githubIssueNumber,
+        sanitized
+      );
+    }
+  }
   if (!updated.ok) {
     logger.error("issue.updated: failed to update GitHub issue", {
       issueId: issue.id,
       githubRepo: mapping.githubRepo,
       githubIssueNumber: mapping.githubIssueNumber,
-      error: updated.error
+      error: updated.error,
+      githubStatus: updated.status,
+      githubErrors: updated.errors
     });
     return;
   }
