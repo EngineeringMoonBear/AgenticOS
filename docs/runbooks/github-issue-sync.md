@@ -159,7 +159,36 @@ curl -sS -X POST "$BASE/api/plugins/$gs_id/enable"  -H "Authorization: Bearer $B
 ```
 (Confirm the Goldberry repo name; `odoocker-goldberrygrove` is the example.)
 
+### 3a. Scope-expiry REST fallback bearer — MUST be the board key (GOL-323 / GOL-781)
+The inbound scope-expiry REST fallback (`paperclip-rest.ts`, GOL-323) retries a
+dropped `ctx.issues.*` write against the public Paperclip REST API authenticated
+with `paperclipApiToken`. That token's actor is subject to Paperclip's
+**per-actor authorization boundary**: a PATCH/create/comment on an issue outside
+the actor's boundary returns `403 "Issue is outside this actor's authorization
+boundary"` and the inbound write is **lost**.
+
+Because synced issues are continuously **reassigned to discipline owners** across
+all four bridges, no narrow/per-project actor can cover them. Empirically
+(GOL-781) both the old `github_sync_rest_bearer` and `paperclip_bridge_key`
+service tokens **403** on reassigned issues; only the **company-scoped board key**
+(`op://Goldberry Grove - Admin/AgenticOS Infra/paperclip_board_key`) returns
+`200`. So:
+
+> **`paperclipApiToken` MUST be set to the board key** (`paperclip_board_key`),
+> the same credential §3 uses for the config POST. Do **not** point it at a
+> per-agent or per-project token — the fallback will silently 403 (~195
+> lost inbound writes/day, GOL-781).
+
+Set it in the §3 config POST, e.g. add `paperclipApiToken:$BK` to the `configJson`
+(where `BK` is the board key already loaded). Least-privilege note: the board key
+carries plugin/agent admin beyond issue writes; it lives in the plugin config
+store (non-`secret-ref`, plaintext — same as every other secret here) within the
+paperclip-server trust boundary. If Paperclip later ships a scoped
+company-wide-issue-write service token, mint one and repoint `paperclipApiToken`
+at it (tracked as the GOL-781 least-privilege follow-up).
+
 ### 4. Inbound leg = the plugin's public webhook (NO routine)
+There is **no routine**. A routine run always dispatches an agent (`Default agent
 There is **no routine**. A routine run always dispatches an agent (`Default agent
 required`) — it can't just create a mirror issue, and on the Odoocker bridge it
 would double-trigger the QA webhook. Instead the plugin declares a public,
