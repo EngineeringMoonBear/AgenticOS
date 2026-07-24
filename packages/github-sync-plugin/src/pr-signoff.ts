@@ -103,9 +103,26 @@ async function isIssueDone(deps: SyncDeps, row: PrReviewRow, companyId: string):
  * builds `/repos/<org>/<repo>/...` — while the row's `githubRepo` (owner/repo) is
  * used only for human-facing display. On success we ✅-ping; on API failure we log
  * and 🔥-ping so a stuck-pending required check is never silent.
+ *
+ * A sign-off check-run only gates an OPEN PR. Once a PR is merged/closed its branch
+ * head has advanced or dangled, so GitHub's Checks API rejects a completion on the
+ * reviewed head with "No commit found for SHA" (GOL-781) — a benign, expected
+ * failure that used to fire a false `🔥 sign-off check-run failed` alert on every
+ * post-merge sign-off (verified on grove-odoo-modules#44/47/48, all merged). We
+ * therefore short-circuit merged/closed PRs BEFORE the doomed post, and — for the
+ * rare merge that lands mid-sign-off — re-derive PR state on failure and suppress
+ * the alert when the PR is no longer open. A `getPull` hiccup (network/permission)
+ * never suppresses a real alert: we only skip/mute on a definitive merged/closed.
  */
 async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Reviewer): Promise<void> {
   const { github, config, logger } = deps;
+
+  const pre = await github.getPull(config.githubRepo, row.prNumber);
+  if (pre.ok && isClosedPull(pre.data)) {
+    logSkippedForClosedPr(deps, row, reviewer, pre.data);
+    return;
+  }
+
   const res = await github.createCheckRun(config.githubRepo, {
     name: CHECK_CONTEXT[reviewer],
     headSha: row.headSha,
@@ -114,6 +131,13 @@ async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Revi
     summary: `${reviewer} signed off ${row.githubRepo}#${row.prNumber} @ \`${shortSha(row.headSha)}\` (GOL-186).`,
   });
   if (!res.ok) {
+    // A merge that landed between the pre-check and the post makes the failure
+    // benign — re-derive state and mute the alert if the PR is no longer open.
+    const post = await github.getPull(config.githubRepo, row.prNumber);
+    if (post.ok && isClosedPull(post.data)) {
+      logSkippedForClosedPr(deps, row, reviewer, post.data);
+      return;
+    }
     logger.error("signoff: check-run completion failed", {
       repo: row.githubRepo,
       prNumber: row.prNumber,
@@ -136,4 +160,25 @@ async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Revi
     checkRunId: res.data.id,
   });
   await deps.postOpsPing?.(buildSignoffPing(reviewer, row.githubRepo, row.prNumber));
+}
+
+/** A PR whose head is no longer a live merge gate — merged, or otherwise closed. */
+function isClosedPull(pull: { state: "open" | "closed"; merged: boolean }): boolean {
+  return pull.merged || pull.state === "closed";
+}
+
+function logSkippedForClosedPr(
+  deps: SyncDeps,
+  row: PrReviewRow,
+  reviewer: Reviewer,
+  pull: { state: "open" | "closed"; merged: boolean },
+): void {
+  deps.logger.info("signoff: PR already merged/closed; skipping check-run (nothing to gate)", {
+    repo: row.githubRepo,
+    prNumber: row.prNumber,
+    reviewer,
+    headSha: row.headSha,
+    state: pull.state,
+    merged: pull.merged,
+  });
 }
