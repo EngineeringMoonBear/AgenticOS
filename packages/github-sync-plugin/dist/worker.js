@@ -11523,8 +11523,25 @@ async function isIssueDone(deps, row, companyId) {
   return issue?.status === "done";
 }
 async function postSignoffCheck(deps, row, reviewer) {
-  const { github, config, logger } = deps;
-  const res = await github.createCheckRun(config.githubRepo, {
+  const { logger } = deps;
+  const resolved = deps.resolveRepoClient?.(row.githubRepo) ?? null;
+  if (deps.resolveRepoClient && !resolved) {
+    logger.error("signoff: no bridge for the review row's repo \u2014 check-run not posted", {
+      repo: row.githubRepo,
+      prNumber: row.prNumber,
+      reviewer,
+      headSha: row.headSha
+    });
+    await deps.postOpsPing?.(
+      buildPipelineErrorPing(
+        `sign-off check-run skipped for ${row.githubRepo}#${row.prNumber} (${reviewer}): repo is not bridged`
+      )
+    );
+    return;
+  }
+  const github = resolved ? resolved.github : deps.github;
+  const repo = resolved ? resolved.repo : bareRepoName2(row.githubRepo);
+  const res = await github.createCheckRun(repo, {
     name: CHECK_CONTEXT[reviewer],
     headSha: row.headSha,
     conclusion: "success",
@@ -11546,7 +11563,7 @@ async function postSignoffCheck(deps, row, reviewer) {
     logSkipped(deps, row, reviewer, "reviewed head no longer exists (superseded/deleted)", res.error);
     return;
   }
-  const state = await github.getPull(config.githubRepo, row.prNumber);
+  const state = await github.getPull(repo, row.prNumber);
   if (state.ok && isClosedPull(state.data)) {
     logSkipped(deps, row, reviewer, state.data.merged ? "PR merged" : "PR closed", res.error);
     return;
@@ -11563,6 +11580,10 @@ async function postSignoffCheck(deps, row, reviewer) {
       `sign-off check-run failed for ${row.githubRepo}#${row.prNumber} (${reviewer}): ${res.error}`
     )
   );
+}
+function bareRepoName2(slug) {
+  const idx = slug.lastIndexOf("/");
+  return idx === -1 ? slug : slug.slice(idx + 1);
 }
 function isClosedPull(pull) {
   return pull.merged || pull.state === "closed";
@@ -12783,6 +12804,9 @@ var plugin = definePlugin({
     }
     const brokerUrl = cfg.tokenBrokerUrl || process.env.GH_TOKEN_BROKER_URL || "";
     const depsByProject = /* @__PURE__ */ new Map();
+    const clientsBySlug = /* @__PURE__ */ new Map();
+    const bridgeSlugsByProject = /* @__PURE__ */ new Map();
+    const resolveRepoClient = (repoSlug) => clientsBySlug.get(repoSlug.toLowerCase()) ?? null;
     for (const bridge of cfg.bridges) {
       let getToken;
       if (brokerUrl) {
@@ -12796,6 +12820,12 @@ var plugin = definePlugin({
         continue;
       }
       const github = new GitHubClient({ org: bridge.githubOrg, getToken });
+      const slug = `${bridge.githubOrg}/${bridge.githubRepo}`;
+      clientsBySlug.set(slug.toLowerCase(), { github, repo: bridge.githubRepo });
+      bridgeSlugsByProject.set(bridge.paperclipProjectId, [
+        ...bridgeSlugsByProject.get(bridge.paperclipProjectId) ?? [],
+        slug
+      ]);
       depsByProject.set(bridge.paperclipProjectId, {
         db: ctx.db,
         github,
@@ -12811,7 +12841,8 @@ var plugin = definePlugin({
           () => ctx.issues.get(issueId, companyId),
           async (rest) => await rest.getIssue(issueId)
         ),
-        postOpsPing: (content) => postOpsPing(ctx, cfg.opsWebhookUrl, content)
+        postOpsPing: (content) => postOpsPing(ctx, cfg.opsWebhookUrl, content),
+        resolveRepoClient
       });
       ctx.logger.info("bridge active", {
         repo: `${bridge.githubOrg}/${bridge.githubRepo}`,
@@ -12822,6 +12853,14 @@ var plugin = definePlugin({
     if (depsByProject.size === 0) {
       ctx.logger.warn("no usable bridges (all missing auth) \u2014 GitHub Sync is INACTIVE.");
       return;
+    }
+    for (const [projectId, slugs] of bridgeSlugsByProject) {
+      if (slugs.length > 1) {
+        ctx.logger.warn(
+          "multiple bridges share one paperclipProjectId \u2014 issue-event dispatch uses only the LAST bridge's config",
+          { projectId, bridges: slugs }
+        );
+      }
     }
     ctx.events.on("issue.created", makeDispatch(ctx, cfg, depsByProject, handleIssueCreated, "issue.created"));
     ctx.events.on("issue.updated", makeDispatch(ctx, cfg, depsByProject, handleIssueUpdated, "issue.updated"));
