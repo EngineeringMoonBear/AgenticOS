@@ -104,24 +104,30 @@ async function isIssueDone(deps: SyncDeps, row: PrReviewRow, companyId: string):
  * used only for human-facing display. On success we ✅-ping; on API failure we log
  * and 🔥-ping so a stuck-pending required check is never silent.
  *
- * A sign-off check-run only gates an OPEN PR. Once a PR is merged/closed its branch
- * head has advanced or dangled, so GitHub's Checks API rejects a completion on the
- * reviewed head with "No commit found for SHA" (GOL-781) — a benign, expected
- * failure that used to fire a false `🔥 sign-off check-run failed` alert on every
- * post-merge sign-off (verified on grove-odoo-modules#44/47/48, all merged). We
- * therefore short-circuit merged/closed PRs BEFORE the doomed post, and — for the
- * rare merge that lands mid-sign-off — re-derive PR state on failure and suppress
- * the alert when the PR is no longer open. A `getPull` hiccup (network/permission)
- * never suppresses a real alert: we only skip/mute on a definitive merged/closed.
+ * We ALWAYS attempt the post — even when the PR is already merged/closed (GOL-798).
+ * The gate frequently greens AFTER the PR merges: the coupled ada+iris gate only
+ * completes once BOTH review issues are `done`, and an agent reviewer that has
+ * bumped its issue to `in_progress` can only reach `done` via `in_progress → done`
+ * (the API rejects `→ in_review` for agent reviewers). That transition still fires
+ * handleReviewSignoff, but a PR whose merge raced ahead of the last sign-off would,
+ * under the old pre-merge short-circuit, have its check stranded `in_progress`
+ * FOREVER (verified on grove-sites#200/#211/#214 — heads still live, checks stuck).
+ * Under the Phase 3 required-check gate that stranded-pending state blocks the merge
+ * button on every subsequent PR, so we must drive the check to a terminal state.
+ *
+ * GitHub happily records a completed check-run on a merged PR's head as long as that
+ * commit still exists — so posting greens the strand. The one genuinely-doomed post
+ * is a head that no longer exists (a synchronize/force-push superseded it, or the
+ * branch was deleted): GitHub answers `422 "No commit found for SHA"` (GOL-781).
+ * That row is stale — there is nothing left to gate — so we classify it as benign
+ * and suppress the alert (this is the false `🔥 sign-off check-run failed` alarm
+ * GOL-781 first squashed, on grove-odoo-modules#44/47/48). Any other failure on a
+ * still-open PR is a real stuck-pending gate → 🔥. A `getPull` hiccup
+ * (network/permission) never suppresses a real alert: we only mute on a definitive
+ * merged/closed, or on the unambiguous missing-commit signature.
  */
 async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Reviewer): Promise<void> {
   const { github, config, logger } = deps;
-
-  const pre = await github.getPull(config.githubRepo, row.prNumber);
-  if (pre.ok && isClosedPull(pre.data)) {
-    logSkippedForClosedPr(deps, row, reviewer, pre.data);
-    return;
-  }
 
   const res = await github.createCheckRun(config.githubRepo, {
     name: CHECK_CONTEXT[reviewer],
@@ -130,36 +136,43 @@ async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Revi
     title: `Agent review complete (${reviewer})`,
     summary: `${reviewer} signed off ${row.githubRepo}#${row.prNumber} @ \`${shortSha(row.headSha)}\` (GOL-186).`,
   });
-  if (!res.ok) {
-    // A merge that landed between the pre-check and the post makes the failure
-    // benign — re-derive state and mute the alert if the PR is no longer open.
-    const post = await github.getPull(config.githubRepo, row.prNumber);
-    if (post.ok && isClosedPull(post.data)) {
-      logSkippedForClosedPr(deps, row, reviewer, post.data);
-      return;
-    }
-    logger.error("signoff: check-run completion failed", {
+  if (res.ok) {
+    logger.info("signoff: posted green check-run", {
       repo: row.githubRepo,
       prNumber: row.prNumber,
       reviewer,
       headSha: row.headSha,
-      error: res.error,
+      checkRunId: res.data.id,
     });
-    await deps.postOpsPing?.(
-      buildPipelineErrorPing(
-        `sign-off check-run failed for ${row.githubRepo}#${row.prNumber} (${reviewer}): ${res.error}`,
-      ),
-    );
+    await deps.postOpsPing?.(buildSignoffPing(reviewer, row.githubRepo, row.prNumber));
     return;
   }
-  logger.info("signoff: posted green check-run", {
+
+  // The reviewed head no longer exists (superseded/force-pushed/deleted branch) →
+  // GitHub 422 "No commit found for SHA". The row is stale; nothing to gate. Benign.
+  if (isMissingCommitError(res)) {
+    logSkipped(deps, row, reviewer, "reviewed head no longer exists (superseded/deleted)", res.error);
+    return;
+  }
+  // Any other failure: if the PR is no longer open it is not a live merge gate, so
+  // the stuck check is moot — mute. Otherwise it is a genuinely stuck required gate.
+  const state = await github.getPull(config.githubRepo, row.prNumber);
+  if (state.ok && isClosedPull(state.data)) {
+    logSkipped(deps, row, reviewer, state.data.merged ? "PR merged" : "PR closed", res.error);
+    return;
+  }
+  logger.error("signoff: check-run completion failed", {
     repo: row.githubRepo,
     prNumber: row.prNumber,
     reviewer,
     headSha: row.headSha,
-    checkRunId: res.data.id,
+    error: res.error,
   });
-  await deps.postOpsPing?.(buildSignoffPing(reviewer, row.githubRepo, row.prNumber));
+  await deps.postOpsPing?.(
+    buildPipelineErrorPing(
+      `sign-off check-run failed for ${row.githubRepo}#${row.prNumber} (${reviewer}): ${res.error}`,
+    ),
+  );
 }
 
 /** A PR whose head is no longer a live merge gate — merged, or otherwise closed. */
@@ -167,18 +180,29 @@ function isClosedPull(pull: { state: "open" | "closed"; merged: boolean }): bool
   return pull.merged || pull.state === "closed";
 }
 
-function logSkippedForClosedPr(
+/**
+ * GitHub's Checks API rejects a completion on a head SHA that no longer resolves in
+ * the repo with `422 "No commit found for SHA: <sha>"`. Match on the message (the
+ * distinctive, stable signature) so we classify it as benign whether or not the
+ * transport populated `status`.
+ */
+function isMissingCommitError(err: { error: string }): boolean {
+  return /no commit found for sha/i.test(err.error);
+}
+
+function logSkipped(
   deps: SyncDeps,
   row: PrReviewRow,
   reviewer: Reviewer,
-  pull: { state: "open" | "closed"; merged: boolean },
+  reason: string,
+  detail?: string,
 ): void {
-  deps.logger.info("signoff: PR already merged/closed; skipping check-run (nothing to gate)", {
+  deps.logger.info("signoff: skipping check-run completion (benign, nothing to gate)", {
     repo: row.githubRepo,
     prNumber: row.prNumber,
     reviewer,
     headSha: row.headSha,
-    state: pull.state,
-    merged: pull.merged,
+    reason,
+    detail,
   });
 }
