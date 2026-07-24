@@ -185,18 +185,58 @@ async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Revi
     logSkipped(deps, row, reviewer, state.data.merged ? "PR merged" : "PR closed", res.error);
     return;
   }
+  // A transient auth/transport failure (a broker-token 401 window, a 429/5xx, or a
+  // network blip) is NOT a stuck gate: handleReviewSignoff re-fires on the next
+  // issue.updated and the retry greens the check once the token/API recovers
+  // (GOL-802 — a ~12:45–12:50Z broker 401 window self-healed by 13:03Z, but every
+  // retry meanwhile fired a 🔥 ping, turning one blip into a 59-ping storm across 5
+  // open PRs). Log at warn WITH the status (which was being swallowed into an empty
+  // `error`) and skip the alert; a genuinely persistent outage still surfaces via
+  // the mirror path's 401s + broker health monitors, not this per-retry ping.
+  if (isTransientFailure(res)) {
+    logger.warn("signoff: check-run completion failed (transient; will retry)", {
+      repo: row.githubRepo,
+      prNumber: row.prNumber,
+      reviewer,
+      headSha: row.headSha,
+      status: res.status,
+      error: res.error,
+    });
+    return;
+  }
+  // Definitive failure on a live open PR — a real stuck required gate (e.g. 403
+  // checks:write revoked, or an unexpected 422). Surface the status + GitHub
+  // errors[] so it is triageable at a glance, and 🔥 so it is never silent.
   logger.error("signoff: check-run completion failed", {
     repo: row.githubRepo,
     prNumber: row.prNumber,
     reviewer,
     headSha: row.headSha,
+    status: res.status,
     error: res.error,
+    errors: res.errors,
   });
   await deps.postOpsPing?.(
     buildPipelineErrorPing(
-      `sign-off check-run failed for ${row.githubRepo}#${row.prNumber} (${reviewer}): ${res.error}`,
+      `sign-off check-run failed for ${row.githubRepo}#${row.prNumber} (${reviewer}): ` +
+        `HTTP ${res.status ?? "?"} ${res.error}`,
     ),
   );
+}
+
+/**
+ * A retryable failure that does NOT represent a stuck merge gate: a transient auth
+ * blip (401 — an expired / half-rotated broker token, GOL-802), a timeout (408),
+ * rate-limiting (429), a GitHub 5xx, or a transport-level error (no HTTP status —
+ * network/abort). The event-driven retry re-posts and greens the check once the
+ * condition clears, so we mute the 🔥 and let the loop self-heal. A 403 (permission
+ * genuinely revoked) is deliberately NOT transient — that is a real stuck gate that
+ * must alert.
+ */
+function isTransientFailure(res: { status?: number }): boolean {
+  const s = res.status;
+  if (s === undefined) return true; // transport-level (network / timeout / broker throw)
+  return s === 401 || s === 408 || s === 429 || s >= 500;
 }
 
 /** Bare repo name from a full `owner/repo` slug (tolerates a bare name too). */

@@ -10752,13 +10752,20 @@ var GitHubClient = class {
         },
         ...body !== void 0 ? { body: JSON.stringify(body) } : {}
       });
-      const json = await res.json();
+      const rawBody = await res.text();
+      let json = {};
+      if (rawBody) {
+        try {
+          json = JSON.parse(rawBody);
+        } catch {
+        }
+      }
       if (!res.ok) {
         const errors = Array.isArray(json.errors) ? json.errors : void 0;
         const detail = errors?.length ? errors.map(
           (e) => [e.resource, e.field, e.code, e.message].filter(Boolean).join(".")
         ).join("; ") : void 0;
-        const base = json.message ?? `HTTP ${res.status}`;
+        const base = json.message ?? (rawBody ? `HTTP ${res.status}: ${rawBody.slice(0, 200)}` : `HTTP ${res.status}`);
         return {
           ok: false,
           status: res.status,
@@ -10768,10 +10775,8 @@ var GitHubClient = class {
       }
       return { ok: true, data: json };
     } catch (err) {
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : "github unreachable"
-      };
+      const error = err instanceof Error ? err.name === "AbortError" ? `request timed out after ${this.timeoutMs}ms` : err.message : "github unreachable";
+      return { ok: false, error };
     } finally {
       clearTimeout(timer);
     }
@@ -11568,18 +11573,36 @@ async function postSignoffCheck(deps, row, reviewer) {
     logSkipped(deps, row, reviewer, state.data.merged ? "PR merged" : "PR closed", res.error);
     return;
   }
+  if (isTransientFailure(res)) {
+    logger.warn("signoff: check-run completion failed (transient; will retry)", {
+      repo: row.githubRepo,
+      prNumber: row.prNumber,
+      reviewer,
+      headSha: row.headSha,
+      status: res.status,
+      error: res.error
+    });
+    return;
+  }
   logger.error("signoff: check-run completion failed", {
     repo: row.githubRepo,
     prNumber: row.prNumber,
     reviewer,
     headSha: row.headSha,
-    error: res.error
+    status: res.status,
+    error: res.error,
+    errors: res.errors
   });
   await deps.postOpsPing?.(
     buildPipelineErrorPing(
-      `sign-off check-run failed for ${row.githubRepo}#${row.prNumber} (${reviewer}): ${res.error}`
+      `sign-off check-run failed for ${row.githubRepo}#${row.prNumber} (${reviewer}): HTTP ${res.status ?? "?"} ${res.error}`
     )
   );
+}
+function isTransientFailure(res) {
+  const s = res.status;
+  if (s === void 0) return true;
+  return s === 401 || s === 408 || s === 429 || s >= 500;
 }
 function bareRepoName2(slug) {
   const idx = slug.lastIndexOf("/");
@@ -12553,6 +12576,7 @@ async function seedPendingCheck(ctx, github, bridge, ev, reviewer) {
       repo: ev.repo,
       number: ev.number,
       reviewer,
+      status: res.status,
       error: res.error
     });
   }

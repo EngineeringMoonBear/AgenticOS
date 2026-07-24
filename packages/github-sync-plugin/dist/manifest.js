@@ -79,7 +79,19 @@ var manifest = {
   //   401 (stranded `agent-review/*` checks). The broker now returns `expires_at` and the
   //   client caches until that real expiry minus a 2-min skew, capped at the 50-min TTL.
   //   Bugfix only — manifest surface unchanged bar version.
-  version: "0.11.6",
+  // 0.11.7 = sign-off failure observability + transient-blip muting (GOL-802). A ~4-min
+  //   broker-token 401 window fired 59 `🔥 sign-off check-run failed` pings across 5 open
+  //   PRs (each retry re-alerted) yet logged an EMPTY error — the HTTP status was dropped:
+  //   github-client `request()` awaited `res.json()` before the `res.ok` check, so a
+  //   bodyless/non-JSON 4xx/5xx threw and lost the status. Root causes (1) broker lacks
+  //   checks:write and (2) a payload bug were both RULED OUT (seeds + an out-of-band
+  //   completion POST via the broker token both 201). `request()` now reads text-first
+  //   (always keeps status + a non-empty error), and postSignoffCheck classifies transient
+  //   failures (401/408/429/5xx/no-status) as retryable — warn + NO 🔥, since the
+  //   event-driven retry self-heals — while a 403 (checks:write revoked) or unexpected 422
+  //   on a live open PR still fires 🔥 with the status + GitHub errors[]. Bugfix only —
+  //   manifest surface unchanged bar version.
+  version: "0.11.7",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",
