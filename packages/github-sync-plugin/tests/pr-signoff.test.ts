@@ -211,17 +211,62 @@ describe("handleReviewSignoff", () => {
     expect(createCheckRun.mock.calls[0][1]).toMatchObject({ name: "agent-review/iris", conclusion: "success" });
   });
 
-  it("pings a pipeline error and does not throw when the check-run API fails on an OPEN PR", async () => {
+  it("pings a pipeline error (with status) on a DEFINITIVE 403 (checks:write revoked) on an OPEN PR", async () => {
+    // 403 = permission genuinely lost — a real stuck gate that must alert (GOL-802).
     const db = makeStoreDb();
     await seedRows(db);
-    const createCheckRun = vi.fn().mockResolvedValue({ ok: false, error: "HTTP 403" });
+    const createCheckRun = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status: 403, error: "Resource not accessible by integration" });
     const ping = vi.fn().mockResolvedValue(undefined);
     const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping, openPull());
     await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
 
     expect(createCheckRun).toHaveBeenCalledTimes(1);
     expect(ping).toHaveBeenCalledWith(expect.stringContaining("pipeline error"));
-    expect(ping).toHaveBeenCalledWith(expect.stringContaining("HTTP 403"));
+    expect(ping).toHaveBeenCalledWith(expect.stringContaining("HTTP 403")); // status surfaced in the ping
+  });
+
+  it("MUTES the alert on a transient 401 (broker-token blip) on an OPEN PR — the retry self-heals", async () => {
+    // GOL-802: a ~12:45–12:50Z broker-token 401 window fired 59 🔥 pings across 5
+    // open PRs before the retry loop greened the checks. A 401 is transient — the
+    // next issue.updated re-posts once the token recovers — so no 🔥.
+    const db = makeStoreDb();
+    await seedRows(db);
+    const createCheckRun = vi.fn().mockResolvedValue({ ok: false, status: 401, error: "Bad credentials" });
+    const ping = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping, openPull());
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    expect(createCheckRun).toHaveBeenCalledTimes(1);
+    expect(ping).not.toHaveBeenCalled();
+  });
+
+  it("MUTES the alert on a transport-level failure (no HTTP status) on an OPEN PR", async () => {
+    // A network error / timeout / token-broker throw leaves no status — transient.
+    const db = makeStoreDb();
+    await seedRows(db);
+    const createCheckRun = vi.fn().mockResolvedValue({ ok: false, error: "request timed out after 8000ms" });
+    const ping = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping, openPull());
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    expect(createCheckRun).toHaveBeenCalledTimes(1);
+    expect(ping).not.toHaveBeenCalled();
+  });
+
+  it("pings on a DEFINITIVE non-missing-commit 422 on an OPEN PR (real payload/validation bug)", async () => {
+    const db = makeStoreDb();
+    await seedRows(db);
+    const createCheckRun = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status: 422, error: "Validation Failed (custom.some_field)" });
+    const ping = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps(db, { "pi-ada": "done" }, createCheckRun, ping, openPull());
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    expect(createCheckRun).toHaveBeenCalledTimes(1);
+    expect(ping).toHaveBeenCalledWith(expect.stringContaining("HTTP 422"));
   });
 
   // --- GOL-798: merged/closed PR must be greened (not stranded), GOL-781: no false alarm

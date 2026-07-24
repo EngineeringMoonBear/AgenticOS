@@ -69,7 +69,19 @@ const manifest: PaperclipPluginManifestV1 = {
   //   short-circuits merged/closed PRs before the doomed post and re-derives PR state on
   //   failure to mute the alert when the PR is no longer an open merge gate. Bugfix only —
   //   manifest surface unchanged bar version.
-  version: "0.11.5",
+  // 0.11.6 = sign-off failure observability + transient-blip muting (GOL-802). A ~4-min
+  //   broker-token 401 window fired 59 `🔥 sign-off check-run failed` pings across 5 open
+  //   PRs (each retry re-alerted) yet logged an EMPTY error — the HTTP status was dropped:
+  //   github-client `request()` awaited `res.json()` before the `res.ok` check, so a
+  //   bodyless/non-JSON 4xx/5xx threw and lost the status. Root causes (1) broker lacks
+  //   checks:write and (2) a payload bug were both RULED OUT (seeds + an out-of-band
+  //   completion POST via the broker token both 201). `request()` now reads text-first
+  //   (always keeps status + a non-empty error), and postSignoffCheck classifies transient
+  //   failures (401/408/429/5xx/no-status) as retryable — warn + NO 🔥, since the
+  //   event-driven retry self-heals — while a 403 (checks:write revoked) or unexpected 422
+  //   on a live open PR still fires 🔥 with the status + GitHub errors[]. Bugfix only —
+  //   manifest surface unchanged bar version.
+  version: "0.11.6",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",

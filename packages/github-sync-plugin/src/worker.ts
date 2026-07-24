@@ -1057,6 +1057,7 @@ async function seedPendingCheck(
       repo: ev.repo,
       number: ev.number,
       reviewer,
+      status: res.status,
       error: res.error,
     });
   }

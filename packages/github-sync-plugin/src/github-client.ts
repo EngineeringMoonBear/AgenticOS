@@ -107,10 +107,22 @@ export class GitHubClient {
         },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
-      const json = (await res.json()) as T & {
-        message?: string;
-        errors?: GitHubFieldError[];
-      };
+      // Read the body as text FIRST, then attempt JSON.parse. A bodyless or
+      // non-JSON error response (an edge/proxy 401, an HTML 5xx) makes `res.json()`
+      // throw — which used to jump to the catch below and DROP the HTTP status,
+      // surfacing as an empty `error` at the call site (GOL-802: the transient
+      // broker-token 401 window logged a completely empty error for exactly this
+      // reason). Parsing defensively keeps the status and always yields a non-empty
+      // error string.
+      const rawBody = await res.text();
+      let json = {} as T & { message?: string; errors?: GitHubFieldError[] };
+      if (rawBody) {
+        try {
+          json = JSON.parse(rawBody);
+        } catch {
+          // Non-JSON body — leave `json` empty; the raw text feeds the error below.
+        }
+      }
       if (!res.ok) {
         const errors = Array.isArray(json.errors) ? json.errors : undefined;
         // Fold GitHub's errors[] into the human-readable string so callers that
@@ -125,7 +137,11 @@ export class GitHubClient {
               )
               .join("; ")
           : undefined;
-        const base = json.message ?? `HTTP ${res.status}`;
+        // Always land a non-empty, status-bearing error even when GitHub gives no
+        // JSON `message` (fall back to the status + a raw-body snippet).
+        const base =
+          json.message ??
+          (rawBody ? `HTTP ${res.status}: ${rawBody.slice(0, 200)}` : `HTTP ${res.status}`);
         return {
           ok: false,
           status: res.status,
@@ -135,10 +151,15 @@ export class GitHubClient {
       }
       return { ok: true, data: json };
     } catch (err) {
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : "github unreachable",
-      };
+      // Transport-level failure (no HTTP status): DNS/connection error, or the 8s
+      // timeout aborting the request. Callers treat a status-less Err as transient.
+      const error =
+        err instanceof Error
+          ? err.name === "AbortError"
+            ? `request timed out after ${this.timeoutMs}ms`
+            : err.message
+          : "github unreachable";
+      return { ok: false, error };
     } finally {
       clearTimeout(timer);
     }

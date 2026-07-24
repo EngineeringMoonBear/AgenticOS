@@ -2,10 +2,15 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { GitHubClient } from "../src/github-client.js";
 
 function mockFetch(body: unknown, ok = true, status = 200) {
+  // `request()` reads `res.text()` then JSON.parses it (so a non-JSON error body
+  // never drops the status — GOL-802). A string `body` is passed through verbatim
+  // to exercise the non-JSON path; anything else is serialized.
+  const text = typeof body === "string" ? body : JSON.stringify(body);
   return vi.fn().mockResolvedValue({
     ok,
     status,
     json: async () => body,
+    text: async () => text,
   });
 }
 
@@ -52,6 +57,44 @@ describe("GitHubClient.createIssue", () => {
     const result = await client.createIssue("r", { title: "x", body: "y" });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toBe("Bad creds");
+  });
+
+  it("keeps the status and a non-empty error on a bodyless / non-JSON error response (GOL-802)", async () => {
+    // A broker/edge 401 (or an HTML 5xx) with no JSON body used to make res.json()
+    // throw, dropping the status and surfacing an EMPTY `error` at the call site.
+    // Reading text-first preserves the status and yields a non-empty error.
+    vi.stubGlobal("fetch", mockFetch("", false, 401)); // empty string body
+    const client = new GitHubClient({ token: "bad", org: "o", timeoutMs: 5000 });
+    const result = await client.createCheckRun("r", {
+      name: "agent-review/ada",
+      headSha: "sha1",
+      conclusion: "success",
+      title: "t",
+      summary: "s",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(401);
+      expect(result.error).toBe("HTTP 401");
+    }
+  });
+
+  it("includes a raw-body snippet when a non-JSON error body is present (GOL-802)", async () => {
+    vi.stubGlobal("fetch", mockFetch("<html>502 Bad Gateway</html>", false, 502));
+    const client = new GitHubClient({ token: "t", org: "o", timeoutMs: 5000 });
+    const result = await client.createCheckRun("r", {
+      name: "agent-review/ada",
+      headSha: "sha1",
+      conclusion: "success",
+      title: "t",
+      summary: "s",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(502);
+      expect(result.error).toContain("HTTP 502");
+      expect(result.error).toContain("502 Bad Gateway");
+    }
   });
 
   it("surfaces status + GitHub errors[] and folds them into the message on a 422 (GOL-793)", async () => {
