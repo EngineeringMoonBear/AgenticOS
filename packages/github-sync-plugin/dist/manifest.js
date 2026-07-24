@@ -68,7 +68,18 @@ var manifest = {
   //   short-circuits merged/closed PRs before the doomed post and re-derives PR state on
   //   failure to mute the alert when the PR is no longer an open merge gate. Bugfix only —
   //   manifest surface unchanged bar version.
-  // 0.11.6 = sign-off failure observability + transient-blip muting (GOL-802). A ~4-min
+  // 0.11.5 = stranded `agent-review/*` sign-off checks now complete (green) instead of
+  //   hanging `in_progress` forever on merged/closed heads (GOL-798). postSignoffCheck
+  //   always attempts the completion post; GitHub records a completed check-run on the
+  //   merged head. Bugfix only — manifest surface unchanged bar version.
+  // 0.11.6 = sign-off check-runs no longer fail with 401 "Bad credentials" (GOL-799).
+  //   The broker keeps its own disk cache and serves a token with as little as 5 min of
+  //   life left, but the client cached every token for a flat 50 min — so a token could be
+  //   held ~44 min PAST its real expiry, and every check-run write with it got GitHub's
+  //   401 (stranded `agent-review/*` checks). The broker now returns `expires_at` and the
+  //   client caches until that real expiry minus a 2-min skew, capped at the 50-min TTL.
+  //   Bugfix only — manifest surface unchanged bar version.
+  // 0.11.7 = sign-off failure observability + transient-blip muting (GOL-802). A ~4-min
   //   broker-token 401 window fired 59 `🔥 sign-off check-run failed` pings across 5 open
   //   PRs (each retry re-alerted) yet logged an EMPTY error — the HTTP status was dropped:
   //   github-client `request()` awaited `res.json()` before the `res.ok` check, so a
@@ -80,7 +91,7 @@ var manifest = {
   //   event-driven retry self-heals — while a 403 (checks:write revoked) or unexpected 422
   //   on a live open PR still fires 🔥 with the status + GitHub errors[]. Bugfix only —
   //   manifest surface unchanged bar version.
-  version: "0.11.6",
+  version: "0.11.7",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",

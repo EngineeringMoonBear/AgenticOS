@@ -47,33 +47,10 @@ for p in "$@"; do
   esac
 done
 command -v node   >/dev/null || { echo "FATAL: node not found on PATH" >&2; exit 1; }
-command -v docker >/dev/null || { echo "FATAL: docker not found" >&2; exit 1; }
 
-# --- API origin: the VPC-bound host port for paperclip-server:3100 ------------
-# Derived (never hard-coded) from compose so it tracks the bind in
-# docker-compose.yml (currently 10.116.16.2:3100).
-if [ -z "${PAPERCLIP_BASE:-}" ]; then
-  hostport="$(cd "$COMPOSE_DIR" && docker compose port paperclip-server 3100 2>/dev/null | tail -n1 || true)"
-  [ -n "$hostport" ] || {
-    echo "FATAL: could not resolve paperclip-server:3100 host port (is the container up?)" >&2
-    exit 1
-  }
-  PAPERCLIP_BASE="http://${hostport}"
-fi
-
-# --- board key from 1Password via the on-box credential-broker OP token -------
-# The box has no op CLI; read via a pinned op container (GOL-313 pattern).
-[ -f "$BROKER_ENV" ] || {
-  echo "FATAL: $BROKER_ENV absent — the credential-broker OP service-account token is not provisioned, so the board key cannot be read. Finish manually per docs/runbooks/deploy-plugin-manifest-change.md" >&2
-  exit 1
-}
-OP_TOKEN="$(grep -E '^OP_SERVICE_ACCOUNT_TOKEN=' "$BROKER_ENV" | head -n1 | cut -d= -f2-)"
-OP_TOKEN="${OP_TOKEN%\"}"; OP_TOKEN="${OP_TOKEN#\"}"
-OP_TOKEN="${OP_TOKEN%\'}"; OP_TOKEN="${OP_TOKEN#\'}"
-[ -n "${OP_TOKEN:-}" ] || { echo "FATAL: OP_SERVICE_ACCOUNT_TOKEN empty in $BROKER_ENV" >&2; exit 1; }
-BOARD_KEY="$(docker run --rm --entrypoint op -e OP_SERVICE_ACCOUNT_TOKEN="$OP_TOKEN" "$OP_IMG" read "$BOARD_KEY_REF" 2>/dev/null || true)"
-[ -n "$BOARD_KEY" ] || { echo "FATAL: board key did not resolve from 1Password ($BOARD_KEY_REF)" >&2; exit 1; }
-export BOARD_KEY PAPERCLIP_BASE
+# --- resolve PAPERCLIP_BASE + BOARD_KEY (shared with assert-plugin-versions.sh)
+# shellcheck source=scripts/plugin-api-env.sh
+source "${HERE}/plugin-api-env.sh"
 
 echo "paperclip API: ${PAPERCLIP_BASE}"
 
@@ -86,8 +63,15 @@ for p in "$@"; do
     # Format-agnostic: read the version string straight out of the built dist.
     want="$(grep -oE 'version:[[:space:]]*"[^"]+"' "$mf" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
   fi
-  echo "== ${p}: /upgrade → converge registry to ${want:-<unknown>} =="
-  if PLUGIN_KEY="$key" WANT_VERSION="$want" node "${HERE}/finish-plugin-upgrade.mjs"; then
+  # Canonical container-visible source to reinstall from if /upgrade cannot
+  # converge (packagePath drifted to a stale staged dir — GOL-804). This is the
+  # CD-rebuilt bind mount the deploy step just refreshed; reinstalling from it
+  # REPOINTS the registry's stored packagePath back to fresh code. The path is a
+  # CONTAINER path resolved by paperclip-server, not a droplet-host path.
+  reinstall_path="/paperclip/plugins/${p}"
+  echo "== ${p}: /upgrade → converge registry to ${want:-<unknown>} (repoint fallback: ${reinstall_path}) =="
+  if PLUGIN_KEY="$key" WANT_VERSION="$want" REINSTALL_PATH="$reinstall_path" \
+       node "${HERE}/finish-plugin-upgrade.mjs"; then
     echo "   ${p}: converged"
   else
     echo "::error title=Plugin upgrade failed::${p}: the registry did not converge to ${want:-the deployed version} via /upgrade — the running worker may still serve the previous code path. Finish manually per docs/runbooks/deploy-plugin-manifest-change.md"

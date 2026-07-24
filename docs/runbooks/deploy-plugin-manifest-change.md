@@ -142,6 +142,41 @@ curl -fsS -H "Authorization: Bearer $BK" \
 
 All target plugins should be present and NOT `error`/`failed`.
 
+## Stale-deploy trap: a drifted `packagePath` (GOL-804)
+
+`POST /api/plugins/<id>/upgrade` re-reads the plugin registry entry's **stored
+`packagePath`** and reloads the worker from it. It **cannot repoint** that path
+(a `packageName` body is ignored). So if `packagePath` has drifted to a stale
+source — e.g. an out-of-band `install` pinned it to
+`/paperclip/staged-plugins/<plugin>-<version>` and that dir's `dist/` is old — a
+CD `/upgrade` "succeeds" while shipping **old code**. GOL-804: the registry
+served `0.11.3` from a `github-sync-plugin-0.11.4` staged dir (manifest said
+`0.11.4`, dist was `0.11.3`) and the deploy went green.
+
+Two guards now make this loud and self-healing:
+
+1. **Deterministic recovery** — `scripts/finish-plugin-upgrade.sh` passes
+   `REINSTALL_PATH=/paperclip/plugins/<plugin>` (the CD-rebuilt bind mount) to
+   `finish-plugin-upgrade.mjs`. When `/upgrade` can't reach the built version,
+   the finisher **reinstalls from that canonical source**, which repoints
+   `packagePath` to fresh code, and re-asserts. Config survives a same-key
+   reinstall; if it were dropped, the finisher fails RED (never ships an
+   unconfigured worker). Prefer the canonical bind mount — do **not** pin the
+   registry to a versioned `staged-plugins/<plugin>-<version>` dir.
+
+2. **Post-deploy assertion (hard gate)** — `scripts/assert-plugin-versions.sh`
+   runs after every plugin deploy, **unconditionally** (not gated on a manifest
+   bump), and fails the workflow RED if any plugin's live registry version does
+   not equal its freshly-built `dist/manifest.js` version. This is the backstop
+   that catches staleness from *any* cause (drifted path, forgotten bump,
+   out-of-band install), including deploys that never went through the finish
+   step. Run it by hand any time to audit convergence:
+   `bash scripts/assert-plugin-versions.sh` (on the droplet).
+
+If you must recover manually: `bash scripts/deploy-plugin.sh <plugin>` reinstalls
+from `/paperclip/plugins/<plugin>` and re-applies config, then verify with
+`assert-plugin-versions.sh`.
+
 ## Why each step is necessary
 
 See `memory/paperclip-plugin-db-and-activation-contract.md` (the install/

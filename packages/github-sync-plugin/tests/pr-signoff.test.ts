@@ -332,3 +332,122 @@ describe("handleReviewSignoff", () => {
     expect(ping).toHaveBeenCalledWith(expect.stringContaining("agent-review/ada"));
   });
 });
+
+// --- shared-project bridge collision ----------------------------------------------
+//
+// Two bridges can point at ONE paperclipProjectId (live case: grove-odoo-modules and
+// odoocker-goldberrygrove both feed project 7cc88cd5…). depsByProject then holds the
+// LAST bridge's github/config, so completing via deps.config.githubRepo posted
+// grove-odoo-modules sign-offs to odoocker-goldberrygrove → "No commit found for SHA"
+// (PRs #44/#46, 2026-07-23) — and aimed the GOL-781 getPull gate at the wrong repo's
+// PR number, which can silently swallow the completion. The completion must derive
+// client + repo from the review ROW's stored owner/repo slug via resolveRepoClient.
+
+const GROVE_SLUG = "Goldberry-Playground/grove-odoo-modules";
+const GROVE_SHA = "9fc49ff43eae9a9ee981005c5d01baa9e8f99961";
+
+/** Deps as the collided bridge would build them: config/github = the WRONG repo. */
+function makeCollidedDeps(
+  db: MappingDb,
+  statuses: Record<string, Issue["status"]>,
+  wrongGithub: { createCheckRun: ReturnType<typeof vi.fn>; getPull: ReturnType<typeof vi.fn> },
+  resolveRepoClient: SyncDeps["resolveRepoClient"],
+  postOpsPing?: ReturnType<typeof vi.fn>,
+): SyncDeps {
+  return {
+    db,
+    github: wrongGithub as unknown as GitHubClient,
+    config: { ...CONFIG, githubRepo: "odoocker-goldberrygrove" },
+    logger: silentLogger,
+    getIssue: issueGetter(statuses),
+    postOpsPing,
+    resolveRepoClient,
+  };
+}
+
+async function seedGroveRow(db: MappingDb): Promise<void> {
+  await upsertReviewRecord(db, {
+    githubRepo: GROVE_SLUG,
+    prNumber: 46,
+    reviewer: "ada",
+    headSha: GROVE_SHA,
+    paperclipIssueId: "pi-ada",
+    updatedAt: "2026-07-23T00:00:00Z",
+  });
+}
+
+describe("handleReviewSignoff — two bridges sharing one paperclipProjectId", () => {
+  it("posts via the client resolved from the ROW's repo slug, not the collided bridge config", async () => {
+    const db = makeStoreDb();
+    await seedGroveRow(db);
+    const wrong = { createCheckRun: okCheck(), getPull: openPull() };
+    const right = { createCheckRun: okCheck(), getPull: openPull() };
+    const resolver: SyncDeps["resolveRepoClient"] = (slug) =>
+      slug.toLowerCase() === GROVE_SLUG.toLowerCase()
+        ? { github: right as unknown as GitHubClient, repo: "grove-odoo-modules" }
+        : null;
+    const deps = makeCollidedDeps(db, { "pi-ada": "done" }, wrong, resolver);
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    // The collided bridge's client is never consulted. Under GOL-798 we always
+    // attempt the post (no pre-merge getPull short-circuit), so on success no
+    // getPull happens at all — the failure path's closed-PR probe would use the
+    // resolved client, which the "muted failure still resolves the right repo"
+    // case below pins down.
+    expect(wrong.createCheckRun).not.toHaveBeenCalled();
+    expect(wrong.getPull).not.toHaveBeenCalled();
+    expect(right.getPull).not.toHaveBeenCalled();
+    expect(right.createCheckRun).toHaveBeenCalledTimes(1);
+    const [repo, input] = right.createCheckRun.mock.calls[0];
+    expect(repo).toBe("grove-odoo-modules");
+    expect(input).toMatchObject({ name: "agent-review/ada", headSha: GROVE_SHA, conclusion: "success" });
+  });
+
+  it("muted failure still resolves the right repo: the closed-PR probe uses the ROW's client, not the collided one", async () => {
+    const db = makeStoreDb();
+    await seedGroveRow(db);
+    const wrong = { createCheckRun: okCheck(), getPull: openPull() };
+    const right = {
+      createCheckRun: vi.fn().mockResolvedValue({ ok: false, status: 500, error: "HTTP 500" }),
+      getPull: mergedPull(),
+    };
+    const ping = vi.fn().mockResolvedValue(undefined);
+    const resolver: SyncDeps["resolveRepoClient"] = (slug) =>
+      slug.toLowerCase() === GROVE_SLUG.toLowerCase()
+        ? { github: right as unknown as GitHubClient, repo: "grove-odoo-modules" }
+        : null;
+    const deps = makeCollidedDeps(db, { "pi-ada": "done" }, wrong, resolver, ping);
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    // Failure path probes PR state on the RESOLVED client/repo (a collided-config
+    // probe would read the WRONG repo's #46 and mis-classify), sees merged → mutes.
+    expect(wrong.getPull).not.toHaveBeenCalled();
+    expect(right.getPull).toHaveBeenCalledWith("grove-odoo-modules", 46);
+    expect(ping).not.toHaveBeenCalled();
+  });
+
+  it("resolver miss (row repo no longer bridged) → 🔥-pings and posts nothing to a guessed repo", async () => {
+    const db = makeStoreDb();
+    await seedGroveRow(db);
+    const wrong = { createCheckRun: okCheck(), getPull: openPull() };
+    const ping = vi.fn().mockResolvedValue(undefined);
+    const deps = makeCollidedDeps(db, { "pi-ada": "done" }, wrong, () => null, ping);
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    expect(wrong.createCheckRun).not.toHaveBeenCalled();
+    expect(wrong.getPull).not.toHaveBeenCalled();
+    expect(ping).toHaveBeenCalledWith(expect.stringContaining("pipeline error"));
+    expect(ping).toHaveBeenCalledWith(expect.stringContaining(GROVE_SLUG));
+  });
+
+  it("no resolver wired (legacy deps): falls back to the row slug's bare repo name on deps.github", async () => {
+    const db = makeStoreDb();
+    await seedGroveRow(db);
+    const github = { createCheckRun: okCheck(), getPull: openPull() };
+    const deps = makeCollidedDeps(db, { "pi-ada": "done" }, github, undefined);
+    await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
+
+    expect(github.createCheckRun).toHaveBeenCalledTimes(1);
+    expect(github.createCheckRun.mock.calls[0][0]).toBe("grove-odoo-modules"); // parsed from the row, NOT config
+  });
+});

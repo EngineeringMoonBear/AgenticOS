@@ -98,11 +98,17 @@ async function isIssueDone(deps: SyncDeps, row: PrReviewRow, companyId: string):
 }
 
 /**
- * Post a green `agent-review/<reviewer>` check-run on the row's head SHA. The repo
- * for the API call is the bridge's bare repo name (config.githubRepo) — the client
- * builds `/repos/<org>/<repo>/...` — while the row's `githubRepo` (owner/repo) is
- * used only for human-facing display. On success we ✅-ping; on API failure we log
- * and 🔥-ping so a stuck-pending required check is never silent.
+ * Post a green `agent-review/<reviewer>` check-run on the row's head SHA. The
+ * target repo + client come from the ROW's stored `owner/repo` slug via
+ * deps.resolveRepoClient — NOT from deps.config/deps.github. Those are keyed by
+ * paperclipProjectId, and two bridges can share one project; the deps entry then
+ * belongs to whichever bridge registered last, so completing with its config
+ * posted grove-odoo-modules checks to odoocker-goldberrygrove ("No commit found
+ * for SHA", PRs #44/#46) — and the same mixup aims the getPull gate below at the
+ * wrong repo's PR number. A resolver miss 🔥-pings and posts nothing rather than
+ * guessing a repo; without a resolver (legacy callers) we still derive the bare
+ * repo name from the row. On success we ✅-ping; on API failure we log and
+ * 🔥-ping so a stuck-pending required check is never silent.
  *
  * We ALWAYS attempt the post — even when the PR is already merged/closed (GOL-798).
  * The gate frequently greens AFTER the PR merges: the coupled ada+iris gate only
@@ -127,9 +133,27 @@ async function isIssueDone(deps: SyncDeps, row: PrReviewRow, companyId: string):
  * merged/closed, or on the unambiguous missing-commit signature.
  */
 async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Reviewer): Promise<void> {
-  const { github, config, logger } = deps;
+  const { logger } = deps;
 
-  const res = await github.createCheckRun(config.githubRepo, {
+  const resolved = deps.resolveRepoClient?.(row.githubRepo) ?? null;
+  if (deps.resolveRepoClient && !resolved) {
+    logger.error("signoff: no bridge for the review row's repo — check-run not posted", {
+      repo: row.githubRepo,
+      prNumber: row.prNumber,
+      reviewer,
+      headSha: row.headSha,
+    });
+    await deps.postOpsPing?.(
+      buildPipelineErrorPing(
+        `sign-off check-run skipped for ${row.githubRepo}#${row.prNumber} (${reviewer}): repo is not bridged`,
+      ),
+    );
+    return;
+  }
+  const github = resolved ? resolved.github : deps.github;
+  const repo = resolved ? resolved.repo : bareRepoName(row.githubRepo);
+
+  const res = await github.createCheckRun(repo, {
     name: CHECK_CONTEXT[reviewer],
     headSha: row.headSha,
     conclusion: "success",
@@ -156,7 +180,7 @@ async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Revi
   }
   // Any other failure: if the PR is no longer open it is not a live merge gate, so
   // the stuck check is moot — mute. Otherwise it is a genuinely stuck required gate.
-  const state = await github.getPull(config.githubRepo, row.prNumber);
+  const state = await github.getPull(repo, row.prNumber);
   if (state.ok && isClosedPull(state.data)) {
     logSkipped(deps, row, reviewer, state.data.merged ? "PR merged" : "PR closed", res.error);
     return;
@@ -213,6 +237,12 @@ function isTransientFailure(res: { status?: number }): boolean {
   const s = res.status;
   if (s === undefined) return true; // transport-level (network / timeout / broker throw)
   return s === 401 || s === 408 || s === 429 || s >= 500;
+}
+
+/** Bare repo name from a full `owner/repo` slug (tolerates a bare name too). */
+function bareRepoName(slug: string): string {
+  const idx = slug.lastIndexOf("/");
+  return idx === -1 ? slug : slug.slice(idx + 1);
 }
 
 /** A PR whose head is no longer a live merge gate — merged, or otherwise closed. */
