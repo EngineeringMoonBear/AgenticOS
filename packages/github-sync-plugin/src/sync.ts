@@ -1,5 +1,5 @@
 import type { Issue } from "@paperclipai/plugin-sdk";
-import type { GitHubClient } from "./github-client.js";
+import type { GitHubClient, UpdateIssueInput } from "./github-client.js";
 import {
   getByPaperclipId,
   upsert,
@@ -204,17 +204,58 @@ export async function handleIssueUpdated(
     return;
   }
 
-  const updated = await github.updateIssue(mapping.githubRepo, mapping.githubIssueNumber, {
+  const fullPatch: UpdateIssueInput = {
     title: issue.title,
     body: buildGithubBody(issue),
     state: statusToGithubState(issue.status),
-  });
+  };
+  let updated = await github.updateIssue(
+    mapping.githubRepo,
+    mapping.githubIssueNumber,
+    fullPatch,
+  );
+
+  // Partial-field 422 sanitizing (GOL-793). GitHub sometimes rejects a single
+  // sub-field of the mirror push (e.g. a `state` transition it won't allow on a
+  // PR-backed mapping) with a 422 whose errors[] names the offending field. When
+  // it does, drop exactly the field(s) GitHub flagged and retry once so the rest
+  // of the mirror (title/body) still lands instead of the whole update failing.
+  if (
+    !updated.ok &&
+    updated.status === 422 &&
+    updated.errors?.some((e) => e.field)
+  ) {
+    const rejected = new Set(
+      updated.errors.map((e) => e.field).filter((f): f is string => Boolean(f)),
+    );
+    const sanitized: UpdateIssueInput = {};
+    if (!rejected.has("title")) sanitized.title = fullPatch.title;
+    if (!rejected.has("body")) sanitized.body = fullPatch.body;
+    if (!rejected.has("state")) sanitized.state = fullPatch.state;
+    if (Object.keys(sanitized).length > 0) {
+      logger.warn("issue.updated: GitHub rejected field(s); retrying sanitized payload", {
+        issueId: issue.id,
+        githubRepo: mapping.githubRepo,
+        githubIssueNumber: mapping.githubIssueNumber,
+        rejectedFields: [...rejected],
+        githubErrors: updated.errors,
+      });
+      updated = await github.updateIssue(
+        mapping.githubRepo,
+        mapping.githubIssueNumber,
+        sanitized,
+      );
+    }
+  }
+
   if (!updated.ok) {
     logger.error("issue.updated: failed to update GitHub issue", {
       issueId: issue.id,
       githubRepo: mapping.githubRepo,
       githubIssueNumber: mapping.githubIssueNumber,
       error: updated.error,
+      githubStatus: updated.status,
+      githubErrors: updated.errors,
     });
     return;
   }
