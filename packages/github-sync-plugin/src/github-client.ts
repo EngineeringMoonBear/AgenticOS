@@ -1,8 +1,23 @@
 import type { TokenProvider } from "./broker.js";
 
 type Ok<T> = { ok: true; data: T };
-type Err = { ok: false; error: string };
+type Err = { ok: false; error: string; status?: number; errors?: GitHubFieldError[] };
 export type Result<T> = Ok<T> | Err;
+
+/**
+ * A single entry from GitHub's `errors[]` array on a 4xx (typically 422
+ * "Validation Failed"). GitHub drops this detail into the response body but the
+ * top-level `message` alone ("Validation Failed") is useless for root-cause, so
+ * we surface it on the `Err` return. Fields are all optional because GitHub
+ * varies the shape by `code` (e.g. `custom` carries `message`, field errors
+ * carry `field`).
+ */
+export interface GitHubFieldError {
+  resource?: string;
+  field?: string;
+  code?: string;
+  message?: string;
+}
 
 export interface GitHubClientConfig {
   org: string;
@@ -92,9 +107,31 @@ export class GitHubClient {
         },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
-      const json = (await res.json()) as T & { message?: string };
+      const json = (await res.json()) as T & {
+        message?: string;
+        errors?: GitHubFieldError[];
+      };
       if (!res.ok) {
-        return { ok: false, error: json.message ?? `HTTP ${res.status}` };
+        const errors = Array.isArray(json.errors) ? json.errors : undefined;
+        // Fold GitHub's errors[] into the human-readable string so callers that
+        // only log `error` still get the field/code, and expose the structured
+        // array + status for callers that can act on it (payload sanitizing).
+        const detail = errors?.length
+          ? errors
+              .map((e) =>
+                [e.resource, e.field, e.code, e.message]
+                  .filter(Boolean)
+                  .join("."),
+              )
+              .join("; ")
+          : undefined;
+        const base = json.message ?? `HTTP ${res.status}`;
+        return {
+          ok: false,
+          status: res.status,
+          error: detail ? `${base} (${detail})` : base,
+          ...(errors ? { errors } : {}),
+        };
       }
       return { ok: true, data: json };
     } catch (err) {

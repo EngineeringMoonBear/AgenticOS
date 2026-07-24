@@ -258,6 +258,85 @@ describe("handleIssueUpdated", () => {
     expect(mapping?.lastSyncedAt).not.toBe("2026-01-01T00:00:00Z");
   });
 
+  it("drops the field GitHub rejects and retries so the rest of the mirror lands (GOL-793)", async () => {
+    const db = makeFakeDb();
+    await upsert(db, {
+      paperclipIssueId: "pi-5",
+      githubRepo: "grove-sites",
+      githubIssueNumber: 210,
+      lastSyncedAt: "2026-01-01T00:00:00Z",
+      origin: "paperclip",
+    });
+    const updateIssue = vi
+      .fn()
+      // First push: GitHub rejects the `state` transition (e.g. reopen on a PR
+      // with a deleted head branch) with a partial-field 422.
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        error: "Validation Failed (PullRequest.state.invalid)",
+        errors: [{ resource: "PullRequest", field: "state", code: "invalid" }],
+      })
+      // Sanitized retry (title/body only) succeeds.
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { number: 210, title: "", body: "", state: "open", htmlUrl: "", labels: [] },
+      });
+    const deps: SyncDeps = {
+      db,
+      github: makeGithub({ updateIssue }),
+      config: CONFIG,
+      logger: silentLogger,
+      getIssue: async () => makeIssue({ id: "pi-5", status: "todo", title: "Keep title" }),
+    };
+
+    await handleIssueUpdated(deps, { issueId: "pi-5", companyId: "co-1" });
+
+    expect(updateIssue).toHaveBeenCalledTimes(2);
+    const retryPayload = updateIssue.mock.calls[1][2];
+    expect(retryPayload.title).toBe("Keep title");
+    expect(retryPayload.body).toBeDefined();
+    expect(retryPayload.state).toBeUndefined();
+
+    // Retry succeeded → last_synced_at bumped, no permanent failure.
+    const mapping = await getByPaperclipId(db, "pi-5");
+    expect(mapping?.lastSyncedAt).not.toBe("2026-01-01T00:00:00Z");
+  });
+
+  it("does not retry when the 422 names no field (all fields rejected / non-field error)", async () => {
+    const db = makeFakeDb();
+    await upsert(db, {
+      paperclipIssueId: "pi-6",
+      githubRepo: "grove-sites",
+      githubIssueNumber: 211,
+      lastSyncedAt: "2026-01-01T00:00:00Z",
+      origin: "paperclip",
+    });
+    const updateIssue = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      error: "Validation Failed (PullRequest.custom)",
+      errors: [{ resource: "PullRequest", code: "custom", message: "unmergeable" }],
+    });
+    const errors: unknown[] = [];
+    const deps: SyncDeps = {
+      db,
+      github: makeGithub({ updateIssue }),
+      config: CONFIG,
+      logger: { ...silentLogger, error: (_m: string, ctx?: unknown) => errors.push(ctx) },
+      getIssue: async () => makeIssue({ id: "pi-6", status: "todo" }),
+    };
+
+    await handleIssueUpdated(deps, { issueId: "pi-6", companyId: "co-1" });
+
+    // No field to drop → no retry; the failure is logged with structured detail.
+    expect(updateIssue).toHaveBeenCalledTimes(1);
+    expect(errors[0]).toMatchObject({
+      githubStatus: 422,
+      githubErrors: [{ resource: "PullRequest", code: "custom" }],
+    });
+  });
+
   it("ignores updates for unmapped issues", async () => {
     const db = makeFakeDb();
     const updateIssue = vi.fn();
