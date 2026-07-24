@@ -166,6 +166,31 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Assert plugins converged to the built version (GOL-804)
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+        run: |
+          # HARD GATE. For EVERY deploy-managed plugin, assert the LIVE registry
+          # version == the freshly-built dist version and the plugin is healthy —
+          # UNCONDITIONALLY, not gated on a manifest bump. `/upgrade` re-reads a
+          # plugin's stored packagePath and cannot repoint it, so a packagePath
+          # drifted to a stale staged dir silently ships old code while the run
+          # goes green (GOL-804: registry served 0.11.3 from a `-0.11.4` staged
+          # dir whose dist was stale). This step turns that into a RED deploy.
+          # The finish step's per-plugin assert only covers manifest-bumped
+          # plugins that went through CD; an out-of-band install slips past it.
+          # Default shell `bash -eo pipefail` → a nonzero exit fails the deploy.
+          ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" \
+            "bash -lc 'set -euo pipefail; cd /opt/agenticos/repo && bash scripts/assert-plugin-versions.sh'" \
+            | tee assert.log
+          {
+            echo "### 🔒 Post-deploy version-convergence assertion (GOL-804)"
+            echo '```'
+            grep -E '^  ok |converged|paperclip API:' assert.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Confirm workers hot-reloaded
         env:
           HOST: ${{ secrets.DROPLET_HOST }}
