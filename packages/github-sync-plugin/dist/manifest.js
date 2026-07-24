@@ -68,7 +68,14 @@ var manifest = {
   //   short-circuits merged/closed PRs before the doomed post and re-derives PR state on
   //   failure to mute the alert when the PR is no longer an open merge gate. Bugfix only —
   //   manifest surface unchanged bar version.
-  version: "0.11.3",
+  // 0.11.5 = sign-off check-runs no longer fail with 401 "Bad credentials" (GOL-799).
+  //   The broker keeps its own disk cache and serves a token with as little as 5 min of
+  //   life left, but the client cached every token for a flat 50 min — so a token could be
+  //   held ~44 min PAST its real expiry, and every check-run write with it got GitHub's
+  //   401 (stranded `agent-review/*` checks). The broker now returns `expires_at` and the
+  //   client caches until that real expiry minus a 2-min skew, capped at the 50-min TTL.
+  //   Bugfix only — manifest surface unchanged bar version.
+  version: "0.11.5",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",
