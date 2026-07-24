@@ -11524,11 +11524,6 @@ async function isIssueDone(deps, row, companyId) {
 }
 async function postSignoffCheck(deps, row, reviewer) {
   const { github, config, logger } = deps;
-  const pre = await github.getPull(config.githubRepo, row.prNumber);
-  if (pre.ok && isClosedPull(pre.data)) {
-    logSkippedForClosedPr(deps, row, reviewer, pre.data);
-    return;
-  }
   const res = await github.createCheckRun(config.githubRepo, {
     name: CHECK_CONTEXT[reviewer],
     headSha: row.headSha,
@@ -11536,46 +11531,53 @@ async function postSignoffCheck(deps, row, reviewer) {
     title: `Agent review complete (${reviewer})`,
     summary: `${reviewer} signed off ${row.githubRepo}#${row.prNumber} @ \`${shortSha(row.headSha)}\` (GOL-186).`
   });
-  if (!res.ok) {
-    const post = await github.getPull(config.githubRepo, row.prNumber);
-    if (post.ok && isClosedPull(post.data)) {
-      logSkippedForClosedPr(deps, row, reviewer, post.data);
-      return;
-    }
-    logger.error("signoff: check-run completion failed", {
+  if (res.ok) {
+    logger.info("signoff: posted green check-run", {
       repo: row.githubRepo,
       prNumber: row.prNumber,
       reviewer,
       headSha: row.headSha,
-      error: res.error
+      checkRunId: res.data.id
     });
-    await deps.postOpsPing?.(
-      buildPipelineErrorPing(
-        `sign-off check-run failed for ${row.githubRepo}#${row.prNumber} (${reviewer}): ${res.error}`
-      )
-    );
+    await deps.postOpsPing?.(buildSignoffPing(reviewer, row.githubRepo, row.prNumber));
     return;
   }
-  logger.info("signoff: posted green check-run", {
+  if (isMissingCommitError(res)) {
+    logSkipped(deps, row, reviewer, "reviewed head no longer exists (superseded/deleted)", res.error);
+    return;
+  }
+  const state = await github.getPull(config.githubRepo, row.prNumber);
+  if (state.ok && isClosedPull(state.data)) {
+    logSkipped(deps, row, reviewer, state.data.merged ? "PR merged" : "PR closed", res.error);
+    return;
+  }
+  logger.error("signoff: check-run completion failed", {
     repo: row.githubRepo,
     prNumber: row.prNumber,
     reviewer,
     headSha: row.headSha,
-    checkRunId: res.data.id
+    error: res.error
   });
-  await deps.postOpsPing?.(buildSignoffPing(reviewer, row.githubRepo, row.prNumber));
+  await deps.postOpsPing?.(
+    buildPipelineErrorPing(
+      `sign-off check-run failed for ${row.githubRepo}#${row.prNumber} (${reviewer}): ${res.error}`
+    )
+  );
 }
 function isClosedPull(pull) {
   return pull.merged || pull.state === "closed";
 }
-function logSkippedForClosedPr(deps, row, reviewer, pull) {
-  deps.logger.info("signoff: PR already merged/closed; skipping check-run (nothing to gate)", {
+function isMissingCommitError(err) {
+  return /no commit found for sha/i.test(err.error);
+}
+function logSkipped(deps, row, reviewer, reason, detail) {
+  deps.logger.info("signoff: skipping check-run completion (benign, nothing to gate)", {
     repo: row.githubRepo,
     prNumber: row.prNumber,
     reviewer,
     headSha: row.headSha,
-    state: pull.state,
-    merged: pull.merged
+    reason,
+    detail
   });
 }
 
