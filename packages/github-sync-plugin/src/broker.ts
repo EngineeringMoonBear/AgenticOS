@@ -5,11 +5,25 @@
  *
  * The broker (scripts/agent-git/github-app-token.mjs, compose service
  * `gh-token-broker`) exposes:
- *   GET {brokerUrl}/token?owner=<owner>&repo=<repo>  ->  { "token": "<installation-token>" }
- * Installation tokens live ~1h; we cache per (owner, repo) for 50 min and refresh.
+ *   GET {brokerUrl}/token?owner=<owner>&repo=<repo>
+ *     -> { "token": "<installation-token>", "expires_at": "<ISO-8601>" }
+ *
+ * Installation tokens live ~1h, but the broker keeps its OWN disk cache and will
+ * serve a token with as little as 5 min of life left. So a naive flat 50-min
+ * client cache can hold a token PAST its real expiry, and every write with it
+ * gets GitHub's 401 "Bad credentials" (GOL-799: stranded `agent-review/*`
+ * sign-off checks). We therefore cache until the token's real `expires_at`
+ * (minus a safety skew), capped at `ttlMs` — never past the moment GitHub stops
+ * honouring it. Older brokers that omit `expires_at` fall back to the flat TTL.
  */
 
 export type TokenProvider = (repo: string) => Promise<string>;
+
+/**
+ * Refresh a cached token this many ms BEFORE its GitHub `expires_at`, to absorb
+ * clock skew between this container and GitHub plus the request's own latency.
+ */
+const EXPIRY_SKEW_MS = 2 * 60 * 1000;
 
 export interface BrokerOptions {
   /** Injectable for tests; defaults to global fetch. */
@@ -66,9 +80,22 @@ export function makeBrokerTokenProvider(
         headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
       });
       if (!res.ok) throw new Error(`token broker -> ${res.status}`);
-      const body = (await res.json()) as { token?: string };
+      const body = (await res.json()) as { token?: string; expires_at?: string };
       if (!body.token) throw new Error("token broker returned no token");
-      cache.set(key, { token: body.token, expiresAt: now() + ttlMs });
+      // Never cache past the token's real GitHub expiry (minus skew): the broker
+      // may hand back a token with only minutes of life left (GOL-799). Cap at
+      // ttlMs so a long-lived token still gets periodically refreshed. Brokers
+      // that omit `expires_at` (pre-GOL-799) fall back to the flat TTL.
+      const ttlExpiry = now() + ttlMs;
+      const realExpiry = body.expires_at
+        ? Date.parse(body.expires_at) - EXPIRY_SKEW_MS
+        : NaN;
+      const expiresAt = Number.isFinite(realExpiry)
+        ? Math.min(ttlExpiry, realExpiry)
+        : ttlExpiry;
+      // A token already inside the skew window is still returned to this caller,
+      // but not cached — the next call re-mints rather than serving a near-dead one.
+      if (expiresAt > now()) cache.set(key, { token: body.token, expiresAt });
       return body.token;
     } finally {
       clearTimeout(timer);

@@ -6,7 +6,8 @@
 //   1. TOKEN BROKER (gh-token-broker container) — `serve` mode. Holds the App
 //      private key (GITHUB_APP_PRIVATE_KEY_B64) and exposes an internal HTTP
 //      endpoint that mints short-lived, repo-scoped installation tokens. This is
-//      the ONLY place the key lives.
+//      the ONLY place the key lives. Response: { token, expires_at } — the
+//      `expires_at` lets clients cache against the token's real life (GOL-799).
 //
 //   2. CREDENTIAL HELPER (inside paperclip-server, run as `node`) — `get`/`token`
 //      modes. When GH_TOKEN_BROKER_URL is set it asks the broker for a token over
@@ -143,12 +144,18 @@ function cacheFileFor(owner, repo) {
   return join(CACHE_DIR, `${key}.json`);
 }
 
-async function mintLocal(owner, repo) {
+// Mint (or serve from disk cache) an installation token, returning the full
+// GitHub record `{ token, expires_at }`. Callers that only want the string use
+// `mintLocal`. Broker `serve` mode returns `expires_at` to the client so it can
+// cache against the token's REAL life, not a flat guess (GOL-799).
+async function mintLocalRecord(owner, repo) {
   validateTarget(owner, repo);
   const cacheFile = cacheFileFor(owner, repo);
   try {
     const c = JSON.parse(readFileSync(cacheFile, "utf8"));
-    if (c.token && c.expires_at && Date.parse(c.expires_at) - Date.now() > 5 * 60 * 1000) return c.token;
+    if (c.token && c.expires_at && Date.parse(c.expires_at) - Date.now() > 5 * 60 * 1000) {
+      return { token: c.token, expires_at: c.expires_at };
+    }
   } catch { /* missing/stale — re-mint */ }
   const jwt = appJwt();
   // owner is already OWNER_RE-validated (no '/', '.', '@', ':'), but encode it
@@ -170,7 +177,12 @@ async function mintLocal(owner, repo) {
     mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
     writeFileSync(cacheFile, JSON.stringify(tok), { mode: 0o600 });
   } catch { /* best-effort */ }
-  return tok.token;
+  return { token: tok.token, expires_at: tok.expires_at };
+}
+
+/** Token string only — for the git credential helper and `token` CLI mode. */
+async function mintLocal(owner, repo) {
+  return (await mintLocalRecord(owner, repo)).token;
 }
 
 // --- broker client (helper side) ------------------------------------------
@@ -248,8 +260,9 @@ function serve() {
         res.writeHead(403, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "owner_not_allowed" }));
         return;
       }
-      const token = await mintLocal(owner, repo); // validates owner/repo
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ token }));
+      const { token, expires_at } = await mintLocalRecord(owner, repo); // validates owner/repo
+      // `expires_at` lets clients cache against the token's real life (GOL-799).
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ token, expires_at }));
     } catch (e) {
       // Log status/path only; never the key or API bodies.
       log(e.message);

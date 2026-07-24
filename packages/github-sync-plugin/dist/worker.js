@@ -10953,6 +10953,7 @@ var GitHubClient = class {
 };
 
 // src/broker.ts
+var EXPIRY_SKEW_MS = 2 * 60 * 1e3;
 function makeBrokerTokenProvider(brokerUrl, owner, opts = {}) {
   const ttlMs = opts.ttlMs ?? 50 * 60 * 1e3;
   const timeoutMs = opts.timeoutMs ?? 5e3;
@@ -10978,7 +10979,10 @@ function makeBrokerTokenProvider(brokerUrl, owner, opts = {}) {
       if (!res.ok) throw new Error(`token broker -> ${res.status}`);
       const body = await res.json();
       if (!body.token) throw new Error("token broker returned no token");
-      cache.set(key, { token: body.token, expiresAt: now() + ttlMs });
+      const ttlExpiry = now() + ttlMs;
+      const realExpiry = body.expires_at ? Date.parse(body.expires_at) - EXPIRY_SKEW_MS : NaN;
+      const expiresAt = Number.isFinite(realExpiry) ? Math.min(ttlExpiry, realExpiry) : ttlExpiry;
+      if (expiresAt > now()) cache.set(key, { token: body.token, expiresAt });
       return body.token;
     } finally {
       clearTimeout(timer);

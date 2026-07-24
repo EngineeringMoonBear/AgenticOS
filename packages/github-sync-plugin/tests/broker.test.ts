@@ -5,6 +5,14 @@ function brokerFetch(token: string, ok = true, status = 200) {
   return vi.fn().mockResolvedValue({ ok, status, json: async () => ({ token }) });
 }
 
+function brokerFetchExpiring(token: string, expiresAtMs: number) {
+  return vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({ token, expires_at: new Date(expiresAtMs).toISOString() }),
+  });
+}
+
 describe("makeBrokerTokenProvider", () => {
   it("requests a repo-scoped token with owner+repo query params", async () => {
     const fetchMock = brokerFetch("ghs_abc");
@@ -35,6 +43,45 @@ describe("makeBrokerTokenProvider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     clock += 1001; // past TTL
+    await getToken("repo");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes before the token's real expires_at, not the flat TTL (GOL-799)", async () => {
+    let clock = 1_000_000;
+    // Broker hands back a token with only 6 min of life left (its disk cache
+    // serves anything with >5 min). The flat 50-min client TTL would hold it
+    // ~44 min past expiry → GitHub 401 "Bad credentials".
+    const fetchMock = brokerFetchExpiring("near-dead", clock + 6 * 60 * 1000);
+    const getToken = makeBrokerTokenProvider("http://b", "Org", {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      ttlMs: 50 * 60 * 1000,
+      now: () => clock,
+    });
+
+    await getToken("repo");
+    await getToken("repo"); // still comfortably before expiry — cached
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // 5 min later we are inside the 2-min skew of the 6-min expiry → re-mint.
+    clock += 5 * 60 * 1000;
+    await getToken("repo");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to the flat TTL when the broker omits expires_at (pre-GOL-799)", async () => {
+    let clock = 1_000;
+    const fetchMock = brokerFetch("legacy"); // no expires_at field
+    const getToken = makeBrokerTokenProvider("http://b", "Org", {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      ttlMs: 1000,
+      now: () => clock,
+    });
+    await getToken("repo");
+    clock += 500;
+    await getToken("repo"); // within flat TTL — cached
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    clock += 600; // past flat TTL
     await getToken("repo");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
