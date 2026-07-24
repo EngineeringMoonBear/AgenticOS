@@ -98,11 +98,17 @@ async function isIssueDone(deps: SyncDeps, row: PrReviewRow, companyId: string):
 }
 
 /**
- * Post a green `agent-review/<reviewer>` check-run on the row's head SHA. The repo
- * for the API call is the bridge's bare repo name (config.githubRepo) — the client
- * builds `/repos/<org>/<repo>/...` — while the row's `githubRepo` (owner/repo) is
- * used only for human-facing display. On success we ✅-ping; on API failure we log
- * and 🔥-ping so a stuck-pending required check is never silent.
+ * Post a green `agent-review/<reviewer>` check-run on the row's head SHA. The
+ * target repo + client come from the ROW's stored `owner/repo` slug via
+ * deps.resolveRepoClient — NOT from deps.config/deps.github. Those are keyed by
+ * paperclipProjectId, and two bridges can share one project; the deps entry then
+ * belongs to whichever bridge registered last, so completing with its config
+ * posted grove-odoo-modules checks to odoocker-goldberrygrove ("No commit found
+ * for SHA", PRs #44/#46) — and the same mixup aims the getPull gate below at the
+ * wrong repo's PR number. A resolver miss 🔥-pings and posts nothing rather than
+ * guessing a repo; without a resolver (legacy callers) we still derive the bare
+ * repo name from the row. On success we ✅-ping; on API failure we log and
+ * 🔥-ping so a stuck-pending required check is never silent.
  *
  * A sign-off check-run only gates an OPEN PR. Once a PR is merged/closed its branch
  * head has advanced or dangled, so GitHub's Checks API rejects a completion on the
@@ -115,15 +121,33 @@ async function isIssueDone(deps: SyncDeps, row: PrReviewRow, companyId: string):
  * never suppresses a real alert: we only skip/mute on a definitive merged/closed.
  */
 async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Reviewer): Promise<void> {
-  const { github, config, logger } = deps;
+  const { logger } = deps;
 
-  const pre = await github.getPull(config.githubRepo, row.prNumber);
+  const resolved = deps.resolveRepoClient?.(row.githubRepo) ?? null;
+  if (deps.resolveRepoClient && !resolved) {
+    logger.error("signoff: no bridge for the review row's repo — check-run not posted", {
+      repo: row.githubRepo,
+      prNumber: row.prNumber,
+      reviewer,
+      headSha: row.headSha,
+    });
+    await deps.postOpsPing?.(
+      buildPipelineErrorPing(
+        `sign-off check-run skipped for ${row.githubRepo}#${row.prNumber} (${reviewer}): repo is not bridged`,
+      ),
+    );
+    return;
+  }
+  const github = resolved ? resolved.github : deps.github;
+  const repo = resolved ? resolved.repo : bareRepoName(row.githubRepo);
+
+  const pre = await github.getPull(repo, row.prNumber);
   if (pre.ok && isClosedPull(pre.data)) {
     logSkippedForClosedPr(deps, row, reviewer, pre.data);
     return;
   }
 
-  const res = await github.createCheckRun(config.githubRepo, {
+  const res = await github.createCheckRun(repo, {
     name: CHECK_CONTEXT[reviewer],
     headSha: row.headSha,
     conclusion: "success",
@@ -133,7 +157,7 @@ async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Revi
   if (!res.ok) {
     // A merge that landed between the pre-check and the post makes the failure
     // benign — re-derive state and mute the alert if the PR is no longer open.
-    const post = await github.getPull(config.githubRepo, row.prNumber);
+    const post = await github.getPull(repo, row.prNumber);
     if (post.ok && isClosedPull(post.data)) {
       logSkippedForClosedPr(deps, row, reviewer, post.data);
       return;
@@ -160,6 +184,12 @@ async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Revi
     checkRunId: res.data.id,
   });
   await deps.postOpsPing?.(buildSignoffPing(reviewer, row.githubRepo, row.prNumber));
+}
+
+/** Bare repo name from a full `owner/repo` slug (tolerates a bare name too). */
+function bareRepoName(slug: string): string {
+  const idx = slug.lastIndexOf("/");
+  return idx === -1 ? slug : slug.slice(idx + 1);
 }
 
 /** A PR whose head is no longer a live merge gate — merged, or otherwise closed. */

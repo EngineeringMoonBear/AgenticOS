@@ -1390,6 +1390,14 @@ const plugin = definePlugin({
     // Build a projectId → SyncDeps map. Subscriptions below are company-wide (the
     // event filter can't see projectId — see makeDispatch), so routing is by project.
     const depsByProject = new Map<string, SyncDeps>();
+    // Full `owner/repo` slug → that bridge's client + bare repo name. The sign-off
+    // completion path resolves through THIS (deps.resolveRepoClient) because
+    // depsByProject is not injective: two bridges sharing one paperclipProjectId
+    // collapse to the last bridge's github/config, which posted grove-odoo-modules
+    // check completions to odoocker-goldberrygrove (PRs #44/#46).
+    const clientsBySlug = new Map<string, { github: GitHubClient; repo: string }>();
+    const bridgeSlugsByProject = new Map<string, string[]>();
+    const resolveRepoClient = (repoSlug: string) => clientsBySlug.get(repoSlug.toLowerCase()) ?? null;
     for (const bridge of cfg.bridges) {
       let getToken;
       if (brokerUrl) {
@@ -1404,6 +1412,12 @@ const plugin = definePlugin({
       }
 
       const github = new GitHubClient({ org: bridge.githubOrg, getToken });
+      const slug = `${bridge.githubOrg}/${bridge.githubRepo}`;
+      clientsBySlug.set(slug.toLowerCase(), { github, repo: bridge.githubRepo });
+      bridgeSlugsByProject.set(bridge.paperclipProjectId, [
+        ...(bridgeSlugsByProject.get(bridge.paperclipProjectId) ?? []),
+        slug,
+      ]);
       depsByProject.set(bridge.paperclipProjectId, {
         db: ctx.db,
         github,
@@ -1421,6 +1435,7 @@ const plugin = definePlugin({
             async (rest) => (await rest.getIssue(issueId)) as Issue | null,
           ),
         postOpsPing: (content) => postOpsPing(ctx, cfg.opsWebhookUrl, content),
+        resolveRepoClient,
       });
 
       ctx.logger.info("bridge active", {
@@ -1433,6 +1448,19 @@ const plugin = definePlugin({
     if (depsByProject.size === 0) {
       ctx.logger.warn("no usable bridges (all missing auth) — GitHub Sync is INACTIVE.");
       return;
+    }
+
+    // Shared paperclipProjectId = only the LAST bridge's deps handle that project's
+    // issue events. Sign-off completions survive this (resolveRepoClient routes by
+    // the row's repo slug), but the mirror path's config/github are still the last
+    // bridge's — keep this loud until routing is per-bridge.
+    for (const [projectId, slugs] of bridgeSlugsByProject) {
+      if (slugs.length > 1) {
+        ctx.logger.warn(
+          "multiple bridges share one paperclipProjectId — issue-event dispatch uses only the LAST bridge's config",
+          { projectId, bridges: slugs },
+        );
+      }
     }
 
     // One company-wide subscription per event type; makeDispatch routes each event

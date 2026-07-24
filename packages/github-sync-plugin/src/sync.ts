@@ -96,6 +96,17 @@ export interface SyncDeps {
    * doesn't use it; the PR sign-off path (GOL-186) pings on green / API failure.
    */
   postOpsPing?: (content: string) => Promise<void>;
+  /**
+   * Resolve a full `owner/repo` slug (as stored on github_pr_review rows) to that
+   * bridge's client + bare repo name. The sign-off completion path must use THIS,
+   * not `github`/`config` above: deps are keyed by paperclipProjectId, and when two
+   * bridges share one project those fields belong to whichever bridge registered
+   * last — completions then land on the wrong repo ("No commit found for SHA",
+   * grove-odoo-modules PRs #44/#46). Optional so pure-sync callers/tests need not
+   * wire it; without it the sign-off path falls back to `github` + the slug's bare
+   * repo name.
+   */
+  resolveRepoClient?: (repoSlug: string) => { github: GitHubClient; repo: string } | null;
 }
 
 /**
