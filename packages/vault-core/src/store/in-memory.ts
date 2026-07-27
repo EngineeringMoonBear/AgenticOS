@@ -116,6 +116,11 @@ export class InMemoryVaultStore implements VaultStore {
   private readonly wikiSubdir: string;
   private index: VaultIndex | null = null;
   private ttlExpiresAt = 0;
+  // Notes dropped from the index this revalidate() because their frontmatter
+  // wouldn't parse. Surfaced through lint() so a broken note is visible in the
+  // UI instead of silently vanishing from search. Rebuilt atomically with the
+  // index below.
+  private malformedNotes: LintIssue[] = [];
 
   constructor(config: InMemoryConfig) {
     this.vaultRoot = config.vaultRoot;
@@ -149,6 +154,7 @@ export class InMemoryVaultStore implements VaultStore {
     const files = await walkMarkdown(this.wikiDir, new Set([this.inboxDir]));
     const pages = new Map<WikiPath, WikiPage>();
     const allTags = new Set<string>();
+    const malformed: LintIssue[] = [];
 
     // Type helper for temp field during build
     type PageWithRefs = WikiPage & { _rawRefs?: ReturnType<typeof extractWikilinks> };
@@ -175,9 +181,9 @@ export class InMemoryVaultStore implements VaultStore {
       try {
         ({ meta, body } = parseFrontmatter(raw));
       } catch (err) {
-        console.warn(
-          `[vault] skipping ${relNoExt}: ${err instanceof Error ? err.message : String(err)}`
-        );
+        const detail = err instanceof Error ? err.message : String(err);
+        console.warn(`[vault] skipping ${relNoExt}: ${detail}`);
+        malformed.push({ kind: "malformed-frontmatter", path: relNoExt, detail });
         continue;
       }
 
@@ -238,6 +244,7 @@ export class InMemoryVaultStore implements VaultStore {
     }
 
     this.index = { pages, backlinks, allTags, builtAt: Date.now() };
+    this.malformedNotes = malformed;
     this.ttlExpiresAt = Date.now() + this.ttlMs;
   }
 
@@ -401,7 +408,11 @@ export class InMemoryVaultStore implements VaultStore {
 
   async lint(): Promise<LintIssue[]> {
     const idx = await this.ensureIndex();
+    // ensureIndex() has just (re)built the index, so this.malformedNotes is
+    // in sync with it. List malformed notes first — they're the most actionable
+    // (the note is missing from search until fixed), not merely advisory.
     return [
+      ...this.malformedNotes,
       ...detectBrokenLinks(idx),
       ...detectOrphans(idx),
       ...detectTodos(idx),

@@ -83,6 +83,30 @@ describe("InMemoryVaultStore - malformed frontmatter resilience", () => {
     const stats = await store.stats();
     expect(stats.pageCount).toBe(1);
   });
+
+  it("surfaces the skipped note as a malformed-frontmatter lint issue", async () => {
+    await writeWikiPage("Good/One.md", "# One");
+    await writeWikiPage("Bad/Broken.md", BAD);
+    const issues = await store.lint();
+    const malformed = issues.filter((i) => i.kind === "malformed-frontmatter");
+    expect(malformed).toHaveLength(1);
+    expect(malformed[0]!.path).toBe("Bad/Broken");
+    expect(malformed[0]!.detail).toMatch(/frontmatter/i);
+  });
+
+  it("clears the malformed issue once the note is fixed and revalidated", async () => {
+    await writeWikiPage("Bad/Broken.md", BAD);
+    expect(await store.lint()).toHaveLength(1);
+    // Quote the title — the real-world fix.
+    await writeWikiPage(
+      "Bad/Broken.md",
+      `---\ntitle: "Helvetia Campaign — Bruno & Carlo: Cousin Connection"\ntags: [tabletop]\n---\nBody.`
+    );
+    await store.revalidate();
+    expect(
+      (await store.lint()).filter((i) => i.kind === "malformed-frontmatter")
+    ).toHaveLength(0);
+  });
 });
 
 describe("InMemoryVaultStore - read", () => {

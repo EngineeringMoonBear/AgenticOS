@@ -1,6 +1,6 @@
 "use client";
 
-import { Unlink, FileQuestion, AlertTriangle } from "lucide-react";
+import { Unlink, FileQuestion, AlertTriangle, FileWarning } from "lucide-react";
 import type { LintIssue } from "@agenticos/vault-core";
 import { useLintIssues } from "@/lib/vault/hooks/use-lint-issues";
 
@@ -16,6 +16,11 @@ function kindIcon(kind: LintIssue["kind"]) {
       return <FileQuestion size={10} strokeWidth={1.5} style={{ color: "var(--text-muted)", flexShrink: 0, marginTop: 2 }} aria-hidden="true" />;
     case "todo":
       return <AlertTriangle size={10} strokeWidth={1.5} style={{ color: "var(--text-muted)", flexShrink: 0, marginTop: 2 }} aria-hidden="true" />;
+    case "malformed-frontmatter":
+      // A malformed note is dropped from the index entirely — it vanishes from
+      // search until fixed — so it gets a warning tint, unlike the muted
+      // advisory kinds above.
+      return <FileWarning size={10} strokeWidth={1.5} style={{ color: "var(--warning)", flexShrink: 0, marginTop: 2 }} aria-hidden="true" />;
   }
 }
 
@@ -25,6 +30,9 @@ export function LintPanel({ onNavigate }: LintPanelProps) {
   const brokenCount = issues.filter((i) => i.kind === "broken-link").length;
   const orphanCount = issues.filter((i) => i.kind === "orphan").length;
   const todoCount = issues.filter((i) => i.kind === "todo").length;
+  const malformedCount = issues.filter(
+    (i) => i.kind === "malformed-frontmatter"
+  ).length;
 
   const visible = issues.slice(0, 20);
 
@@ -38,6 +46,14 @@ export function LintPanel({ onNavigate }: LintPanelProps) {
       </p>
       <p className="text-xs mb-2" style={{ color: "var(--text-muted)" }}>
         {brokenCount} broken · {orphanCount} orphan · {todoCount} todo
+        {malformedCount > 0 && (
+          <>
+            {" · "}
+            <span style={{ color: "var(--warning)", fontWeight: 500 }}>
+              {malformedCount} malformed
+            </span>
+          </>
+        )}
       </p>
       {visible.length > 0 && (
         <ul

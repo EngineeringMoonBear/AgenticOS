@@ -9,9 +9,9 @@
  * Droplet's vault).
  *
  * The read and inbox-curation methods wired to vault-server endpoints are:
- * list, read, search, getBacklinks, listInbox, stats, readInbox, discardInbox.
- * The following methods remain deferred (no vault-server endpoint yet):
- * getOutgoing, getAllTags, lint, promoteInbox, revalidate. Rather than fail
+ * list, read, search, getBacklinks, listInbox, stats, lint, readInbox,
+ * discardInbox. The following methods remain deferred (no vault-server endpoint
+ * yet): getOutgoing, getAllTags, promoteInbox, revalidate. Rather than fail
  * silently, they throw a clear error so a missing endpoint surfaces loudly.
  */
 import type {
@@ -143,7 +143,12 @@ export class RemoteVaultClient implements VaultStore {
   }
 
   async lint(): Promise<LintIssue[]> {
-    return this.notSupported("lint");
+    const res = await fetch(`${this.baseUrl}/lint`, { cache: "no-store" });
+    if (!res.ok) {
+      throw new Error(`vault-server /lint -> HTTP ${res.status}`);
+    }
+    const body = (await res.json()) as { issues: LintIssue[] };
+    return body.issues;
   }
 
   async promoteInbox(): Promise<WikiPage> {

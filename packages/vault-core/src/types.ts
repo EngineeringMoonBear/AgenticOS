@@ -35,7 +35,7 @@ export interface VaultIndex {
 }
 
 export interface LintIssue {
-  kind: "broken-link" | "orphan" | "todo";
+  kind: "broken-link" | "orphan" | "todo" | "malformed-frontmatter";
   path: WikiPath;
   detail: string;
   line?: number;

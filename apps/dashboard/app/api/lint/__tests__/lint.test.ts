@@ -139,12 +139,34 @@ describe("GET /api/lint", () => {
     expect(kinds.size).toBeGreaterThan(1);
   });
 
-  it("degrades to empty issues in remote mode (VAULT_SERVER_URL set)", async () => {
-    // In remote mode the vault store is RemoteVaultClient, whose lint() is a
-    // notSupported() stub. The route must short-circuit to an empty result
-    // instead of throwing a 500 on every poll.
+  it("proxies to vault-server /lint in remote mode (VAULT_SERVER_URL set)", async () => {
+    // Remote mode now works end-to-end: RemoteVaultClient.lint() fetches the
+    // vault-server /lint endpoint (added alongside this change). Surfacing a
+    // malformed-frontmatter issue is the whole point — a broken note must be
+    // visible in the UI, not silently dropped.
     process.env.VAULT_SERVER_URL = "http://vault-server:7777";
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      expect(String(input)).toBe("http://vault-server:7777/lint");
+      return new Response(
+        JSON.stringify({
+          issues: [
+            {
+              kind: "malformed-frontmatter",
+              path: "Tabletop/Broken",
+              detail: "Malformed frontmatter YAML: ...",
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
     try {
+      const { __resetVaultStoreForTests } = await import(
+        "@/lib/vault/store-singleton"
+      );
+      __resetVaultStoreForTests();
+
       const { GET } = await import("@/app/api/lint/route");
       const url = new URL("http://localhost/api/lint");
       const req = Object.assign(new Request(url.href), { nextUrl: url });
@@ -152,10 +174,44 @@ describe("GET /api/lint", () => {
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.issues).toEqual([]);
-      expect(body.unavailable).toBe(true);
+      expect(body.unavailable).toBeUndefined();
+      const kinds = (body.issues as { kind: string }[]).map((i) => i.kind);
+      expect(kinds).toContain("malformed-frontmatter");
+      expect(fetchMock).toHaveBeenCalledOnce();
     } finally {
+      vi.unstubAllGlobals();
       delete process.env.VAULT_SERVER_URL;
     }
+  });
+
+  it("filters to malformed-frontmatter when kind=malformed-frontmatter", async () => {
+    await writeMd(
+      tmpDir,
+      "wiki/Bad.md",
+      "---\ntitle: A — B: C\n---\nBroken frontmatter (unquoted second colon)"
+    );
+    await writeMd(tmpDir, "wiki/Ok.md", "---\ntitle: Ok\n---\nTODO something");
+
+    vi.resetModules();
+    vi.doMock("@/lib/config/config-io", () => ({
+      readConfig: async () => ({ vaultPath: tmpDir }),
+    }));
+    const { __resetVaultStoreForTests } = await import(
+      "@/lib/vault/store-singleton"
+    );
+    __resetVaultStoreForTests();
+
+    const { GET } = await import("@/app/api/lint/route");
+    const url = new URL(
+      "http://localhost/api/lint?kind=malformed-frontmatter"
+    );
+    const req = Object.assign(new Request(url.href), { nextUrl: url });
+    const res = await GET(req as Parameters<typeof GET>[0]);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const kinds = (body.issues as { kind: string }[]).map((i) => i.kind);
+    expect(kinds.every((k) => k === "malformed-frontmatter")).toBe(true);
+    expect(kinds.length).toBe(1);
   });
 });
