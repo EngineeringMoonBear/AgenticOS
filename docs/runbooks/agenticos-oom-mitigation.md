@@ -49,6 +49,32 @@ terraform apply
 To also route alerts to Discord, set `TF_VAR_alert_slack='{url="https://discord.com/api/webhooks/…/slack",channel="#alerts"}'`
 (DO's Slack alert type posts to a Discord webhook when you append `/slack`).
 
+## App-level run-dispatch concurrency cap (GOL-819)
+
+Defense-in-depth on top of the idempotent-create guard (GOL-638) and the
+droplet resize (GOL-657): a global FIFO semaphore bounds how many agent
+subprocesses the **AgenticOS app itself** dispatches at once, so a future
+runaway that is *not* the create-dup path (a wake/retry storm, a fan-out bug)
+can't oversubscribe the box's practical ceiling (~8-10 runs post-resize).
+
+- **Where:** `apps/dashboard/lib/agent/concurrency.ts`, wired into `spawnClaude`
+  (`lib/agent/spawn.ts`) — every run this app spawns holds a slot for the
+  child's lifetime. Excess demand **queues (FIFO)**, it is not dropped or errored.
+- **Default:** `8` concurrent runs. Tune with the `AGENTICOS_MAX_CONCURRENT_RUNS`
+  env var (positive integer; invalid values warn and fall back to `8`). Raising
+  it caps more throughput to the box, lowering it protects shared-API latency —
+  **confirm the value with the CEO before Phase-5 dispatch goes live**, since it
+  bounds total agent throughput.
+- **Observability:** crossing the cap emits a `console.warn` line prefixed
+  `[run-dispatch] concurrency cap reached: …` (active/limit/queued). A Discord
+  ops bridge can key off that prefix.
+
+**Scope:** this bounds the app's *own* dispatch path (the Phase-5
+scheduler/curator wiring, manual "Run Now", future fan-out). The **primary live
+agent-run dispatcher is `paperclip-server`** (it spawns every agent subprocess,
+per the `mem_limit` note above); a hard concurrency cap at *that* layer is a
+Paperclip-platform concern, tracked separately from this repo.
+
 ## Right-sizing (separate decision)
 The box is `s-2vcpu-4gb`. If the mem_limits above prove too tight under real
 concurrency, bump `var.droplet_size` to `s-2vcpu-8gb` (+~$24/mo) and
