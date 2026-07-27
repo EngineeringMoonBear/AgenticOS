@@ -166,7 +166,20 @@ export class InMemoryVaultStore implements VaultStore {
         continue;
       }
 
-      const { meta, body } = parseFrontmatter(raw);
+      // A single note with malformed frontmatter (e.g. an unquoted title
+      // containing a second colon) must not take down the whole index — that
+      // 500'd /stats, /tree, and /list in production. Skip the bad file with a
+      // warning, exactly as the unreadable-file case above continues.
+      let meta: Record<string, unknown>;
+      let body: string;
+      try {
+        ({ meta, body } = parseFrontmatter(raw));
+      } catch (err) {
+        console.warn(
+          `[vault] skipping ${relNoExt}: ${err instanceof Error ? err.message : String(err)}`
+        );
+        continue;
+      }
 
       const fmTags = Array.isArray(meta["tags"])
         ? (meta["tags"] as string[])
@@ -451,9 +464,13 @@ export class InMemoryVaultStore implements VaultStore {
   }
 
   async stats(): Promise<VaultStats> {
+    // Build (or refresh) the index first, like every other read method. Without
+    // this, a cold `/api/vault/stats` — the first route hit after a restart —
+    // reported pageCount 0 until some other route happened to warm the index.
+    const index = await this.ensureIndex();
     return {
-      pageCount: this.index?.pages.size ?? 0,
-      builtAt: this.index?.builtAt ?? 0,
+      pageCount: index.pages.size,
+      builtAt: index.builtAt,
       ttlExpiresAt: this.ttlExpiresAt,
     };
   }
