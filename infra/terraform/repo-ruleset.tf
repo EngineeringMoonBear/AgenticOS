@@ -76,18 +76,38 @@
 #     it now posts is `agent-review/ada`, matching var.agent_review_check_context.
 # LIVE PROOF: PR #408 (head 0dad39ec) carries `agent-review/ada` -> completed /
 #   conclusion=success. That is the first real green emission; the ~1-week soak
-#   window begins here (earliest board-approved apply still ~2026-07-26).
+#   window begins HERE (2026-07-23), not at the 2026-07-19 identity re-point.
+#
+# -----------------------------------------------------------------------------
+# SOAK RE-VERIFICATION (DevOps-Terra, GitHub API, 2026-07-26):
+#   * BREADTH is strong. Across every PR opened after the alice->ada rename
+#     (PR #401), `agent-review/ada` = completed/success on TEN live PRs:
+#     #408 #415 #419 #421 #410 #425 #417 #426 #412 #428. Two 07-24 PRs (#423,
+#     #430) were in_progress-at-close -- the exact merged/closed sign-off case
+#     that the later hardening PRs #425 ("green merged/closed sign-off") and
+#     #428 ("surface sign-off failures") fixed. This is a reliability win, not a
+#     gap. (#406 predates the fix -> no check, expected.)
+#   * BOARD CONFIRMATION GATE IS CLEARED: the GOL-460 request_confirmation to
+#     CEO-Rick was ACCEPTED 2026-07-22 20:11:39Z (Option A + prod apply
+#     authorized). DB-verified. It is no longer a blocker.
+#   * SOAK-DURATION CALL: because the *reliable-green* clock actually started at
+#     PR #408 (2026-07-23) and sign-off routing was still being patched through
+#     2026-07-24, a conservative 1-week reliable-emission soak lands ~2026-07-30.
+#     Recommend earliest apply 2026-07-30 (not the original 07-26 calendar
+#     estimate, which was computed from the 07-19 re-point before emission was
+#     actually working). Final apply-timing call belongs to CEO-Rick / Josh, who
+#     own the human apply and now own this issue (GOL-578 reassigned to CEO-Rick).
+#
 # Note: older pre-rename PRs still show a stale `agent-review/alice` check (e.g.
 #   PR #403 head eb466534, stuck in_progress) -- historical, not a blocker; those
 #   PRs predate the reload and are irrelevant to the forward gate.
 # REMAINING GATES before flipping enable_agent_review_merge_gate = true and
-# applying (all still open, unchanged):
-#   1. SOAK -- accumulate ~1 week of reliable green `agent-review/ada` emissions
-#      on live PRs; DevOps re-verifies breadth (not just one smoke PR) at apply.
-#   2. BOARD -- CEO-Rick accepts the GOL-460 request_confirmation (Ada identity +
-#      Option A + authorize prod apply).
+# applying:
+#   1. SOAK -- ~1 week of reliable green `agent-review/ada` on live PRs; earliest
+#      ~2026-07-30 per the re-verification above. [emission RELIABLE as of 07-26]
+#   2. BOARD -- CEO-Rick's GOL-460 request_confirmation. [ACCEPTED 2026-07-22]
 #   3. HUMAN APPLY -- via Josh with a repo-administration-scoped github token
-#      (GOL-252 wall), escalated through CEO-Rick.
+#      (GOL-252 wall), escalated through CEO-Rick. [OPEN -- the only live step]
 #
 variable "enable_agent_review_merge_gate" {
   description = <<-EOT
