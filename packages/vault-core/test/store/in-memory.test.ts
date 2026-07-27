@@ -54,6 +54,37 @@ describe("InMemoryVaultStore - list", () => {
   });
 });
 
+describe("InMemoryVaultStore - malformed frontmatter resilience", () => {
+  // Regression: a single note with an unquoted title containing a second
+  // colon ("Bruno & Carlo: Cousin Connection") produced malformed YAML
+  // ("Nested mappings are not allowed in compact mappings"), and because
+  // revalidate() parsed frontmatter without a guard, that one file 500'd
+  // the entire vault API — /stats, /tree, and /list all went down.
+  const BAD = `---\ntitle: Helvetia Campaign — Bruno & Carlo: Cousin Connection\ntags: [tabletop]\n---\nBody.`;
+
+  it("skips a malformed-frontmatter file instead of failing the whole index", async () => {
+    await writeWikiPage("Good/One.md", "# One\n\nFine.");
+    await writeWikiPage("Bad/Broken.md", BAD);
+    await writeWikiPage("Good/Two.md", "# Two\n\nAlso fine.");
+
+    // Must not throw — the bug was that this rejected.
+    await expect(store.revalidate()).resolves.not.toThrow();
+
+    const { flat } = await store.list();
+    expect(flat).toContain("Good/One");
+    expect(flat).toContain("Good/Two");
+    // The broken page is skipped, not indexed.
+    expect(flat).not.toContain("Bad/Broken");
+  });
+
+  it("stats() succeeds and counts only the parseable pages", async () => {
+    await writeWikiPage("Good/One.md", "# One");
+    await writeWikiPage("Bad/Broken.md", BAD);
+    const stats = await store.stats();
+    expect(stats.pageCount).toBe(1);
+  });
+});
+
 describe("InMemoryVaultStore - read", () => {
   it("returns null for unknown page", async () => {
     const page = await store.read("Nonexistent");
