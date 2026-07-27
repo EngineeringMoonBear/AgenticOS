@@ -1,6 +1,7 @@
 import "server-only";
 import { spawn } from "node:child_process";
 import { StreamJsonEvent } from "./types";
+import { getRunDispatchLimiter } from "./concurrency";
 
 export interface ParsedRun {
   sessionId: string | null;
@@ -78,7 +79,21 @@ export interface SpawnClaudeOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Dispatch a Claude Code run, gated by the global run-dispatch concurrency cap
+ * (GOL-819). The slot is held for the entire lifetime of the child process and
+ * released when it settles; excess concurrent dispatches queue (FIFO) rather
+ * than oversubscribing the box.
+ */
 export async function spawnClaude(options: SpawnClaudeOptions): Promise<{
+  parsed: ParsedRun;
+  stderr: string;
+  exitCode: number;
+}> {
+  return getRunDispatchLimiter().withSlot(() => spawnClaudeProcess(options));
+}
+
+async function spawnClaudeProcess(options: SpawnClaudeOptions): Promise<{
   parsed: ParsedRun;
   stderr: string;
   exitCode: number;
