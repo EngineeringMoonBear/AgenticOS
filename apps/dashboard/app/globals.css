@@ -59,6 +59,7 @@
   --success-border:      #1a4a2e;
 
   --warning:             #fbbf24;
+  --warning-fg:          var(--warning);   /* bare-foreground use on surface; .light darkens it for contrast */
   --warning-bg:          #221800;
   --warning-border:      #4a3500;
 
@@ -234,6 +235,10 @@
   --success-border:      #b8e8cb;
   --warning-bg:          #fef9e6;
   --warning-border:      #f0d678;
+  /* Darker amber for bare foreground on the white light surface.
+     --warning (#fbbf24) is only ~1.67:1 on #fff; gold-600 (#876411) is 5.44:1
+     → passes WCAG 4.5:1 text / 3:1 icon. See --warning-fg in :root. */
+  --warning-fg:          var(--accent-gold-600);
   --error-bg:            #fef0f0;
   --error-border:        #f8c4c4;
   --info-bg:             #eef5ff;

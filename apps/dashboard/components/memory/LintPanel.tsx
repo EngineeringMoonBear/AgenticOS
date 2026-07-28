@@ -20,7 +20,7 @@ function kindIcon(kind: LintIssue["kind"]) {
       // A malformed note is dropped from the index entirely — it vanishes from
       // search until fixed — so it gets a warning tint, unlike the muted
       // advisory kinds above.
-      return <FileWarning size={10} strokeWidth={1.5} style={{ color: "var(--warning)", flexShrink: 0, marginTop: 2 }} aria-hidden="true" />;
+      return <FileWarning size={10} strokeWidth={1.5} style={{ color: "var(--warning-fg)", flexShrink: 0, marginTop: 2 }} aria-hidden="true" />;
   }
 }
 
@@ -49,7 +49,7 @@ export function LintPanel({ onNavigate }: LintPanelProps) {
         {malformedCount > 0 && (
           <>
             {" · "}
-            <span style={{ color: "var(--warning)", fontWeight: 500 }}>
+            <span style={{ color: "var(--warning-fg)", fontWeight: 500 }}>
               {malformedCount} malformed
             </span>
           </>
