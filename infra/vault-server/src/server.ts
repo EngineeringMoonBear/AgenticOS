@@ -4,6 +4,7 @@ import { registerHealthRoute } from "./routes/health.js";
 import { registerTreeRoute } from "./routes/tree.js";
 import { registerPageRoute } from "./routes/page.js";
 import { registerStatsRoute } from "./routes/stats.js";
+import { registerLintRoute } from "./routes/lint.js";
 import { registerBacklinksRoute } from "./routes/backlinks.js";
 import { registerSearchRoute } from "./routes/search.js";
 import { registerInboxRoute } from "./routes/inbox.js";
@@ -23,6 +24,7 @@ async function main(): Promise<void> {
   registerTreeRoute(app, config);
   registerPageRoute(app, config);
   registerStatsRoute(app, config);
+  registerLintRoute(app, config);
   registerBacklinksRoute(app, config);
   registerSearchRoute(app, config);
   registerInboxRoute(app, config);
