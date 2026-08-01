@@ -23,6 +23,21 @@ export interface SyncLogger {
 
 const GITHUB_MARKER_RE = /<!--\s*synced-from-github:\s*([^\s#]+)#(\d+)\s*-->/i;
 
+/**
+ * Markers stamped into issues this plugin CREATES for its own pipelines —
+ * PR-review issues (prReviewMarker) and CI fix issues (ciFixMarker). Those are
+ * operational artifacts about GitHub state, not work items: mirroring them back
+ * out as GitHub issues is pure noise (202 junk "Review PR …" issues had
+ * accumulated in bridged repos before this guard existed). Both the
+ * issue.created event path and the reconcile sweep skip them.
+ */
+const PLUGIN_OPERATIONAL_MARKER_RE = /<!--\s*(pr-review|ci-fix):/i;
+
+/** True when the issue is one of this plugin's own operational issues. */
+export function isPluginOperationalIssue(description: string | null | undefined): boolean {
+  return !!description && PLUGIN_OPERATIONAL_MARKER_RE.test(description);
+}
+
 /** Map a Paperclip issue status to a GitHub issue state. */
 export function statusToGithubState(status: Issue["status"]): "open" | "closed" {
   return status === "done" || status === "cancelled" ? "closed" : "open";
@@ -133,6 +148,13 @@ export async function handleIssueCreated(
   const issue = await getIssue(input.issueId, input.companyId);
   if (!issue) {
     logger.warn("issue.created: issue not readable; skipping", { issueId: input.issueId });
+    return;
+  }
+
+  if (isPluginOperationalIssue(issue.description)) {
+    logger.info("issue.created is a plugin-operational issue (pr-review/ci-fix); not mirrored", {
+      issueId: issue.id,
+    });
     return;
   }
 

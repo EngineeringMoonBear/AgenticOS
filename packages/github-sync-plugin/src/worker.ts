@@ -40,6 +40,7 @@ import {
 } from "./pr-review.js";
 import { getReviewRecord, upsertReviewRecord } from "./pr-review-store.js";
 import { handleReviewSignoff } from "./pr-signoff.js";
+import { runMirrorReconcile, buildReconcilePing } from "./reconcile.js";
 import { recordError, buildSwallowedFailurePing, OpsPingThrottle, withSuppressionNote } from "./error-log.js";
 import {
   buildCiFixBody,
@@ -1473,6 +1474,34 @@ const plugin = definePlugin({
     // it early-returns on issues with no github_pr_review row, and the mirror path
     // early-returns on unmapped review issues, so they never collide.
     ctx.events.on("issue.updated", makeDispatch(ctx, cfg, depsByProject, handleReviewSignoff, "issue.updated:signoff"));
+
+    // Scheduled sweep (0.12.0): the event-driven mirror has no memory — issues
+    // created before a bridge existed, or whose issue.created delivery dropped
+    // (scope expiry, http.fetch timeout), stay twin-less forever. The hourly
+    // reconcile lists each bridged project and mirrors active unmapped issues
+    // through the same handleIssueCreated path, a few per run (see reconcile.ts).
+    ctx.jobs.register("mirror-reconcile", async () => {
+      try {
+        if (!cfg.companyId) {
+          ctx.logger.warn("mirror-reconcile: companyId not configured; skipping sweep");
+          return;
+        }
+        const summary = await runMirrorReconcile({
+          companyId: cfg.companyId,
+          projectIds: Array.from(depsByProject.keys()),
+          listIssues: (projectId, offset, limit) =>
+            ctx.issues.list({ companyId: cfg.companyId!, projectId, offset, limit }),
+          depsForProject: (projectId) => depsByProject.get(projectId),
+          logger: ctx.logger,
+        });
+        ctx.logger.info("mirror-reconcile complete", summary as unknown as Record<string, unknown>);
+        if (summary.created > 0 || summary.failed > 0) {
+          await postOpsPing(ctx, cfg.opsWebhookUrl, buildReconcilePing(summary));
+        }
+      } catch (err) {
+        await recordSwallowedFailure(ctx, cfg, "mirror-reconcile job failed", err, {});
+      }
+    });
 
     ctx.logger.info("github sync listening", {
       projects: Array.from(depsByProject.keys()),

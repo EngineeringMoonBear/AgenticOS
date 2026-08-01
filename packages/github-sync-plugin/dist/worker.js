@@ -11131,6 +11131,10 @@ function buildMirrorOpsMessage(info) {
 
 // src/sync.ts
 var GITHUB_MARKER_RE = /<!--\s*synced-from-github:\s*([^\s#]+)#(\d+)\s*-->/i;
+var PLUGIN_OPERATIONAL_MARKER_RE = /<!--\s*(pr-review|ci-fix):/i;
+function isPluginOperationalIssue(description) {
+  return !!description && PLUGIN_OPERATIONAL_MARKER_RE.test(description);
+}
 function statusToGithubState(status) {
   return status === "done" || status === "cancelled" ? "closed" : "open";
 }
@@ -11171,6 +11175,12 @@ async function handleIssueCreated(deps, input) {
   const issue = await getIssue(input.issueId, input.companyId);
   if (!issue) {
     logger.warn("issue.created: issue not readable; skipping", { issueId: input.issueId });
+    return;
+  }
+  if (isPluginOperationalIssue(issue.description)) {
+    logger.info("issue.created is a plugin-operational issue (pr-review/ci-fix); not mirrored", {
+      issueId: issue.id
+    });
     return;
   }
   const marker = detectGithubMarker(issue.description);
@@ -11623,6 +11633,69 @@ function logSkipped(deps, row, reviewer, reason, detail) {
     reason,
     detail
   });
+}
+
+// src/reconcile.ts
+var PAGE_SIZE = 100;
+var DEFAULT_MAX_CREATES = 20;
+async function runMirrorReconcile(input) {
+  const maxCreates = input.maxCreates ?? DEFAULT_MAX_CREATES;
+  const summary = {
+    scanned: 0,
+    created: 0,
+    skippedMapped: 0,
+    skippedTerminal: 0,
+    skippedPluginOp: 0,
+    failed: 0,
+    capped: false
+  };
+  for (const projectId of input.projectIds) {
+    const deps = input.depsForProject(projectId);
+    if (!deps) continue;
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const page = await input.listIssues(projectId, offset, PAGE_SIZE);
+      for (const issue of page) {
+        summary.scanned++;
+        if (isTerminalStatus(issue.status)) {
+          summary.skippedTerminal++;
+          continue;
+        }
+        if (isPluginOperationalIssue(issue.description)) {
+          summary.skippedPluginOp++;
+          continue;
+        }
+        if (await getByPaperclipId(deps.db, issue.id)) {
+          summary.skippedMapped++;
+          continue;
+        }
+        if (summary.created + summary.failed >= maxCreates) {
+          summary.capped = true;
+          return summary;
+        }
+        try {
+          await handleIssueCreated(deps, { issueId: issue.id, companyId: input.companyId });
+          if (await getByPaperclipId(deps.db, issue.id)) {
+            summary.created++;
+          } else {
+            summary.failed++;
+          }
+        } catch (err) {
+          summary.failed++;
+          input.logger.error("mirror-reconcile: mirror-create failed; continuing sweep", {
+            issueId: issue.id,
+            projectId,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+      if (page.length < PAGE_SIZE) break;
+    }
+  }
+  return summary;
+}
+function buildReconcilePing(s) {
+  const capNote = s.capped ? " \u2014 capped, next run continues" : "";
+  return `\u{1F9F9} mirror-reconcile: created ${s.created} missing GitHub twin(s), ${s.failed} failed (scanned ${s.scanned})${capNote}`;
 }
 
 // src/error-log.ts
@@ -12889,6 +12962,27 @@ var plugin = definePlugin({
     ctx.events.on("issue.created", makeDispatch(ctx, cfg, depsByProject, handleIssueCreated, "issue.created"));
     ctx.events.on("issue.updated", makeDispatch(ctx, cfg, depsByProject, handleIssueUpdated, "issue.updated"));
     ctx.events.on("issue.updated", makeDispatch(ctx, cfg, depsByProject, handleReviewSignoff, "issue.updated:signoff"));
+    ctx.jobs.register("mirror-reconcile", async () => {
+      try {
+        if (!cfg.companyId) {
+          ctx.logger.warn("mirror-reconcile: companyId not configured; skipping sweep");
+          return;
+        }
+        const summary = await runMirrorReconcile({
+          companyId: cfg.companyId,
+          projectIds: Array.from(depsByProject.keys()),
+          listIssues: (projectId, offset, limit) => ctx.issues.list({ companyId: cfg.companyId, projectId, offset, limit }),
+          depsForProject: (projectId) => depsByProject.get(projectId),
+          logger: ctx.logger
+        });
+        ctx.logger.info("mirror-reconcile complete", summary);
+        if (summary.created > 0 || summary.failed > 0) {
+          await postOpsPing(ctx, cfg.opsWebhookUrl, buildReconcilePing(summary));
+        }
+      } catch (err) {
+        await recordSwallowedFailure(ctx, cfg, "mirror-reconcile job failed", err, {});
+      }
+    });
     ctx.logger.info("github sync listening", {
       projects: Array.from(depsByProject.keys())
     });

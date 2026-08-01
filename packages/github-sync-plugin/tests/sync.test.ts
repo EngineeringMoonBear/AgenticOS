@@ -174,6 +174,23 @@ describe("handleIssueCreated — loop prevention", () => {
     expect(mapping).toMatchObject({ githubIssueNumber: 100, origin: "paperclip" });
   });
 
+  it("does NOT mirror the plugin's own operational issues (pr-review / ci-fix markers)", async () => {
+    for (const marker of ["<!-- pr-review: o/r#5@abc1234 -->", "<!-- ci-fix: o/r#9 -->"]) {
+      const db = makeFakeDb();
+      const createIssue = vi.fn();
+      const deps: SyncDeps = {
+        db,
+        github: makeGithub({ createIssue }),
+        config: CONFIG,
+        logger: silentLogger,
+        getIssue: async () => makeIssue({ id: "pi-op", description: `Review body\n${marker}` }),
+      };
+      await handleIssueCreated(deps, { issueId: "pi-op", companyId: "co-1" });
+      expect(createIssue).not.toHaveBeenCalled(); // 202 junk "Review PR …" twins predate this guard
+      expect(await getByPaperclipId(db, "pi-op")).toBeNull(); // no mapping row either
+    }
+  });
+
   it("does NOT create a GitHub issue for a GitHub-originated issue (marker present)", async () => {
     const db = makeFakeDb();
     const createIssue = vi.fn();

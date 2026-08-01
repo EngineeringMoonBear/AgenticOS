@@ -92,7 +92,16 @@ const manifest: PaperclipPluginManifestV1 = {
   //   event-driven retry self-heals — while a 403 (checks:write revoked) or unexpected 422
   //   on a live open PR still fires 🔥 with the status + GitHub errors[]. Bugfix only —
   //   manifest surface unchanged bar version.
-  version: "0.11.7",
+  // 0.12.0 = mirror reconcile sweep + plugin-operational-issue guard. The outbound
+  //   mirror was purely event-driven, so issues created BEFORE a bridge was applied
+  //   (or during a drop window) never got a GitHub twin (~78 active issues across the
+  //   three bridged projects). A new hourly `mirror-reconcile` job (jobs.schedule +
+  //   jobs[] — manifest surface CHANGED) sweeps bridged projects and mirrors active
+  //   unmapped issues through the idempotent handleIssueCreated path, capped per run.
+  //   Also fixes mirror NOISE: handleIssueCreated now skips the plugin's own
+  //   operational issues (pr-review/ci-fix markers) — 202 "Review PR …" junk twins
+  //   had accumulated in bridged repos (existing ones need one-time GitHub cleanup).
+  version: "0.12.0",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",
@@ -133,6 +142,20 @@ const manifest: PaperclipPluginManifestV1 = {
     "database.namespace.read",
     "database.namespace.write",
     "database.namespace.migrate",
+    // jobs.schedule (0.12.0): the hourly mirror-reconcile sweep — the event-driven
+    // mirror's missing feedback loop for pre-bridge / dropped-event issues.
+    "jobs.schedule",
+  ],
+  jobs: [
+    {
+      jobKey: "mirror-reconcile",
+      displayName: "Mirror reconcile",
+      description:
+        "Hourly sweep of bridged projects: mirrors active Paperclip issues that have no GitHub twin (created before the bridge existed, or whose issue.created event dropped). Idempotent, capped per run.",
+      // Minute 23 — offset from the top of the hour so it never stacks on other
+      // hourly jobs (openviking vault-ingest runs at :00).
+      schedule: "23 * * * *",
+    },
   ],
   // Inbound endpoint. The workflow POSTs the GitHub issue-opened payload here;
   // signature verification is the plugin's responsibility (see onWebhook).
@@ -357,7 +380,7 @@ const manifest: PaperclipPluginManifestV1 = {
     },
     required: ["bridges"],
   },
-  // Event-driven + inbound webhook. No scheduled jobs.
+  // Event-driven + inbound webhook + the hourly mirror-reconcile job (0.12.0).
   entrypoints: {
     worker: "./dist/worker.js",
   },
