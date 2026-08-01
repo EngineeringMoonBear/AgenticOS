@@ -85,10 +85,16 @@ export async function handleReviewSignoff(
     return;
   }
 
+  const posted: Reviewer[] = [];
   for (const reviewer of greenlit) {
     const row = reviewer === "ada" ? adaRow : irisRow;
     if (!row) continue; // the gate never greenlights a reviewer without a row; be safe
-    await postSignoffCheck(deps, row, reviewer);
+    if ((await postSignoffCheck(deps, row, reviewer)) === "posted") posted.push(reviewer);
+  }
+  // ONE ✅ per sign-off event covering every check this dispatch greened —
+  // per-reviewer pings doubled the channel noise on ada+iris PRs.
+  if (posted.length > 0) {
+    await deps.postOpsPing?.(buildSignoffPing(posted, record.githubRepo, record.prNumber));
   }
 }
 
@@ -107,8 +113,9 @@ async function isIssueDone(deps: SyncDeps, row: PrReviewRow, companyId: string):
  * for SHA", PRs #44/#46) — and the same mixup aims the getPull gate below at the
  * wrong repo's PR number. A resolver miss 🔥-pings and posts nothing rather than
  * guessing a repo; without a resolver (legacy callers) we still derive the bare
- * repo name from the row. On success we ✅-ping; on API failure we log and
- * 🔥-ping so a stuck-pending required check is never silent.
+ * repo name from the row. Returns "posted" on a recorded check-run so the caller
+ * can send ONE ✅ per sign-off event; on API failure we log and 🔥-ping so a
+ * stuck-pending required check is never silent.
  *
  * We ALWAYS attempt the post — even when the PR is already merged/closed (GOL-798).
  * The gate frequently greens AFTER the PR merges: the coupled ada+iris gate only
@@ -132,7 +139,11 @@ async function isIssueDone(deps: SyncDeps, row: PrReviewRow, companyId: string):
  * (network/permission) never suppresses a real alert: we only mute on a definitive
  * merged/closed, or on the unambiguous missing-commit signature.
  */
-async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Reviewer): Promise<void> {
+async function postSignoffCheck(
+  deps: SyncDeps,
+  row: PrReviewRow,
+  reviewer: Reviewer,
+): Promise<"posted" | "skipped"> {
   const { logger } = deps;
 
   const resolved = deps.resolveRepoClient?.(row.githubRepo) ?? null;
@@ -147,8 +158,9 @@ async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Revi
       buildPipelineErrorPing(
         `sign-off check-run skipped for ${row.githubRepo}#${row.prNumber} (${reviewer}): repo is not bridged`,
       ),
+      "error",
     );
-    return;
+    return "skipped";
   }
   const github = resolved ? resolved.github : deps.github;
   const repo = resolved ? resolved.repo : bareRepoName(row.githubRepo);
@@ -168,22 +180,21 @@ async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Revi
       headSha: row.headSha,
       checkRunId: res.data.id,
     });
-    await deps.postOpsPing?.(buildSignoffPing(reviewer, row.githubRepo, row.prNumber));
-    return;
+    return "posted";
   }
 
   // The reviewed head no longer exists (superseded/force-pushed/deleted branch) →
   // GitHub 422 "No commit found for SHA". The row is stale; nothing to gate. Benign.
   if (isMissingCommitError(res)) {
     logSkipped(deps, row, reviewer, "reviewed head no longer exists (superseded/deleted)", res.error);
-    return;
+    return "skipped";
   }
   // Any other failure: if the PR is no longer open it is not a live merge gate, so
   // the stuck check is moot — mute. Otherwise it is a genuinely stuck required gate.
   const state = await github.getPull(repo, row.prNumber);
   if (state.ok && isClosedPull(state.data)) {
     logSkipped(deps, row, reviewer, state.data.merged ? "PR merged" : "PR closed", res.error);
-    return;
+    return "skipped";
   }
   // A transient auth/transport failure (a broker-token 401 window, a 429/5xx, or a
   // network blip) is NOT a stuck gate: handleReviewSignoff re-fires on the next
@@ -202,7 +213,7 @@ async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Revi
       status: res.status,
       error: res.error,
     });
-    return;
+    return "skipped";
   }
   // Definitive failure on a live open PR — a real stuck required gate (e.g. 403
   // checks:write revoked, or an unexpected 422). Surface the status + GitHub
@@ -221,7 +232,9 @@ async function postSignoffCheck(deps: SyncDeps, row: PrReviewRow, reviewer: Revi
       `sign-off check-run failed for ${row.githubRepo}#${row.prNumber} (${reviewer}): ` +
         `HTTP ${res.status ?? "?"} ${res.error}`,
     ),
+    "error",
   );
+  return "skipped";
 }
 
 /**
