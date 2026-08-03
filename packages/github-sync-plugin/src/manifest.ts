@@ -108,7 +108,12 @@ const manifest: PaperclipPluginManifestV1 = {
   //   (🔥/🚨/unassigned-mirror) pass EVERY mode. Sign-off ✅ collapsed to ONE ping
   //   per green event listing all checks (was one per reviewer). Manifest surface
   //   changed: +opsPingMode config field.
-  version: "0.12.1",
+  // 0.13.0 = Layer 1 merge automation: `synchronize` deliveries whose new head is
+  //   a GitHub-generated base-sync merge ("Update branch") short-circuit before the
+  //   review pipeline runs, instead of reopening the review issue and re-pinging for
+  //   unchanged code (the ~202 junk "Review PR" twins). One `getCommit` fetch +
+  //   `classifyHeadChange` decide it; manifest surface unchanged bar version.
+  version: "0.13.0",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",
