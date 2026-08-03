@@ -6,9 +6,20 @@
 //
 // CLI: node scripts/automerge-gate.mjs
 //   env: PR_AUTHOR, PR_FILES (newline-separated), PR_ADDITIONS, PR_DELETIONS,
-//        AUTOMERGE_SENSITIVE_GATE (on|off), AUTOMERGE_MAX_LINES, AUTOMERGE_MAX_FILES
+//        AUTOMERGE_SENSITIVE_GATE (on|off, default ON — only explicit 'off' disables), AUTOMERGE_MAX_LINES, AUTOMERGE_MAX_FILES
 //   exit 0 = allow, exit 1 = skip (reason on stdout)
 import { pathToFileURL } from "node:url";
+
+/**
+ * Resolve the sensitive-path gate posture from the environment.
+ * SECURE BY DEFAULT: the gate is ON unless AUTOMERGE_SENSITIVE_GATE is
+ * explicitly "off" — an unset repo variable or an unrecognized value must
+ * never silently disable the M2 unconditional sensitive-path gate
+ * (2026-07-12 security review). Fail-closed, not fail-open.
+ */
+export function sensitiveGateFromEnv(env = process.env) {
+  return (env.AUTOMERGE_SENSITIVE_GATE ?? "on").trim().toLowerCase() !== "off";
+}
 
 /** Authors permitted to auto-merge: the Paperclip agent App bot, both spellings. */
 const AGENT_AUTHORS = new Set(["agenticos-developer", "app/agenticos-developer", "agenticos-developer[bot]"]);
@@ -71,7 +82,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     changedFiles: (process.env.PR_FILES ?? "").split("\n").map((s) => s.trim()).filter(Boolean),
     additions: num(process.env.PR_ADDITIONS, 0),
     deletions: num(process.env.PR_DELETIONS, 0),
-    sensitiveGate: (process.env.AUTOMERGE_SENSITIVE_GATE ?? "off").toLowerCase() === "on",
+    sensitiveGate: sensitiveGateFromEnv(),
     maxLines: num(process.env.AUTOMERGE_MAX_LINES, 800),
     maxFiles: num(process.env.AUTOMERGE_MAX_FILES, 25),
   });

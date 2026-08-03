@@ -62,7 +62,7 @@ jobs:
           PR_FILES=$(echo "$PR_JSON" | jq -r '.files[].path')
           PR_ADDITIONS=$(echo "$PR_JSON" | jq -r '.additions')
           PR_DELETIONS=$(echo "$PR_JSON" | jq -r '.deletions')
-          AUTOMERGE_SENSITIVE_GATE="${{ vars.AUTOMERGE_SENSITIVE_GATE || 'off' }}"
+          AUTOMERGE_SENSITIVE_GATE="${{ vars.AUTOMERGE_SENSITIVE_GATE || 'on' }}"
           AUTOMERGE_MAX_LINES="${{ vars.AUTOMERGE_MAX_LINES || '800' }}"
           AUTOMERGE_MAX_FILES="${{ vars.AUTOMERGE_MAX_FILES || '25' }}"
           export PR_AUTHOR PR_FILES PR_ADDITIONS PR_DELETIONS \

@@ -1,7 +1,7 @@
 // test-automerge-gate.mjs — unit test for the auto-merge gate decision.
 // Run: node scripts/test-automerge-gate.mjs
 import assert from "node:assert/strict";
-import { evaluateGate } from "./automerge-gate.mjs";
+import { evaluateGate, sensitiveGateFromEnv } from "./automerge-gate.mjs";
 
 const base = {
   authorLogin: "agenticos-developer[bot]",
@@ -54,6 +54,17 @@ check("rejects when changed-file count exceeds maxFiles", () => {
 check("allows exactly at the caps (bounds are inclusive)", () => {
   const files = Array.from({ length: 25 }, (_, i) => `src/f${i}.ts`);
   assert.equal(evaluateGate({ ...base, changedFiles: files, additions: 800, deletions: 0 }).allow, true);
+});
+
+check("sensitive gate env default is ON when unset (secure-by-default)", () => {
+  assert.equal(sensitiveGateFromEnv({}), true);
+});
+
+check("sensitive gate env: only explicit off disables; junk stays ON (fail-closed)", () => {
+  assert.equal(sensitiveGateFromEnv({ AUTOMERGE_SENSITIVE_GATE: "off" }), false);
+  assert.equal(sensitiveGateFromEnv({ AUTOMERGE_SENSITIVE_GATE: "OFF " }), false);
+  assert.equal(sensitiveGateFromEnv({ AUTOMERGE_SENSITIVE_GATE: "on" }), true);
+  assert.equal(sensitiveGateFromEnv({ AUTOMERGE_SENSITIVE_GATE: "banana" }), true);
 });
 
 check("sensitive gate OFF permits a workflow edit", () => {
