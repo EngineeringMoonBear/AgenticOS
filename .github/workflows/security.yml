@@ -16,6 +16,7 @@ name: Security
 # licensed and free for all use — identical scanning, no license, no secret.
 
 on:
+  merge_group:
   pull_request:
     branches: [main]
   push:

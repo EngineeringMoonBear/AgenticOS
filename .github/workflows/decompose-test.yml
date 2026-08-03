@@ -1,6 +1,7 @@
 name: decompose-test
 
 on:
+  merge_group:
   pull_request:
     paths:
       - "scripts/decompose.py"
