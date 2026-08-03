@@ -138,6 +138,16 @@ interface GithubSyncConfig {
    * never silent (GOL-80). A failed ping never blocks mirror creation.
    */
   opsWebhookUrl?: string;
+  /**
+   * Ops-channel noise policy (2026-08-01 "4 pings per PR" complaint). A typical
+   * agent PR emitted 🔍 open + 🔁 per push + ✅ per reviewer; only the outcomes
+   * carry decision value.
+   *  - "outcomes" (default): ✅/❌/CI-fix/🧹 + all error pings; 🔍/🔁 lifecycle
+   *    chatter and routine assigned-mirror pings are dropped.
+   *  - "verbose": everything (the pre-0.12.1 behaviour).
+   *  - "errors": only 🔥/🚨-class pings (incl. the unassigned-mirror warning).
+   */
+  opsPingMode?: "verbose" | "outcomes" | "errors";
   /** PR review pipeline (GOL-158): agent that always reviews. Unset → pipeline off. */
   prReviewAliceAgentId?: string;
   /** PR review pipeline: agent that additionally reviews when frontend paths change. */
@@ -220,6 +230,10 @@ function readConfig(raw: Record<string, unknown>): GithubSyncConfig {
     inboundWebhookSecret: raw.inboundWebhookSecret ? String(raw.inboundWebhookSecret) : undefined,
     appWebhookSecret: raw.appWebhookSecret ? String(raw.appWebhookSecret) : undefined,
     opsWebhookUrl: raw.opsWebhookUrl ? String(raw.opsWebhookUrl) : undefined,
+    opsPingMode:
+      raw.opsPingMode === "verbose" || raw.opsPingMode === "errors" || raw.opsPingMode === "outcomes"
+        ? raw.opsPingMode
+        : undefined,
     prReviewAliceAgentId: raw.prReviewAliceAgentId ? String(raw.prReviewAliceAgentId) : undefined,
     prReviewIrisAgentId: raw.prReviewIrisAgentId ? String(raw.prReviewIrisAgentId) : undefined,
     prReviewFrontendPaths: Array.isArray(raw.prReviewFrontendPaths)
@@ -280,6 +294,21 @@ async function postThrottledOpsAlert(ctx: PluginContext, cfg: GithubSyncConfig, 
   const decision = opsAlertThrottle.decide(content, Date.now());
   if (!decision.emit) return;
   await postOpsPing(ctx, cfg.opsWebhookUrl, withSuppressionNote(content, decision.suppressed));
+}
+
+/**
+ * Ops-ping noise gate (opsPingMode, default "outcomes"). "error"-class pings pass
+ * every mode — an alerting channel that can silently drop alerts is worse than a
+ * noisy one. recordSwallowedFailure's 🚨 path bypasses this gate entirely for the
+ * same reason.
+ */
+type OpsPingClass = "lifecycle" | "outcome" | "error";
+function wantPing(cfg: GithubSyncConfig, klass: OpsPingClass): boolean {
+  const mode = cfg.opsPingMode ?? "outcomes";
+  if (klass === "error") return true;
+  if (mode === "verbose") return true;
+  if (mode === "outcomes") return klass === "outcome";
+  return false; // "errors" mode: nothing but error-class
 }
 
 async function postOpsPing(ctx: PluginContext, webhookUrl: string | undefined, content: string): Promise<void> {
@@ -522,6 +551,9 @@ async function createMirrorIssue(
 
   // Ops visibility: best-effort ping so inbound triage is never silent, and the
   // routing decision (which discipline label matched, or fallback) is visible.
+  // An UNASSIGNED mirror is error-class (agents never pick up unassigned work);
+  // a routine assigned mirror is lifecycle chatter under opsPingMode=outcomes.
+  if (!wantPing(cfg, assigneeAgentId ? "lifecycle" : "error")) return;
   await postOpsPing(
     ctx,
     cfg.opsWebhookUrl,
@@ -913,11 +945,13 @@ async function handlePrInbound(
     }
   }
 
-  // Low-noise, state-change-only pings (spec System 3): one per PR per transition.
-  if (created.length) {
+  // Lifecycle pings (one per PR per transition) — dropped under opsPingMode=
+  // "outcomes" (the default): with ✅/❌ carrying the decisions, 🔍/🔁 was the
+  // bulk of the ~4-pings-per-PR channel noise.
+  if (created.length && wantPing(cfg, "lifecycle")) {
     await postOpsPing(ctx, cfg.opsWebhookUrl, buildReviewIssuesCreatedPing(ev, created));
   }
-  if (reopened.length) {
+  if (reopened.length && wantPing(cfg, "lifecycle")) {
     await postOpsPing(ctx, cfg.opsWebhookUrl, buildReReviewPing(ev, reopened));
   }
 }
@@ -1235,7 +1269,7 @@ async function processCiPr(
       issueId: rec.paperclipIssueId,
       headSha: ev.headSha,
     });
-    await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixResolvedPing(ev.repo, prNumber));
+    if (wantPing(cfg, "outcome")) await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixResolvedPing(ev.repo, prNumber));
     return;
   }
 
@@ -1330,7 +1364,7 @@ async function processCiPr(
       assigneeAgentId: owner.agentId,
       failedCount: failed.length,
     });
-    await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixOpenedPing(fixCtx));
+    if (wantPing(cfg, "outcome")) await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixOpenedPing(fixCtx));
     return;
   }
 
@@ -1364,7 +1398,7 @@ async function processCiPr(
     headSha: ev.headSha,
     failedCount: failed.length,
   });
-  await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixUpdatedPing(fixCtx));
+  if (wantPing(cfg, "outcome")) await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixUpdatedPing(fixCtx));
 }
 
 const plugin = definePlugin({
@@ -1436,7 +1470,9 @@ const plugin = definePlugin({
             () => ctx.issues.get(issueId, companyId),
             async (rest) => (await rest.getIssue(issueId)) as Issue | null,
           ),
-        postOpsPing: (content) => postOpsPing(ctx, cfg.opsWebhookUrl, content),
+        postOpsPing: async (content, kind = "outcome") => {
+          if (wantPing(cfg, kind)) await postOpsPing(ctx, cfg.opsWebhookUrl, content);
+        },
         resolveRepoClient,
       });
 
@@ -1496,7 +1532,7 @@ const plugin = definePlugin({
         });
         ctx.logger.info("mirror-reconcile complete", summary as unknown as Record<string, unknown>);
         if (summary.created > 0 || summary.failed > 0) {
-          await postOpsPing(ctx, cfg.opsWebhookUrl, buildReconcilePing(summary));
+          if (wantPing(cfg, "outcome")) await postOpsPing(ctx, cfg.opsWebhookUrl, buildReconcilePing(summary));
         }
       } catch (err) {
         await recordSwallowedFailure(ctx, cfg, "mirror-reconcile job failed", err, {});

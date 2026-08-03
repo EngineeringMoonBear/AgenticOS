@@ -180,7 +180,8 @@ describe("state-change pings", () => {
     expect(msg).toContain("new commits");
   });
   it("sign-off + changes-requested pings name the context/reviewer", () => {
-    expect(buildSignoffPing("ada", "org/repo", 7)).toContain("agent-review/ada");
+    expect(buildSignoffPing(["ada"], "org/repo", 7)).toContain("agent-review/ada");
+    expect(buildSignoffPing(["iris", "ada"], "org/repo", 7)).toContain("agent-review/iris + agent-review/ada");
     expect(buildChangesRequestedPing("iris", "org/repo", 7)).toContain("Iris requested changes");
   });
 });

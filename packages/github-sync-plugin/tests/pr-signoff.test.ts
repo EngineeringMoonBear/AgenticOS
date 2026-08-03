@@ -200,6 +200,20 @@ describe("handleReviewSignoff", () => {
     expect(byName["agent-review/ada"]).toMatchObject({ headSha: ADA_SHA, conclusion: "success" });
   });
 
+  it("ada+iris both green in one event → ONE ✅ ping naming both checks (noise collapse, 2026-08-01)", async () => {
+    const db = makeStoreDb();
+    await seedRows(db, { iris: true });
+    const createCheckRun = okCheck();
+    const ping = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps(db, { "pi-ada": "done", "pi-iris": "done" }, createCheckRun, ping);
+    await handleReviewSignoff(deps, { issueId: "pi-iris", companyId: "co-1" });
+
+    expect(createCheckRun).toHaveBeenCalledTimes(2); // both checks still posted
+    expect(ping).toHaveBeenCalledTimes(1); // but ONE ping, not one per reviewer
+    expect(ping.mock.calls[0]![0]).toContain("agent-review/iris");
+    expect(ping.mock.calls[0]![0]).toContain("agent-review/ada");
+  });
+
   it("ada+iris, iris signs off first with ada pending → posts iris only", async () => {
     const db = makeStoreDb();
     await seedRows(db, { iris: true });
@@ -223,8 +237,8 @@ describe("handleReviewSignoff", () => {
     await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
 
     expect(createCheckRun).toHaveBeenCalledTimes(1);
-    expect(ping).toHaveBeenCalledWith(expect.stringContaining("pipeline error"));
-    expect(ping).toHaveBeenCalledWith(expect.stringContaining("HTTP 403")); // status surfaced in the ping
+    expect(ping).toHaveBeenCalledWith(expect.stringContaining("pipeline error"), "error");
+    expect(ping).toHaveBeenCalledWith(expect.stringContaining("HTTP 403"), "error"); // status surfaced in the ping
   });
 
   it("MUTES the alert on a transient 401 (broker-token blip) on an OPEN PR — the retry self-heals", async () => {
@@ -266,7 +280,7 @@ describe("handleReviewSignoff", () => {
     await handleReviewSignoff(deps, { issueId: "pi-ada", companyId: "co-1" });
 
     expect(createCheckRun).toHaveBeenCalledTimes(1);
-    expect(ping).toHaveBeenCalledWith(expect.stringContaining("HTTP 422"));
+    expect(ping).toHaveBeenCalledWith(expect.stringContaining("HTTP 422"), "error");
   });
 
   // --- GOL-798: merged/closed PR must be greened (not stranded), GOL-781: no false alarm
@@ -436,8 +450,8 @@ describe("handleReviewSignoff — two bridges sharing one paperclipProjectId", (
 
     expect(wrong.createCheckRun).not.toHaveBeenCalled();
     expect(wrong.getPull).not.toHaveBeenCalled();
-    expect(ping).toHaveBeenCalledWith(expect.stringContaining("pipeline error"));
-    expect(ping).toHaveBeenCalledWith(expect.stringContaining(GROVE_SLUG));
+    expect(ping).toHaveBeenCalledWith(expect.stringContaining("pipeline error"), "error");
+    expect(ping).toHaveBeenCalledWith(expect.stringContaining(GROVE_SLUG), "error");
   });
 
   it("no resolver wired (legacy deps): falls back to the row slug's bare repo name on deps.github", async () => {
