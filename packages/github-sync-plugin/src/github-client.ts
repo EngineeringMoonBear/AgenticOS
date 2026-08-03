@@ -329,6 +329,35 @@ export class GitHubClient {
   }
 
   /**
+   * Fetch a single commit's parents + committer. Used by the `synchronize`
+   * classifier to tell a GitHub-generated base-sync merge (Update branch) from
+   * real author commits: GitHub's update-branch produces a 2-parent merge whose
+   * first parent is the previous PR head and whose committer is `web-flow`.
+   * Requires only `contents:read`.
+   */
+  async getCommit(
+    repo: string,
+    sha: string,
+  ): Promise<Result<{ sha: string; parents: string[]; committerLogin: string }>> {
+    const res = await this.request<Record<string, any>>(
+      "GET",
+      repo,
+      `/repos/${this.org}/${repo}/commits/${sha}`,
+    );
+    if (!res.ok) return res;
+    const raw = res.data;
+    const parents = Array.isArray(raw.parents) ? raw.parents : [];
+    return {
+      ok: true,
+      data: {
+        sha: String(raw.sha ?? ""),
+        parents: parents.map((p: Record<string, any>) => String(p?.sha ?? "")),
+        committerLogin: String(raw.committer?.login ?? ""),
+      },
+    };
+  }
+
+  /**
    * List the check-runs for a commit ref (GOL-305). Used to derive the aggregate CI
    * state on a PR head SHA regardless of whether a `check_suite` or `workflow_run`
    * event triggered us. Single page at 100 (a suite rarely exceeds that); `output`

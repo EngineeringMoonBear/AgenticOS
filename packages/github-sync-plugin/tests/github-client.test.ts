@@ -347,3 +347,42 @@ describe("GitHubClient.listCommitCheckRuns (GOL-305)", () => {
     if (result.ok) expect(result.data).toEqual([]);
   });
 });
+
+describe("GitHubClient.getCommit", () => {
+  it("returns parent SHAs in order and the committer login", async () => {
+    const fetchMock = mockFetch({
+      sha: "mergesha",
+      parents: [{ sha: "beforesha" }, { sha: "basesha" }],
+      committer: { login: "web-flow" },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new GitHubClient({ token: "t", org: "o", timeoutMs: 5000 });
+    const result = await client.getCommit("r", "mergesha");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual({
+        sha: "mergesha",
+        parents: ["beforesha", "basesha"],
+        committerLogin: "web-flow",
+      });
+    }
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://api.github.com/repos/o/r/commits/mergesha");
+  });
+
+  it("tolerates a missing committer and absent parents", async () => {
+    vi.stubGlobal("fetch", mockFetch({ sha: "s" }));
+    const client = new GitHubClient({ token: "t", org: "o", timeoutMs: 5000 });
+    const result = await client.getCommit("r", "s");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toEqual({ sha: "s", parents: [], committerLogin: "" });
+  });
+
+  it("propagates a request failure", async () => {
+    vi.stubGlobal("fetch", mockFetch({ message: "Not Found" }, false, 404));
+    const client = new GitHubClient({ token: "t", org: "o", timeoutMs: 5000 });
+    const result = await client.getCommit("r", "nope");
+    expect(result.ok).toBe(false);
+  });
+});
