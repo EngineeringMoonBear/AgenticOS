@@ -5,6 +5,7 @@ name: CodeQL
 # doesn't produce empty CodeQL DBs every Monday.
 
 on:
+  merge_group:
   push:
     branches: [main]
   pull_request:
