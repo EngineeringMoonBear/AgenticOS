@@ -10915,6 +10915,31 @@ var GitHubClient = class {
     };
   }
   /**
+   * Fetch a single commit's parents + committer. Used by the `synchronize`
+   * classifier to tell a GitHub-generated base-sync merge (Update branch) from
+   * real author commits: GitHub's update-branch produces a 2-parent merge whose
+   * first parent is the previous PR head and whose committer is `web-flow`.
+   * Requires only `contents:read`.
+   */
+  async getCommit(repo, sha) {
+    const res = await this.request(
+      "GET",
+      repo,
+      `/repos/${this.org}/${repo}/commits/${sha}`
+    );
+    if (!res.ok) return res;
+    const raw = res.data;
+    const parents = Array.isArray(raw.parents) ? raw.parents : [];
+    return {
+      ok: true,
+      data: {
+        sha: String(raw.sha ?? ""),
+        parents: parents.map((p) => String(p?.sha ?? "")),
+        committerLogin: String(raw.committer?.login ?? "")
+      }
+    };
+  }
+  /**
    * List the check-runs for a commit ref (GOL-305). Used to derive the aggregate CI
    * state on a PR head SHA regardless of whether a `check_suite` or `workflow_run`
    * event triggered us. Single page at 100 (a suite rarely exceeds that); `output`
@@ -11355,7 +11380,9 @@ function parseGithubPrEvent(raw) {
     number,
     title,
     headSha,
-    url: typeof pr.html_url === "string" ? pr.html_url : ""
+    url: typeof pr.html_url === "string" ? pr.html_url : "",
+    before: typeof o.before === "string" ? o.before : "",
+    after: typeof o.after === "string" ? o.after : ""
   };
 }
 function shortSha(sha) {
@@ -11364,6 +11391,15 @@ function shortSha(sha) {
 function decideReviewAction(priorHeadSha, newHeadSha) {
   if (priorHeadSha === null) return "create";
   return priorHeadSha === newHeadSha ? "noop" : "reopen";
+}
+var GITHUB_MERGE_COMMITTER = "web-flow";
+function classifyHeadChange(input) {
+  const { before, head } = input;
+  if (!before || !head) return "author-work";
+  if (head.parents.length !== 2) return "author-work";
+  if (head.parents[0] !== before) return "author-work";
+  if (head.committerLogin !== GITHUB_MERGE_COMMITTER) return "author-work";
+  return "base-sync";
 }
 function globToRegExp(glob) {
   let re = "";
@@ -12514,6 +12550,31 @@ async function handlePrInbound(ctx, cfg, input) {
   if (!github) {
     ctx.logger.warn("pr webhook: no auth for bridge \u2014 cannot fetch PR files", { repo: ev.repo });
     return;
+  }
+  if (ev.action === "synchronize") {
+    const headSha = ev.after || ev.headSha;
+    const commitRes = await github.getCommit(bridge.githubRepo, headSha);
+    if (!commitRes.ok) {
+      ctx.logger.warn("pr webhook: head commit fetch failed \u2014 treating as author work", {
+        repo: ev.repo,
+        number: ev.number,
+        headSha,
+        error: commitRes.error
+      });
+    }
+    const kind = classifyHeadChange({
+      before: ev.before,
+      head: commitRes.ok ? { parents: commitRes.data.parents, committerLogin: commitRes.data.committerLogin } : null
+    });
+    if (kind === "base-sync") {
+      ctx.logger.info("pr webhook: base-sync (Update branch) \u2014 skipping re-review", {
+        repo: ev.repo,
+        number: ev.number,
+        before: ev.before,
+        after: headSha
+      });
+      return;
+    }
   }
   const runInScope = captureInvocationScope();
   const filesRes = await github.listPullFiles(bridge.githubRepo, ev.number);

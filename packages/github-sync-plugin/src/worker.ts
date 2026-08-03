@@ -29,6 +29,7 @@ import {
   buildReviewIssueTitle,
   buildReviewIssuesCreatedPing,
   CHECK_CONTEXT,
+  classifyHeadChange,
   decideReviewAction,
   DEFAULT_FRONTEND_PATHS,
   isActionablePrAction,
@@ -883,6 +884,40 @@ async function handlePrInbound(
   if (!github) {
     ctx.logger.warn("pr webhook: no auth for bridge — cannot fetch PR files", { repo: ev.repo });
     return;
+  }
+
+  // Layer 1 (GOL — merge automation): a `synchronize` whose new head is a
+  // GitHub-generated base-sync merge ("Update branch") carries no author work.
+  // Reopening the review issue for it is what produced the ~202 junk "Review PR"
+  // twins and re-pinged the operator for unchanged code. One cheap commit fetch
+  // decides it; anything we cannot positively identify as a base-sync falls
+  // through to the normal pipeline.
+  if (ev.action === "synchronize") {
+    const headSha = ev.after || ev.headSha;
+    const commitRes = await github.getCommit(bridge.githubRepo, headSha);
+    if (!commitRes.ok) {
+      ctx.logger.warn("pr webhook: head commit fetch failed — treating as author work", {
+        repo: ev.repo,
+        number: ev.number,
+        headSha,
+        error: commitRes.error,
+      });
+    }
+    const kind = classifyHeadChange({
+      before: ev.before,
+      head: commitRes.ok
+        ? { parents: commitRes.data.parents, committerLogin: commitRes.data.committerLogin }
+        : null,
+    });
+    if (kind === "base-sync") {
+      ctx.logger.info("pr webhook: base-sync (Update branch) — skipping re-review", {
+        repo: ev.repo,
+        number: ev.number,
+        before: ev.before,
+        after: headSha,
+      });
+      return;
+    }
   }
 
   // Capture the invocation scope BEFORE listPullFiles' outbound fetch drops the

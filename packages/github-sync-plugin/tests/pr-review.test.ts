@@ -8,6 +8,7 @@ import {
   buildReviewIssuesCreatedPing,
   buildSignoffPing,
   CHECK_CONTEXT,
+  classifyHeadChange,
   decideReviewAction,
   DEFAULT_FRONTEND_PATHS,
   globToRegExp,
@@ -46,6 +47,8 @@ describe("parseGithubPrEvent", () => {
       title: "Add dashboard widget",
       headSha: "abc1234def5678",
       url: "https://github.com/Goldberry-Playground/AgenticOS/pull/260",
+      before: "",
+      after: "",
     });
   });
 
@@ -59,6 +62,20 @@ describe("parseGithubPrEvent", () => {
     expect(parseGithubPrEvent(prEvent({}, { number: 0 }))).toBeNull();
     expect(parseGithubPrEvent(prEvent({}, { head: {} }))).toBeNull();
     expect(parseGithubPrEvent("nope")).toBeNull();
+  });
+
+  it("captures before/after on a synchronize delivery", () => {
+    const ev = parseGithubPrEvent(
+      prEvent({ action: "synchronize", before: "oldsha111", after: "newsha222" }),
+    );
+    expect(ev?.before).toBe("oldsha111");
+    expect(ev?.after).toBe("newsha222");
+  });
+
+  it("defaults before/after to empty strings when absent", () => {
+    const ev = parseGithubPrEvent(prEvent());
+    expect(ev?.before).toBe("");
+    expect(ev?.after).toBe("");
   });
 });
 
@@ -139,6 +156,8 @@ describe("review issue + marker content", () => {
     title: "Add widget",
     headSha: "abc1234def",
     url: "https://github.com/Goldberry-Playground/AgenticOS/pull/260",
+    before: "",
+    after: "",
   };
 
   it("embeds the loop-prevention marker keyed on (repo, PR, head sha)", () => {
@@ -169,6 +188,8 @@ describe("state-change pings", () => {
     title: "t",
     headSha: "deadbeefcafe",
     url: "https://x/pull/7",
+    before: "",
+    after: "",
   };
   it("created ping lists reviewers", () => {
     expect(buildReviewIssuesCreatedPing(ev, ["ada", "iris"])).toContain("Ada + Iris");
@@ -199,5 +220,57 @@ describe("isNullBodyStatusError (GOL-179 ops-ping 204 handling)", () => {
     expect(isNullBodyStatusError(new Error("fetch failed: ECONNREFUSED"))).toBe(false);
     expect(isNullBodyStatusError(new Error("Invalid response status code 500"))).toBe(false);
     expect(isNullBodyStatusError("timeout")).toBe(false);
+  });
+});
+
+describe("classifyHeadChange", () => {
+  const webflowMerge = { parents: ["beforesha", "basesha"], committerLogin: "web-flow" };
+
+  it("classifies a GitHub Update-branch merge as base-sync", () => {
+    expect(classifyHeadChange({ before: "beforesha", head: webflowMerge })).toBe("base-sync");
+  });
+
+  it("classifies an ordinary single-parent push as author-work", () => {
+    expect(
+      classifyHeadChange({
+        before: "beforesha",
+        head: { parents: ["beforesha"], committerLogin: "agenticos-developer[bot]" },
+      }),
+    ).toBe("author-work");
+  });
+
+  it("classifies a locally-authored merge as author-work (may carry conflict resolutions)", () => {
+    expect(
+      classifyHeadChange({
+        before: "beforesha",
+        head: { parents: ["beforesha", "basesha"], committerLogin: "EngineeringMoonBear" },
+      }),
+    ).toBe("author-work");
+  });
+
+  it("classifies a force-push (first parent is not `before`) as author-work", () => {
+    expect(
+      classifyHeadChange({
+        before: "beforesha",
+        head: { parents: ["someothersha", "basesha"], committerLogin: "web-flow" },
+      }),
+    ).toBe("author-work");
+  });
+
+  it("fails toward author-work when the head commit could not be fetched", () => {
+    expect(classifyHeadChange({ before: "beforesha", head: null })).toBe("author-work");
+  });
+
+  it("fails toward author-work when `before` is unknown", () => {
+    expect(classifyHeadChange({ before: "", head: webflowMerge })).toBe("author-work");
+  });
+
+  it("classifies an octopus merge as author-work", () => {
+    expect(
+      classifyHeadChange({
+        before: "beforesha",
+        head: { parents: ["beforesha", "b", "c"], committerLogin: "web-flow" },
+      }),
+    ).toBe("author-work");
   });
 });
