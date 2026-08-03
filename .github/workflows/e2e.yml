@@ -6,6 +6,7 @@ name: E2E
 # Self-skips until a `playwright.config.*` exists in the dashboard app.
 
 on:
+  merge_group:
   pull_request:
     branches: [main]
     paths:
