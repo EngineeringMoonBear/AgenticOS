@@ -1,21 +1,7 @@
-# Gitleaks allowlist — fingerprints of known false positives.
-# Format: <commit-sha>:<file-path>:<rule-id>:<line-number>
-# One fingerprint per line.
-
-# False positive in transient brief restoration of an archived doc.
-# Commit 13cc1f2 (Phase 3 Task 21 cleanup) restored docs/phase-3-v0.14.0-implications.md
-# from a Finder duplicate before realizing the canonical (post-gitleaks-fix) version
-# already lived at docs/archive/. The restored file was the pre-fix version that
-# contained "Bearer no-key-needed-via-proxy" as an obvious-placeholder curl example.
-# Commit 2f97c2b removed the restored file the same day. The string was never a real
-# secret — it's a placeholder used in a Hermes-proxy verification test example. The
-# canonical archived version uses "<placeholder-not-validated>" + "# gitleaks:allow"
-# to make the same point unambiguously.
-#
-# We could rewrite history to remove the brief restoration, but it's not worth the
-# disruption (force-push on main, broken local clones for anyone who fetched).
-# Allowlisting the specific fingerprint is the proportionate fix.
+# gitleaks false-positive allowlist (fingerprint-precise; see security.yml gitleaks job)
+# Entries: dop_v1_REPLACE-style placeholder in secrets.env.example (17 chars; real DO tokens ~71)
+# and a literal Bearer no-key dummy in a docs curl example against localhost. Fingerprints cover
+# both the full-history introduction commits (CI, fetch-depth 0) and the shallow-clone view.
+6b575bade0952564e2ddaf4372e60141702fa893:infra/secrets.env.example:generic-api-key:16
+881563c931c801dad0cdbaafe2c152c62a565937:infra/secrets.env.example:generic-api-key:16
 13cc1f2eafac7c6af766c63618281e45e74ca41b:docs/phase-3-v0.14.0-implications.md:curl-auth-header:222
-# PR #304: curl example in the credential-broker README used the literal dev
-# placeholder "dev-local-key"; reworded to $BROKER_API_KEY in a follow-up commit,
-3e772c3d630219b1737d85ef184f6fb3ddf210b0:packages/credential-broker/README.md:curl-auth-header:55
