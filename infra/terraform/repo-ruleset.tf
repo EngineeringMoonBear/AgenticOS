@@ -21,6 +21,39 @@
 #      CEO-Rick (confirm Ada as the reviewer identity + Option A + authorize the
 #      prod apply). Do NOT `terraform apply` before that is accepted.
 #
+# ─────────────────────────────────────────────────────────────────────────────
+# 2026-08-03 RE-BASELINE — THE LIVE-STATE NOTES BELOW ARE SUPERSEDED.
+#
+# Two things changed since the 2026-07-19/26 verification:
+#
+#   1. REPO TRANSFERRED. EngineeringMoonBear (user) → Goldberry-Playground (org)
+#      on 2026-08-03. Consequences already observed: gitleaks-action started
+#      demanding an org license (fixed in #474 by moving to the MIT CLI), and
+#      the github-sync bridge briefly stopped matching webhooks (repointed).
+#
+#   2. `main` NOW HAS NO PROTECTION AT ALL. `GET /repos/.../rules/branches/main`
+#      returns []. The classic branch protection described below did NOT survive
+#      the transfer, so the "four CI checks are required on live main" premise is
+#      no longer true — nothing is required, and any PR can merge. That makes
+#      this ruleset more urgent, not less: it is now the ONLY thing that would
+#      re-establish a gate.
+#
+# BLOCKING PRE-APPLY FINDING (2026-08-03) — DO NOT FLIP THE FLAG UNTIL FIXED:
+#   `agent-review/ada` is NOT emitted on every PR. Sampled live: #476 has it
+#   (completed/success), but #472, #470 and #467 have NO agent-review check at
+#   all — dependabot PRs and some App-authored PRs never get one seeded. Making
+#   it a required check today would leave those PRs permanently unmergeable
+#   (admins excepted) — precisely the fail-closed hazard `var.
+#   agent_review_check_context` warns about, but caused by emission COVERAGE
+#   rather than a context-name mismatch.
+#
+#   The fix is already in flight: PRs #467 ("heal stranded agent-review sign-off
+#   checks", hourly sweep) and #468 ("PR-review reconcile sweep for non-App
+#   repos"). Sequence: merge #476 (merge_group triggers) → merge #467 + #468 →
+#   re-verify that a dependabot PR receives `agent-review/ada` → only then flip
+#   `enable_agent_review_merge_gate = true` and apply.
+#
+# ─────────────────────────────────────────────────────────────────────────────
 # APPLY IS A HUMAN STEP. Managing rulesets needs a github provider token with
 # repo-administration scope. `var.github_ci_token` (op://…/Grove Infra/github_token)
 # is Contents/PR-scoped only — the same GOL-252 governance wall that gates
@@ -216,6 +249,36 @@ resource "github_repository_ruleset" "main_merge_gate" {
       require_code_owner_review         = false
       require_last_push_approval        = false
       required_review_thread_resolution = false
+      # Peer parity (grove-sites `main-branch-protection`): no merge commits, so
+      # history stays linear — the same posture `required_linear_history` above
+      # enforces. Without it GitHub still offers the merge-commit button and the
+      # attempt fails confusingly at click time instead of being absent.
+      allowed_merge_methods = ["squash", "rebase"]
+    }
+
+    # ── Merge queue — parity with every other Goldberry-Playground repo ────────
+    # Added 2026-08-03 across grove-sites / odoocker / grove-odoo-modules /
+    # AgriforestryOS / Goldberry-Site. The queue serializes merges and tests each
+    # entry against the real post-merge main, which is what makes
+    # `strict_required_status_checks_policy = true` above survivable on a busy
+    # repo: without it, every merge to main forces a manual branch update and a
+    # full CI re-run on every other open PR (observed on grove-sites#405 —
+    # three update-branch laps, ~18 checks each).
+    #
+    # PREREQUISITE (learned the hard way 2026-08-03): every workflow producing a
+    # required context above MUST also trigger on `merge_group`, or queue
+    # branches (`gh-readonly-queue/*`) run zero checks and entries sit in
+    # AWAITING_CHECKS until `check_response_timeout_minutes` expires — nothing
+    # ever merges. That trigger lands in PR #476; do not enable this ruleset
+    # before it is on main.
+    merge_queue {
+      merge_method                      = "SQUASH"
+      grouping_strategy                 = "ALLGREEN"
+      check_response_timeout_minutes    = 30
+      max_entries_to_build              = 5
+      max_entries_to_merge              = 5
+      min_entries_to_merge              = 1
+      min_entries_to_merge_wait_minutes = 2
     }
   }
 }
