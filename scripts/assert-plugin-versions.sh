@@ -3,7 +3,7 @@
 # assert-plugin-versions.sh — GOL-804
 #
 # Post-deploy invariant check, run ON the droplet after the plugin dists are
-# rebuilt. For each plugin passed (default: all four), read the freshly-built
+# rebuilt. For each plugin passed (default: all five), read the freshly-built
 # version from its dist and assert the LIVE registry reports that exact version
 # and a healthy status. Fails RED if any plugin's registry drifted from the
 # built code — the backstop that turns a silent stale deploy (GOL-804) into a
@@ -18,7 +18,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-/opt/agenticos/repo}"
-VALID="vault-plugin openviking-plugin github-plugin github-sync-plugin"
+VALID="vault-plugin openviking-plugin github-plugin github-sync-plugin discord-plugin"
 
 command -v node >/dev/null || { echo "FATAL: node not found on PATH" >&2; exit 1; }
 

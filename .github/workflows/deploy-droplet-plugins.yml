@@ -101,7 +101,7 @@ jobs:
                  --filter @agenticos/discord-plugin build
 
             # Fail the deploy if any dist is incomplete (worker + manifest).
-            for p in vault-plugin openviking-plugin github-plugin github-sync-plugin; do
+            for p in vault-plugin openviking-plugin github-plugin github-sync-plugin discord-plugin; do
               for f in dist/worker.js dist/manifest.js; do
                 test -s "packages/$p/$f" || { echo "MISSING packages/$p/$f"; exit 1; }
               done
