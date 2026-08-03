@@ -73,16 +73,36 @@ recreate_guard() {
 }
 
 # reinstall PLUGIN — delete (if present) then install fresh.
+#
+# POST /api/plugins/install returns 400 in two distinct situations:
+#   a) true install rejection (e.g. missing dist/ or manifest): NO plugin row
+#      is created — fatal, nothing downstream can recover it.
+#   b) worker ACTIVATION failed during install (e.g. required config such as
+#      discordBotToken not applied yet): the plugin row IS created with
+#      state=error, and the recovery is exactly what this script does next
+#      anyway — apply_config then disable/enable. Continue with a warning.
+# We distinguish them by probing for the plugin row after a failed install.
 reinstall() {
   local p="$1" id status
   id="$(resolve_plugin_id "agenticos.${p}")"
   if [ -n "$id" ]; then
     api DELETE "/api/plugins/${id}" >/dev/null && echo "    ${p}: deleted ${id}"
   fi
-  status="$(api POST /api/plugins/install \
+  if status="$(api POST /api/plugins/install \
     "{\"packageName\":\"/paperclip/plugins/${p}\",\"isLocalPath\":true}" \
-    | jq -r '.status')"
-  echo "    ${p}: installed -> ${status}"
+    | jq -r '.status')"; then
+    echo "    ${p}: installed -> ${status}"
+    return 0
+  fi
+  id="$(resolve_plugin_id "agenticos.${p}")"
+  if [ -n "$id" ]; then
+    echo "    ${p}: WARN install failed but plugin row ${id} exists (worker" >&2
+    echo "    ${p}:   activation failed, likely missing config) — continuing;" >&2
+    echo "    ${p}:   apply_config + disable/enable should recover it" >&2
+    return 0
+  fi
+  echo "FATAL: ${p}: install rejected and no plugin row created (missing dist/manifest?)" >&2
+  return 1
 }
 
 # apply_config PLUGIN — push config from 1Password for plugins that take it.
