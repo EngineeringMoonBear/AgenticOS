@@ -11441,8 +11441,9 @@ function buildReviewIssuesCreatedPing(ev, reviewers) {
 function buildReReviewPing(ev, reviewers) {
   return `\u{1F501} PR ${ev.repo}#${ev.number} new commits (\`${shortSha(ev.headSha)}\`) \u2192 re-review: ${reviewerList(reviewers)}`;
 }
-function buildSignoffPing(reviewer, repo, prNumber) {
-  return `\u2705 PR ${repo}#${prNumber} ${CHECK_CONTEXT[reviewer]} \u2014 green`;
+function buildSignoffPing(reviewers, repo, prNumber) {
+  const checks = reviewers.map((r) => CHECK_CONTEXT[r]).join(" + ");
+  return `\u2705 PR ${repo}#${prNumber} ${checks} \u2014 green`;
 }
 function buildPipelineErrorPing(detail) {
   return `\u{1F525} PR review pipeline error: ${detail}`;
@@ -11527,10 +11528,14 @@ async function handleReviewSignoff(deps, input) {
     });
     return;
   }
+  const posted = [];
   for (const reviewer of greenlit) {
     const row = reviewer === "ada" ? adaRow : irisRow;
     if (!row) continue;
-    await postSignoffCheck(deps, row, reviewer);
+    if (await postSignoffCheck(deps, row, reviewer) === "posted") posted.push(reviewer);
+  }
+  if (posted.length > 0) {
+    await deps.postOpsPing?.(buildSignoffPing(posted, record.githubRepo, record.prNumber));
   }
 }
 async function isIssueDone(deps, row, companyId) {
@@ -11550,9 +11555,10 @@ async function postSignoffCheck(deps, row, reviewer) {
     await deps.postOpsPing?.(
       buildPipelineErrorPing(
         `sign-off check-run skipped for ${row.githubRepo}#${row.prNumber} (${reviewer}): repo is not bridged`
-      )
+      ),
+      "error"
     );
-    return;
+    return "skipped";
   }
   const github = resolved ? resolved.github : deps.github;
   const repo = resolved ? resolved.repo : bareRepoName2(row.githubRepo);
@@ -11571,17 +11577,16 @@ async function postSignoffCheck(deps, row, reviewer) {
       headSha: row.headSha,
       checkRunId: res.data.id
     });
-    await deps.postOpsPing?.(buildSignoffPing(reviewer, row.githubRepo, row.prNumber));
-    return;
+    return "posted";
   }
   if (isMissingCommitError(res)) {
     logSkipped(deps, row, reviewer, "reviewed head no longer exists (superseded/deleted)", res.error);
-    return;
+    return "skipped";
   }
   const state = await github.getPull(repo, row.prNumber);
   if (state.ok && isClosedPull(state.data)) {
     logSkipped(deps, row, reviewer, state.data.merged ? "PR merged" : "PR closed", res.error);
-    return;
+    return "skipped";
   }
   if (isTransientFailure(res)) {
     logger.warn("signoff: check-run completion failed (transient; will retry)", {
@@ -11592,7 +11597,7 @@ async function postSignoffCheck(deps, row, reviewer) {
       status: res.status,
       error: res.error
     });
-    return;
+    return "skipped";
   }
   logger.error("signoff: check-run completion failed", {
     repo: row.githubRepo,
@@ -11606,8 +11611,10 @@ async function postSignoffCheck(deps, row, reviewer) {
   await deps.postOpsPing?.(
     buildPipelineErrorPing(
       `sign-off check-run failed for ${row.githubRepo}#${row.prNumber} (${reviewer}): HTTP ${res.status ?? "?"} ${res.error}`
-    )
+    ),
+    "error"
   );
+  return "skipped";
 }
 function isTransientFailure(res) {
   const s = res.status;
@@ -12126,6 +12133,7 @@ function readConfig(raw) {
     inboundWebhookSecret: raw.inboundWebhookSecret ? String(raw.inboundWebhookSecret) : void 0,
     appWebhookSecret: raw.appWebhookSecret ? String(raw.appWebhookSecret) : void 0,
     opsWebhookUrl: raw.opsWebhookUrl ? String(raw.opsWebhookUrl) : void 0,
+    opsPingMode: raw.opsPingMode === "verbose" || raw.opsPingMode === "errors" || raw.opsPingMode === "outcomes" ? raw.opsPingMode : void 0,
     prReviewAliceAgentId: raw.prReviewAliceAgentId ? String(raw.prReviewAliceAgentId) : void 0,
     prReviewIrisAgentId: raw.prReviewIrisAgentId ? String(raw.prReviewIrisAgentId) : void 0,
     prReviewFrontendPaths: Array.isArray(raw.prReviewFrontendPaths) ? raw.prReviewFrontendPaths.filter((p) => typeof p === "string" && p.length > 0) : void 0,
@@ -12154,6 +12162,13 @@ async function postThrottledOpsAlert(ctx, cfg, content) {
   const decision = opsAlertThrottle.decide(content, Date.now());
   if (!decision.emit) return;
   await postOpsPing(ctx, cfg.opsWebhookUrl, withSuppressionNote(content, decision.suppressed));
+}
+function wantPing(cfg, klass) {
+  const mode = cfg.opsPingMode ?? "outcomes";
+  if (klass === "error") return true;
+  if (mode === "verbose") return true;
+  if (mode === "outcomes") return klass === "outcome";
+  return false;
 }
 async function postOpsPing(ctx, webhookUrl, content) {
   if (!webhookUrl) return;
@@ -12296,6 +12311,7 @@ async function createMirrorIssue(ctx, cfg, bridge, payload, labels = [], runInSc
       { repo: payload.repo, number: payload.number, projectId: bridge.paperclipProjectId }
     );
   }
+  if (!wantPing(cfg, assigneeAgentId ? "lifecycle" : "error")) return;
   await postOpsPing(
     ctx,
     cfg.opsWebhookUrl,
@@ -12541,10 +12557,10 @@ async function handlePrInbound(ctx, cfg, input) {
       });
     }
   }
-  if (created.length) {
+  if (created.length && wantPing(cfg, "lifecycle")) {
     await postOpsPing(ctx, cfg.opsWebhookUrl, buildReviewIssuesCreatedPing(ev, created));
   }
-  if (reopened.length) {
+  if (reopened.length && wantPing(cfg, "lifecycle")) {
     await postOpsPing(ctx, cfg.opsWebhookUrl, buildReReviewPing(ev, reopened));
   }
 }
@@ -12770,7 +12786,7 @@ async function processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope) {
       issueId: rec2.paperclipIssueId,
       headSha: ev.headSha
     });
-    await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixResolvedPing(ev.repo, prNumber));
+    if (wantPing(cfg, "outcome")) await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixResolvedPing(ev.repo, prNumber));
     return;
   }
   const prRes = await github.getPull(bridge.githubRepo, prNumber);
@@ -12854,7 +12870,7 @@ async function processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope) {
       assigneeAgentId: owner.agentId,
       failedCount: failed.length
     });
-    await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixOpenedPing(fixCtx));
+    if (wantPing(cfg, "outcome")) await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixOpenedPing(fixCtx));
     return;
   }
   const rec = record;
@@ -12886,7 +12902,7 @@ async function processCiPr(ctx, cfg, bridge, github, ev, prNumber, runInScope) {
     headSha: ev.headSha,
     failedCount: failed.length
   });
-  await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixUpdatedPing(fixCtx));
+  if (wantPing(cfg, "outcome")) await postOpsPing(ctx, cfg.opsWebhookUrl, buildCiFixUpdatedPing(fixCtx));
 }
 var plugin = definePlugin({
   async setup(ctx) {
@@ -12938,7 +12954,9 @@ var plugin = definePlugin({
           () => ctx.issues.get(issueId, companyId),
           async (rest) => await rest.getIssue(issueId)
         ),
-        postOpsPing: (content) => postOpsPing(ctx, cfg.opsWebhookUrl, content),
+        postOpsPing: async (content, kind = "outcome") => {
+          if (wantPing(cfg, kind)) await postOpsPing(ctx, cfg.opsWebhookUrl, content);
+        },
         resolveRepoClient
       });
       ctx.logger.info("bridge active", {
@@ -12977,7 +12995,7 @@ var plugin = definePlugin({
         });
         ctx.logger.info("mirror-reconcile complete", summary);
         if (summary.created > 0 || summary.failed > 0) {
-          await postOpsPing(ctx, cfg.opsWebhookUrl, buildReconcilePing(summary));
+          if (wantPing(cfg, "outcome")) await postOpsPing(ctx, cfg.opsWebhookUrl, buildReconcilePing(summary));
         }
       } catch (err) {
         await recordSwallowedFailure(ctx, cfg, "mirror-reconcile job failed", err, {});

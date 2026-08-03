@@ -109,8 +109,10 @@ export interface SyncDeps {
   /**
    * Best-effort ops-channel ping (Discord). Optional — the mirror-sync path
    * doesn't use it; the PR sign-off path (GOL-186) pings on green / API failure.
+   * `kind` (default "outcome") lets the worker's opsPingMode gate decide what to
+   * forward — "error" pings survive every mode.
    */
-  postOpsPing?: (content: string) => Promise<void>;
+  postOpsPing?: (content: string, kind?: "outcome" | "error") => Promise<void>;
   /**
    * Resolve a full `owner/repo` slug (as stored on github_pr_review rows) to that
    * bridge's client + bare repo name. The sign-off completion path must use THIS,
