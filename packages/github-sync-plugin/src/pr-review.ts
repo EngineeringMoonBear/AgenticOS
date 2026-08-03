@@ -113,6 +113,42 @@ export function decideReviewAction(priorHeadSha: string | null, newHeadSha: stri
 }
 
 /**
+ * What kind of head-SHA change a `synchronize` delivery represents.
+ *  - "base-sync"   → the base moved under the PR (GitHub "Update branch"); the
+ *                    author contributed nothing, so a re-review is pure noise.
+ *  - "author-work" → anything else; run the normal review pipeline.
+ */
+export type HeadChangeKind = "base-sync" | "author-work";
+
+/**
+ * GitHub's server-side committer login for merges it creates on the user's
+ * behalf (Update branch, squash-merge). A locally-authored merge carries the
+ * pusher's own login instead.
+ */
+export const GITHUB_MERGE_COMMITTER = "web-flow";
+
+/**
+ * Classify a head change. GitHub's Update-branch produces a two-parent merge
+ * whose FIRST parent is the previous PR head, whose second is the base, and
+ * whose committer is `web-flow`.
+ *
+ * Deliberately asymmetric on failure: anything we cannot positively identify as
+ * a base-sync is treated as author work. A spurious re-review is an annoyance;
+ * a silently-skipped review is a correctness hole.
+ */
+export function classifyHeadChange(input: {
+  before: string;
+  head: { parents: string[]; committerLogin: string } | null;
+}): HeadChangeKind {
+  const { before, head } = input;
+  if (!before || !head) return "author-work";
+  if (head.parents.length !== 2) return "author-work";
+  if (head.parents[0] !== before) return "author-work";
+  if (head.committerLogin !== GITHUB_MERGE_COMMITTER) return "author-work";
+  return "base-sync";
+}
+
+/**
  * Compile a path glob to an anchored RegExp. Supports `*` (any run within one
  * path segment), `**` (any run across segments), and `**​/` (zero-or-more
  * leading segments). Enough for the frontendPaths set; not a full minimatch.

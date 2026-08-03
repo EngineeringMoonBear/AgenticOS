@@ -8,6 +8,7 @@ import {
   buildReviewIssuesCreatedPing,
   buildSignoffPing,
   CHECK_CONTEXT,
+  classifyHeadChange,
   decideReviewAction,
   DEFAULT_FRONTEND_PATHS,
   globToRegExp,
@@ -219,5 +220,57 @@ describe("isNullBodyStatusError (GOL-179 ops-ping 204 handling)", () => {
     expect(isNullBodyStatusError(new Error("fetch failed: ECONNREFUSED"))).toBe(false);
     expect(isNullBodyStatusError(new Error("Invalid response status code 500"))).toBe(false);
     expect(isNullBodyStatusError("timeout")).toBe(false);
+  });
+});
+
+describe("classifyHeadChange", () => {
+  const webflowMerge = { parents: ["beforesha", "basesha"], committerLogin: "web-flow" };
+
+  it("classifies a GitHub Update-branch merge as base-sync", () => {
+    expect(classifyHeadChange({ before: "beforesha", head: webflowMerge })).toBe("base-sync");
+  });
+
+  it("classifies an ordinary single-parent push as author-work", () => {
+    expect(
+      classifyHeadChange({
+        before: "beforesha",
+        head: { parents: ["beforesha"], committerLogin: "agenticos-developer[bot]" },
+      }),
+    ).toBe("author-work");
+  });
+
+  it("classifies a locally-authored merge as author-work (may carry conflict resolutions)", () => {
+    expect(
+      classifyHeadChange({
+        before: "beforesha",
+        head: { parents: ["beforesha", "basesha"], committerLogin: "EngineeringMoonBear" },
+      }),
+    ).toBe("author-work");
+  });
+
+  it("classifies a force-push (first parent is not `before`) as author-work", () => {
+    expect(
+      classifyHeadChange({
+        before: "beforesha",
+        head: { parents: ["someothersha", "basesha"], committerLogin: "web-flow" },
+      }),
+    ).toBe("author-work");
+  });
+
+  it("fails toward author-work when the head commit could not be fetched", () => {
+    expect(classifyHeadChange({ before: "beforesha", head: null })).toBe("author-work");
+  });
+
+  it("fails toward author-work when `before` is unknown", () => {
+    expect(classifyHeadChange({ before: "", head: webflowMerge })).toBe("author-work");
+  });
+
+  it("classifies an octopus merge as author-work", () => {
+    expect(
+      classifyHeadChange({
+        before: "beforesha",
+        head: { parents: ["beforesha", "b", "c"], committerLogin: "web-flow" },
+      }),
+    ).toBe("author-work");
   });
 });
