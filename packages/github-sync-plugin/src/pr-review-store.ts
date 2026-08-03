@@ -76,6 +76,29 @@ export async function getReviewRecordByIssueId(
   return first ? toRow(first) : null;
 }
 
+/**
+ * Recently-touched review rows (newest first), for the sign-off reconcile sweep
+ * (GOL-1160). Bounded by `sinceIso` + `limit` so the hourly sweep is cheap: a
+ * stranded required check is healed on the first sweep after it strands, long
+ * before it ages out of a multi-day window. Returns rows for BOTH reviewers of a
+ * PR — the caller dedupes per (repo, PR).
+ */
+export async function listReviewRecordsUpdatedSince(
+  db: MappingDb,
+  sinceIso: string,
+  limit: number,
+): Promise<PrReviewRow[]> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT github_repo, pr_number, reviewer, head_sha, paperclip_issue_id, updated_at
+       FROM ${qualified(db)}
+      WHERE updated_at > $1
+      ORDER BY updated_at DESC
+      LIMIT $2`,
+    [sinceIso, limit],
+  );
+  return rows.map(toRow);
+}
+
 /** Create or update the review record (upsert by the composite PK). */
 export async function upsertReviewRecord(db: MappingDb, row: PrReviewRow): Promise<void> {
   await db.execute(

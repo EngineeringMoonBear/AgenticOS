@@ -39,9 +39,10 @@ import {
   type GithubPrEvent,
   type Reviewer,
 } from "./pr-review.js";
-import { getReviewRecord, upsertReviewRecord } from "./pr-review-store.js";
+import { getReviewRecord, upsertReviewRecord, listReviewRecordsUpdatedSince } from "./pr-review-store.js";
 import { handleReviewSignoff } from "./pr-signoff.js";
 import { runMirrorReconcile, buildReconcilePing } from "./reconcile.js";
+import { runSignoffReconcile } from "./signoff-reconcile.js";
 import { recordError, buildSwallowedFailurePing, OpsPingThrottle, withSuppressionNote } from "./error-log.js";
 import {
   buildCiFixBody,
@@ -68,6 +69,16 @@ const INBOUND_ENDPOINT_KEY = "github-issue";
 const APP_WEBHOOK_ENDPOINT_KEY = "github-app";
 /** GitHub App `pull_request` event path: the agent PR review pipeline (GOL-158). */
 const PR_WEBHOOK_ENDPOINT_KEY = "github-pr";
+
+/**
+ * Sign-off reconcile lookback (GOL-1160). A strand is healed on the first hourly
+ * sweep after it occurs, so a few days is ample slack; older rows are for PRs long
+ * since merged/closed whose stranded check no longer gates anything. Kept small so
+ * the sweep stays cheap (one check-run read per distinct head, most already green).
+ */
+const SIGNOFF_RECONCILE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+/** Row cap per sweep — idempotent; the next run re-scans the same bounded window. */
+const SIGNOFF_RECONCILE_ROW_CAP = 200;
 
 /** Captured in setup() so onWebhook (which only receives `input`) can reach ctx. */
 let currentContext: PluginContext | null = null;
@@ -1571,6 +1582,40 @@ const plugin = definePlugin({
         }
       } catch (err) {
         await recordSwallowedFailure(ctx, cfg, "mirror-reconcile job failed", err, {});
+      }
+    });
+
+    // Sign-off reconcile sweep (GOL-1160): the event-driven handleReviewSignoff
+    // strands a REQUIRED `agent-review/*` check `in_progress` forever if the
+    // check-run completion hits a transient failure (broker 401, timeout, 5xx) on
+    // the TERMINAL `done` transition — no later issue.updated re-fires its retry.
+    // That blocks the Phase-3 merge gate until an admin bypass (observed 2026-08-03
+    // on grove-sites#407 / odoocker#387 / grove-odoo-modules#68). This sweep re-drives
+    // the SAME handler for any signed-off review issue whose check is not yet green.
+    // Any bridge's deps carries the global resolveRepoClient, so one suffices to
+    // route the post to the row's own repo (not the last-registered bridge).
+    const signoffDeps = depsByProject.values().next().value!;
+    ctx.jobs.register("signoff-reconcile", async () => {
+      try {
+        if (!cfg.companyId) {
+          ctx.logger.warn("signoff-reconcile: companyId not configured; skipping sweep");
+          return;
+        }
+        const companyId = cfg.companyId;
+        const sinceIso = new Date(Date.now() - SIGNOFF_RECONCILE_WINDOW_MS).toISOString();
+        const summary = await runSignoffReconcile({
+          companyId,
+          sinceIso,
+          limit: SIGNOFF_RECONCILE_ROW_CAP,
+          listRows: (since, limit) => listReviewRecordsUpdatedSince(ctx.db, since, limit),
+          getIssueStatus: async (issueId, cId) => (await signoffDeps.getIssue(issueId, cId))?.status ?? null,
+          resolveRepoClient,
+          driveSignoff: (issueId) => handleReviewSignoff(signoffDeps, { issueId, companyId }),
+          logger: ctx.logger,
+        });
+        ctx.logger.info("signoff-reconcile complete", summary as unknown as Record<string, unknown>);
+      } catch (err) {
+        await recordSwallowedFailure(ctx, cfg, "signoff-reconcile job failed", err, {});
       }
     });
 
