@@ -56,6 +56,10 @@ export interface GithubPrEvent {
   headSha: string;
   /** PR html_url. */
   url: string;
+  /** Previous head SHA on a `synchronize` delivery; "" on other actions. */
+  before: string;
+  /** New head SHA on a `synchronize` delivery; "" on other actions. */
+  after: string;
 }
 
 /**
@@ -86,6 +90,8 @@ export function parseGithubPrEvent(raw: unknown): GithubPrEvent | null {
     title,
     headSha,
     url: typeof pr.html_url === "string" ? pr.html_url : "",
+    before: typeof o.before === "string" ? o.before : "",
+    after: typeof o.after === "string" ? o.after : "",
   };
 }
 
