@@ -18,7 +18,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-/opt/agenticos/repo}"
-VALID="vault-plugin openviking-plugin github-plugin github-sync-plugin"
+VALID="vault-plugin openviking-plugin github-plugin github-sync-plugin discord-plugin"
 
 command -v node >/dev/null || { echo "FATAL: node not found on PATH" >&2; exit 1; }
 
