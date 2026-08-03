@@ -256,8 +256,14 @@ export function buildReReviewPing(ev: GithubPrEvent, reviewers: readonly Reviewe
 }
 
 /** ✅ sign-off green (posted plugin-side when the review issue closes `done`, GOL-186). */
-export function buildSignoffPing(reviewer: Reviewer, repo: string, prNumber: number): string {
-  return `✅ PR ${repo}#${prNumber} ${CHECK_CONTEXT[reviewer]} — green`;
+/**
+ * One ✅ per sign-off EVENT, not per reviewer. When iris closes last and the gate
+ * greens both checks in the same dispatch, the old per-reviewer ping doubled the
+ * channel noise (part of the ~4-pings-per-PR complaint, 2026-08-01).
+ */
+export function buildSignoffPing(reviewers: readonly Reviewer[], repo: string, prNumber: number): string {
+  const checks = reviewers.map((r) => CHECK_CONTEXT[r]).join(" + ");
+  return `✅ PR ${repo}#${prNumber} ${checks} — green`;
 }
 
 /** ❌ changes requested (reserved: reviewer comments on the PR; check stays pending). */

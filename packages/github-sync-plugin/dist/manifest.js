@@ -100,7 +100,14 @@ var manifest = {
   //   Also fixes mirror NOISE: handleIssueCreated now skips the plugin's own
   //   operational issues (pr-review/ci-fix markers) — 202 "Review PR …" junk twins
   //   had accumulated in bridged repos (existing ones need one-time GitHub cleanup).
-  version: "0.12.0",
+  // 0.12.1 = ops-channel noise policy (the "4 pings per PR" complaint, 2026-08-01).
+  //   New `opsPingMode` config ("outcomes" default | "verbose" | "errors"): the
+  //   default drops 🔍 review-created / 🔁 re-review lifecycle chatter and routine
+  //   assigned-mirror pings, keeping ✅/❌/CI-fix/🧹 outcomes; error-class pings
+  //   (🔥/🚨/unassigned-mirror) pass EVERY mode. Sign-off ✅ collapsed to ONE ping
+  //   per green event listing all checks (was one per reviewer). Manifest surface
+  //   changed: +opsPingMode config field.
+  version: "0.12.1",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",
@@ -300,6 +307,12 @@ var manifest = {
         type: "string",
         title: "Ops webhook URL (Discord)",
         description: "Optional Discord (or Discord-compatible) webhook URL. When set, the plugin posts a best-effort `{content}` ping on every inbound mirror creation so triage is never silent \u2014 including a loud warning when the mirror landed unassigned. A failed ping never blocks mirror creation. Also carries the PR-review state-change pings (System 3): review-issues-created, re-review-on-new-commits, and pipeline errors \u2014 and \u{1F6A8} swallowed-failure alerts (GOL-296) when a caught exception in onWebhook or an event dispatch would otherwise vanish into server.log."
+      },
+      opsPingMode: {
+        type: "string",
+        enum: ["outcomes", "verbose", "errors"],
+        title: "Ops ping noise policy (0.12.1)",
+        description: "What the ops webhook receives. 'outcomes' (default when unset): sign-off \u2705 / changes-requested \u274C / CI-fix / reconcile \u{1F9F9} plus every error-class ping; drops \u{1F50D} review-created and \u{1F501} re-review lifecycle chatter and routine assigned-mirror pings. 'verbose': everything (pre-0.12.1 behaviour). 'errors': only error-class pings (\u{1F525} pipeline errors, \u{1F6A8} swallowed failures, unassigned-mirror warnings \u2014 these pass every mode; an alert channel must never silently drop alerts)."
       },
       prReviewAliceAgentId: {
         type: "string",
