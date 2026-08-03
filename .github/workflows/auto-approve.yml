@@ -39,6 +39,12 @@ jobs:
       github.event.workflow_run.pull_requests[0] != null
     runs-on: ubuntu-latest
     steps:
+      - name: Check out base-branch scripts
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          persist-credentials: false
+
       - name: Approve (as github-actions[bot]) + enable auto-merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -47,27 +53,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          AUTHOR=$(gh pr view "$PR" --repo "$REPO" --json author -q '.author.login')
-          case "$AUTHOR" in
-            app/agenticos-developer|agenticos-developer) ;;
-            *)
-              echo "PR #$PR author '$AUTHOR' is not the agent App bot; skipping (human/external PRs keep human review)."
-              exit 0 ;;
-          esac
+          # ── Gate 1: author + blast-radius + optional sensitive-path policy ──
+          # Decision lives in scripts/automerge-gate.mjs so it is unit-tested
+          # (scripts/test-automerge-gate.mjs). Gate 2 below still owns "all
+          # checks green", which needs live API state.
+          PR_JSON=$(gh pr view "$PR" --repo "$REPO" --json author,files,additions,deletions)
+          PR_AUTHOR=$(echo "$PR_JSON" | jq -r '.author.login')
+          PR_FILES=$(echo "$PR_JSON" | jq -r '.files[].path')
+          PR_ADDITIONS=$(echo "$PR_JSON" | jq -r '.additions')
+          PR_DELETIONS=$(echo "$PR_JSON" | jq -r '.deletions')
+          AUTOMERGE_SENSITIVE_GATE="${{ vars.AUTOMERGE_SENSITIVE_GATE || 'off' }}"
+          AUTOMERGE_MAX_LINES="${{ vars.AUTOMERGE_MAX_LINES || '800' }}"
+          AUTOMERGE_MAX_FILES="${{ vars.AUTOMERGE_MAX_FILES || '25' }}"
+          export PR_AUTHOR PR_FILES PR_ADDITIONS PR_DELETIONS \
+                 AUTOMERGE_SENSITIVE_GATE AUTOMERGE_MAX_LINES AUTOMERGE_MAX_FILES
 
-          # ── Gate 1: sensitive paths never self-merge (security review 2026-07-12, M2) ──
-          # CI (lint/typecheck/tests) is not an adversarial-code gate. A
-          # prompt-injected agent editing the workflows, infra, compose topology,
-          # or either credential broker could otherwise ship itself to prod on
-          # green CI alone. Mirror of .github/CODEOWNERS — keep both in sync.
-          SENSITIVE=$(gh pr view "$PR" --repo "$REPO" --json files -q '.files[].path' | grep -E \
-            '^(\.github/|infra/|docker-compose|scripts/agent-git/|packages/credential-broker/|\.gitleaks\.toml$)|(^|/)Dockerfile' \
-            || true)
-          if [ -n "$SENSITIVE" ]; then
-            echo "PR #$PR touches sensitive paths — leaving for human review (no auto-approve/auto-merge):"
-            echo "$SENSITIVE"
+          if ! REASON=$(node scripts/automerge-gate.mjs); then
+            echo "PR #$PR not eligible for auto-merge: $REASON"
             exit 0
           fi
+          echo "gate passed: $REASON"
 
           # ── Gate 2: ALL checks on the head SHA must be green, not just CI ──
           # This workflow fires when the "CI" workflow succeeds, but CodeQL /
