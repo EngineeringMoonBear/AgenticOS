@@ -788,6 +788,127 @@ function makeBridgeGithubClient(cfg: GithubSyncConfig, bridge: BridgeConfig): Gi
 type ReviewOutcome = "created" | "reopened" | "noop";
 
 /**
+ * PR-review reconcile sweep (GOL-1159). The event-driven path (`handlePrInbound`)
+ * only fires for repos where the GitHub App is installed — currently only
+ * EngineeringMoonBear/AgenticOS. PRs in other bridged repos (grove-sites,
+ * odoocker-goldberrygrove, grove-odoo-modules) never receive `pull_request`
+ * webhooks, so no review issue is ever created and the `agent-review/*` check
+ * stalls forever. This sweep fills the gap: every N minutes it lists open
+ * non-draft PRs for every bridged repo and creates review issues for any that
+ * are missing one, using the same `processReviewer` logic the webhook uses.
+ *
+ * Idempotent: `getReviewRecord` / `upsertReviewRecord` (the same idempotency
+ * table as the webhook path) prevent duplicates.
+ * Rate-limited: capped per run via `maxCreates`.
+ */
+interface PrReviewReconcileSummary {
+  scanned: number;
+  created: number;
+  skipped: number;
+  failed: number;
+  capped: boolean;
+}
+
+async function runPrReviewReconcile(
+  ctx: PluginContext,
+  cfg: GithubSyncConfig,
+): Promise<PrReviewReconcileSummary> {
+  const MAX_CREATES = 10;
+  const summary: PrReviewReconcileSummary = { scanned: 0, created: 0, skipped: 0, failed: 0, capped: false };
+
+  if (!cfg.prReviewAliceAgentId || !cfg.companyId) return summary;
+
+  // runInScope identity: in a job context there is no webhook-scope to expire.
+  // withRestFallback inside processReviewer catches any residual scope errors.
+  const runInScope: InvocationScopeRunner = (fn) => fn();
+
+  for (const bridge of cfg.bridges) {
+    const github = makeBridgeGithubClient(cfg, bridge);
+    if (!github) continue;
+
+    const pullsRes = await github.listOpenPulls(bridge.githubRepo);
+    if (!pullsRes.ok) {
+      ctx.logger.warn("pr-review-reconcile: listOpenPulls failed", {
+        repo: bridge.githubRepo,
+        error: pullsRes.error,
+      });
+      continue;
+    }
+
+    const frontendPaths = cfg.prReviewFrontendPaths?.length ? cfg.prReviewFrontendPaths : DEFAULT_FRONTEND_PATHS;
+
+    for (const pull of pullsRes.data) {
+      summary.scanned++;
+      if (summary.created >= MAX_CREATES) {
+        summary.capped = true;
+        break;
+      }
+
+      const existing = await getReviewRecord(ctx.db, `${bridge.githubOrg}/${bridge.githubRepo}`, pull.number, "ada");
+      if (existing && existing.headSha === pull.headSha) {
+        summary.skipped++;
+        continue;
+      }
+
+      // Fetch changed files to decide ada + iris reviewers (same as webhook path).
+      const filesRes = await github.listPullFiles(bridge.githubRepo, pull.number);
+      if (!filesRes.ok) {
+        ctx.logger.warn("pr-review-reconcile: listPullFiles failed", {
+          repo: bridge.githubRepo,
+          number: pull.number,
+          error: filesRes.error,
+        });
+        summary.failed++;
+        continue;
+      }
+      const { files } = filesRes.data;
+
+      const ev: GithubPrEvent = {
+        action: "opened",
+        draft: false,
+        repo: `${bridge.githubOrg}/${bridge.githubRepo}`,
+        number: pull.number,
+        title: pull.title,
+        headSha: pull.headSha,
+        url: pull.url,
+        // Not a `synchronize` delivery — the base-sync classifier is never reached
+        // from the reconcile path, so the before/after SHA pair is empty.
+        before: "",
+        after: "",
+      };
+
+      const reviewers: Array<{ reviewer: Reviewer; agentId: string }> = [
+        { reviewer: "ada", agentId: cfg.prReviewAliceAgentId },
+      ];
+      const isFrontend = anyFrontendMatch(files, frontendPaths);
+      if (isFrontend && cfg.prReviewIrisAgentId) {
+        reviewers.push({ reviewer: "iris", agentId: cfg.prReviewIrisAgentId });
+      }
+
+      let prCreated = false;
+      for (const { reviewer, agentId } of reviewers) {
+        try {
+          const outcome = await processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, agentId, runInScope);
+          if (outcome === "created") prCreated = true;
+        } catch (err) {
+          ctx.logger.warn("pr-review-reconcile: reviewer processing failed", {
+            repo: bridge.githubRepo,
+            number: pull.number,
+            reviewer,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          summary.failed++;
+        }
+      }
+      if (prCreated) summary.created++;
+      else summary.skipped++;
+    }
+  }
+
+  return summary;
+}
+
+/**
  * Native GitHub App `pull_request` endpoint (`github-pr`): the agent PR review
  * pipeline (GOL-158, spec System 2). Verifies the App webhook secret, filters to
  * non-draft actionable actions, fetches the PR's changed files via the broker
@@ -1571,6 +1692,26 @@ const plugin = definePlugin({
         }
       } catch (err) {
         await recordSwallowedFailure(ctx, cfg, "mirror-reconcile job failed", err, {});
+      }
+    });
+
+    // PR-review reconcile (GOL-1159): hourly sweep that creates review issues for
+    // open non-draft PRs in bridged repos where the App webhook isn't delivered
+    // (i.e., repos outside EngineeringMoonBear/AgenticOS). Fires at :43 to avoid
+    // stacking with mirror-reconcile (:23) or other top-of-hour jobs.
+    ctx.jobs.register("pr-review-reconcile", async () => {
+      try {
+        const summary = await runPrReviewReconcile(ctx, cfg);
+        ctx.logger.info("pr-review-reconcile complete", summary as unknown as Record<string, unknown>);
+        if (summary.created > 0) {
+          await postOpsPing(
+            ctx,
+            cfg.opsWebhookUrl,
+            `🔍 pr-review-reconcile: created ${summary.created} review issue(s) across bridged repos (scanned ${summary.scanned})${summary.capped ? " — capped, more pending" : ""}`,
+          );
+        }
+      } catch (err) {
+        await recordSwallowedFailure(ctx, cfg, "pr-review-reconcile job failed", err, {});
       }
     });
 

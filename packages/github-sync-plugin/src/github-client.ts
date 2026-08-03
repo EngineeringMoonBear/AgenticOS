@@ -396,6 +396,32 @@ export class GitHubClient {
     };
   }
 
+  /**
+   * List open, non-draft PRs for a repo (pr-review-reconcile, GOL-1159). Single
+   * page capped at 100 — enough to cover any active sprint backlog. Returns only
+   * the fields the reconcile needs: number, title, headSha, url.
+   */
+  async listOpenPulls(
+    repo: string,
+  ): Promise<Result<Array<{ number: number; title: string; headSha: string; url: string }>>> {
+    const res = await this.request<Array<Record<string, any>>>(
+      "GET",
+      repo,
+      `/repos/${this.org}/${repo}/pulls?state=open&per_page=100`,
+    );
+    if (!res.ok) return res;
+    const pulls = (Array.isArray(res.data) ? res.data : [])
+      .filter((p) => p.draft !== true)
+      .map((p) => ({
+        number: Number(p.number),
+        title: String(p.title ?? ""),
+        headSha: String(p.head?.sha ?? ""),
+        url: String(p.html_url ?? ""),
+      }))
+      .filter((p) => p.number > 0 && p.headSha);
+    return { ok: true, data: pulls };
+  }
+
   /** Comment on an issue or PR (PRs share the issues comments endpoint). */
   async createIssueComment(repo: string, num: number, body: string): Promise<Result<{ id: number }>> {
     const res = await this.request<Record<string, any>>(

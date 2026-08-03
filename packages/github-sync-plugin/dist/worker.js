@@ -10969,6 +10969,26 @@ var GitHubClient = class {
       })
     };
   }
+  /**
+   * List open, non-draft PRs for a repo (pr-review-reconcile, GOL-1159). Single
+   * page capped at 100 — enough to cover any active sprint backlog. Returns only
+   * the fields the reconcile needs: number, title, headSha, url.
+   */
+  async listOpenPulls(repo) {
+    const res = await this.request(
+      "GET",
+      repo,
+      `/repos/${this.org}/${repo}/pulls?state=open&per_page=100`
+    );
+    if (!res.ok) return res;
+    const pulls = (Array.isArray(res.data) ? res.data : []).filter((p) => p.draft !== true).map((p) => ({
+      number: Number(p.number),
+      title: String(p.title ?? ""),
+      headSha: String(p.head?.sha ?? ""),
+      url: String(p.html_url ?? "")
+    })).filter((p) => p.number > 0 && p.headSha);
+    return { ok: true, data: pulls };
+  }
   /** Comment on an issue or PR (PRs share the issues comments endpoint). */
   async createIssueComment(repo, num, body) {
     const res = await this.request(
@@ -12500,6 +12520,86 @@ function makeBridgeGithubClient(cfg, bridge) {
   }
   return null;
 }
+async function runPrReviewReconcile(ctx, cfg) {
+  const MAX_CREATES = 10;
+  const summary = { scanned: 0, created: 0, skipped: 0, failed: 0, capped: false };
+  if (!cfg.prReviewAliceAgentId || !cfg.companyId) return summary;
+  const runInScope = (fn) => fn();
+  for (const bridge of cfg.bridges) {
+    const github = makeBridgeGithubClient(cfg, bridge);
+    if (!github) continue;
+    const pullsRes = await github.listOpenPulls(bridge.githubRepo);
+    if (!pullsRes.ok) {
+      ctx.logger.warn("pr-review-reconcile: listOpenPulls failed", {
+        repo: bridge.githubRepo,
+        error: pullsRes.error
+      });
+      continue;
+    }
+    const frontendPaths = cfg.prReviewFrontendPaths?.length ? cfg.prReviewFrontendPaths : DEFAULT_FRONTEND_PATHS;
+    for (const pull of pullsRes.data) {
+      summary.scanned++;
+      if (summary.created >= MAX_CREATES) {
+        summary.capped = true;
+        break;
+      }
+      const existing = await getReviewRecord(ctx.db, `${bridge.githubOrg}/${bridge.githubRepo}`, pull.number, "ada");
+      if (existing && existing.headSha === pull.headSha) {
+        summary.skipped++;
+        continue;
+      }
+      const filesRes = await github.listPullFiles(bridge.githubRepo, pull.number);
+      if (!filesRes.ok) {
+        ctx.logger.warn("pr-review-reconcile: listPullFiles failed", {
+          repo: bridge.githubRepo,
+          number: pull.number,
+          error: filesRes.error
+        });
+        summary.failed++;
+        continue;
+      }
+      const { files } = filesRes.data;
+      const ev = {
+        action: "opened",
+        draft: false,
+        repo: `${bridge.githubOrg}/${bridge.githubRepo}`,
+        number: pull.number,
+        title: pull.title,
+        headSha: pull.headSha,
+        url: pull.url,
+        // Not a `synchronize` delivery — the base-sync classifier is never reached
+        // from the reconcile path, so the before/after SHA pair is empty.
+        before: "",
+        after: ""
+      };
+      const reviewers = [
+        { reviewer: "ada", agentId: cfg.prReviewAliceAgentId }
+      ];
+      const isFrontend = anyFrontendMatch(files, frontendPaths);
+      if (isFrontend && cfg.prReviewIrisAgentId) {
+        reviewers.push({ reviewer: "iris", agentId: cfg.prReviewIrisAgentId });
+      }
+      let prCreated = false;
+      for (const { reviewer, agentId } of reviewers) {
+        try {
+          const outcome = await processReviewer(ctx, cfg, bridge, github, ev, files, reviewer, agentId, runInScope);
+          if (outcome === "created") prCreated = true;
+        } catch (err) {
+          ctx.logger.warn("pr-review-reconcile: reviewer processing failed", {
+            repo: bridge.githubRepo,
+            number: pull.number,
+            reviewer,
+            error: err instanceof Error ? err.message : String(err)
+          });
+          summary.failed++;
+        }
+      }
+      if (prCreated) summary.created++;
+      else summary.skipped++;
+    }
+  }
+  return summary;
+}
 function captureInvocationScope() {
   return AsyncResource.bind((fn) => fn());
 }
@@ -13060,6 +13160,21 @@ var plugin = definePlugin({
         }
       } catch (err) {
         await recordSwallowedFailure(ctx, cfg, "mirror-reconcile job failed", err, {});
+      }
+    });
+    ctx.jobs.register("pr-review-reconcile", async () => {
+      try {
+        const summary = await runPrReviewReconcile(ctx, cfg);
+        ctx.logger.info("pr-review-reconcile complete", summary);
+        if (summary.created > 0) {
+          await postOpsPing(
+            ctx,
+            cfg.opsWebhookUrl,
+            `\u{1F50D} pr-review-reconcile: created ${summary.created} review issue(s) across bridged repos (scanned ${summary.scanned})${summary.capped ? " \u2014 capped, more pending" : ""}`
+          );
+        }
+      } catch (err) {
+        await recordSwallowedFailure(ctx, cfg, "pr-review-reconcile job failed", err, {});
       }
     });
     ctx.logger.info("github sync listening", {

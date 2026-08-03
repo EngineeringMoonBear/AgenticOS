@@ -113,7 +113,16 @@ const manifest: PaperclipPluginManifestV1 = {
   //   review pipeline runs, instead of reopening the review issue and re-pinging for
   //   unchanged code (the ~202 junk "Review PR" twins). One `getCommit` fetch +
   //   `classifyHeadChange` decide it; manifest surface unchanged bar version.
-  version: "0.13.0",
+  // 0.14.0 = PR-review reconcile sweep (GOL-1159). The webhook path only fires for
+  //   repos where the GitHub App is installed (currently only EngineeringMoonBear/
+  //   AgenticOS). PRs in grove-sites, odoocker-goldberrygrove, grove-odoo-modules
+  //   never received `pull_request` webhooks → no review issues → `agent-review/ada`
+  //   stalled forever, requiring admin bypass to merge. A new `pr-review-reconcile`
+  //   job runs every 30 min: for each bridge it lists open non-draft PRs, checks the
+  //   `github_pr_review` table, and creates review issues for any that are missing
+  //   one (same processReviewer logic as the webhook). Capped at 10 creates per run.
+  //   Manifest surface changed: +pr-review-reconcile job entry.
+  version: "0.14.0",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",
@@ -167,6 +176,14 @@ const manifest: PaperclipPluginManifestV1 = {
       // Minute 23 — offset from the top of the hour so it never stacks on other
       // hourly jobs (openviking vault-ingest runs at :00).
       schedule: "23 * * * *",
+    },
+    {
+      jobKey: "pr-review-reconcile",
+      displayName: "PR review reconcile",
+      description:
+        "Every-30-min sweep of all bridged repos: creates review issues for open non-draft PRs that have no Paperclip review issue yet. Fills the webhook gap for repos where the GitHub App is not installed (e.g. Goldberry-Playground/grove-sites, odoocker-goldberrygrove, grove-odoo-modules). Idempotent, capped at 10 creates per run. GOL-1159.",
+      // Run every 30 min so a newly-opened human PR gets a review issue quickly.
+      schedule: "13,43 * * * *",
     },
   ],
   // Inbound endpoint. The workflow POSTs the GitHub issue-opened payload here;

@@ -211,6 +211,35 @@ describe("GitHubClient.listPullFiles", () => {
   });
 });
 
+describe("GitHubClient.listOpenPulls", () => {
+  it("maps open PRs and drops drafts + malformed rows", async () => {
+    const fetchMock = mockFetch([
+      { number: 7, title: "feat: x", head: { sha: "sha7" }, html_url: "https://gh/r/pull/7", draft: false },
+      { number: 8, title: "draft one", head: { sha: "sha8" }, html_url: "https://gh/r/pull/8", draft: true },
+      { number: 0, title: "bad number", head: { sha: "shaX" }, html_url: "", draft: false },
+      { number: 9, title: "no head sha", head: {}, html_url: "https://gh/r/pull/9", draft: false },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new GitHubClient({ token: "t", org: "o" });
+    const res = await client.listOpenPulls("r");
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data).toEqual([
+        { number: 7, title: "feat: x", headSha: "sha7", url: "https://gh/r/pull/7" },
+      ]);
+    }
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://api.github.com/repos/o/r/pulls?state=open&per_page=100");
+  });
+
+  it("propagates an API error Result", async () => {
+    vi.stubGlobal("fetch", mockFetch({ message: "Not Found" }, false, 404));
+    const client = new GitHubClient({ token: "t", org: "o" });
+    const res = await client.listOpenPulls("r");
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toBe("Not Found");
+  });
+});
+
 describe("GitHubClient.createCheckRun", () => {
   it("POSTs a pending (in_progress) run when no conclusion is given", async () => {
     const fetchMock = mockFetch({ id: 999 });
