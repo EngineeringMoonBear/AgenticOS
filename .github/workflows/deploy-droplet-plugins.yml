@@ -37,6 +37,7 @@ on:
       - 'packages/openviking-plugin/**'
       - 'packages/github-plugin/**'
       - 'packages/github-sync-plugin/**'
+      - 'packages/discord-plugin/**'
       - '.github/workflows/deploy-droplet-plugins.yml'
   workflow_dispatch:
 
@@ -91,11 +92,13 @@ jobs:
               --filter @agenticos/vault-plugin \
               --filter @agenticos/openviking-plugin \
               --filter @agenticos/github-plugin \
-              --filter @agenticos/github-sync-plugin
+              --filter @agenticos/github-sync-plugin \
+              --filter @agenticos/discord-plugin
             pnpm --filter @agenticos/vault-plugin \
                  --filter @agenticos/openviking-plugin \
                  --filter @agenticos/github-plugin \
-                 --filter @agenticos/github-sync-plugin build
+                 --filter @agenticos/github-sync-plugin \
+                 --filter @agenticos/discord-plugin build
 
             # Fail the deploy if any dist is incomplete (worker + manifest).
             for p in vault-plugin openviking-plugin github-plugin github-sync-plugin; do
