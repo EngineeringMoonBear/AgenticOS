@@ -156,3 +156,22 @@ Layer 2 is sequenced third deliberately: it is the only step that modifies branc
 ## Open items
 
 - Layer 3's `push`-on-`main` subscription may overlap the PR #444 hourly reconcile sweep. Confirm during implementation whether dispatch should ride the existing sweep instead of adding a second trigger.
+
+## Amendment (2026-08-03) — Layer 2 ruleset also enforces CODEOWNERS review
+
+Layer 2's ruleset, as originally designed above ("carry over required checks... linear history, no force-push, no delete," with **no required reviewers** mentioned), omitted any review requirement. An operator decision made after this design was written adds one.
+
+**Why:** `.github/CODEOWNERS` (added for security finding M2) only binds when a ruleset with "Require review from Code Owners" is enabled. Classic protection on `main` has `required_pull_request_reviews: null`, so CODEOWNERS has been inert since it was added. Layer 4, in flight in parallel, defaults the auto-approve workflow's sensitive-path gate to *off* — once that lands, nothing at all would enforce M2 unless something else picks it up structurally. Layer 2's ruleset, being the one artifact that touches `main`'s protection, is where that restoration belongs.
+
+**What changed:** the ruleset in `infra/terraform/github-branch-protection.tf` adds a `pull_request` rule alongside `required_status_checks` and `merge_queue`:
+
+```hcl
+pull_request {
+  required_approving_review_count = 0
+  require_code_owner_review       = true
+}
+```
+
+`required_approving_review_count` and `require_code_owner_review` are independent fields in GitHub's ruleset model — the latter only engages for files with a CODEOWNERS entry. Net effect: an ordinary PR touching no CODEOWNERS path needs zero approvals (hands-free auto-merge is unaffected, the convoy fix stands); a PR touching a CODEOWNERS path (`.github/`, `infra/`, `docker-compose*`, `scripts/agent-git/`, `packages/credential-broker/`, `.gitleaks.toml`, `Dockerfile*`) requires the code owner's (`@EngineeringMoonBear`'s) approval. `github-actions[bot]`, the auto-approve workflow's identity, is not a code owner, so its approval cannot satisfy this — the M2 carve-out is restored structurally rather than only operationally.
+
+This document and `infra/terraform/github-branch-protection.tf` should be kept in sync on this point going forward.
