@@ -256,29 +256,27 @@ resource "github_repository_ruleset" "main_merge_gate" {
       allowed_merge_methods = ["squash", "rebase"]
     }
 
-    # ── Merge queue — parity with every other Goldberry-Playground repo ────────
-    # Added 2026-08-03 across grove-sites / odoocker / grove-odoo-modules /
-    # AgriforestryOS / Goldberry-Site. The queue serializes merges and tests each
-    # entry against the real post-merge main, which is what makes
-    # `strict_required_status_checks_policy = true` above survivable on a busy
-    # repo: without it, every merge to main forces a manual branch update and a
-    # full CI re-run on every other open PR (observed on grove-sites#405 —
-    # three update-branch laps, ~18 checks each).
+    # ── NO merge_queue rule here — DELIBERATE (2026-08-03) ───────────────────
+    # Two reasons, both blocking:
     #
-    # PREREQUISITE (learned the hard way 2026-08-03): every workflow producing a
-    # required context above MUST also trigger on `merge_group`, or queue
-    # branches (`gh-readonly-queue/*`) run zero checks and entries sit in
-    # AWAITING_CHECKS until `check_response_timeout_minutes` expires — nothing
-    # ever merges. That trigger lands in PR #476; do not enable this ruleset
-    # before it is on main.
-    merge_queue {
-      merge_method                      = "SQUASH"
-      grouping_strategy                 = "ALLGREEN"
-      check_response_timeout_minutes    = 30
-      max_entries_to_build              = 5
-      max_entries_to_merge              = 5
-      min_entries_to_merge              = 1
-      min_entries_to_merge_wait_minutes = 2
-    }
+    #   1. OWNERSHIP: `github_repository_ruleset.main` in
+    #      infra/terraform/github-branch-protection.tf (merged #462) already
+    #      declares the queue for this branch. A second merge_queue on the same
+    #      ~DEFAULT_BRANCH is divergent config on one branch, not parity.
+    #
+    #   2. HARD INCOMPATIBILITY with the required check below: GitHub evaluates
+    #      required checks against the MERGE-GROUP commit, but
+    #      `agent-review/ada` is posted by the github-sync plugin, which ignores
+    #      every non-`pull_request` webhook (worker.ts: `if (eventType &&
+    #      eventType !== "pull_request") return`) and contains zero merge_group
+    #      handling. The context therefore NEVER appears on a
+    #      `gh-readonly-queue/*` SHA -> unreported check -> assumed failed at
+    #      timeout -> entry dropped. A queue plus this required check locks main
+    #      for every non-admin merge. Workflow `merge_group:` triggers (#476)
+    #      CANNOT fix this: no workflow posts this context.
+    #
+    # Before `agent-review/ada` can be required on a repo with an active queue,
+    # the plugin must mirror the check onto merge_group events (or the check
+    # must be gated pre-queue only).
   }
 }

@@ -131,7 +131,12 @@ run "all_four_ci_checks_remain_required" {
 
   assert {
     condition     = github_repository_ruleset.main_merge_gate[0].rules[0].required_status_checks[0].strict_required_status_checks_policy == true
-    error_message = "strict policy must stay true (branch up to date before merge); the merge queue is what makes this practical."
+    # NOTE (2026-08-03): this pins the value THIS file currently declares, and it
+    # CONFLICTS with `github_repository_ruleset.main` on main (#462), which sets
+    # strict = false deliberately ("it forced a manual Update branch on every
+    # open PR after each merge, and the queue supersedes it"). Whichever ruleset
+    # ends up owning the branch, both must not disagree — resolve before apply.
+    error_message = "strict policy value changed — reconcile with github_repository_ruleset.main (#462) sets strict=false; two rulesets on one branch must not disagree."
   }
 }
 
@@ -159,35 +164,11 @@ run "history_protections_match_peer_repos" {
   }
 
   assert {
-    condition = alltrue([
-      for m in ["squash", "rebase"] :
-      contains(github_repository_ruleset.main_merge_gate[0].rules[0].pull_request[0].allowed_merge_methods, m)
-    ])
+    condition = (
+      length(github_repository_ruleset.main_merge_gate[0].rules[0].pull_request[0].allowed_merge_methods) == 2 &&
+      !contains(github_repository_ruleset.main_merge_gate[0].rules[0].pull_request[0].allowed_merge_methods, "merge")
+    )
     error_message = "allowed_merge_methods must be squash+rebase only — a merge commit contradicts required_linear_history."
-  }
-}
-
-# ── Merge queue parity (added 2026-08-03 across all Goldberry-Playground repos) ─
-run "merge_queue_matches_org_standard" {
-  command = plan
-
-  variables {
-    enable_agent_review_merge_gate = true
-  }
-
-  assert {
-    condition     = github_repository_ruleset.main_merge_gate[0].rules[0].merge_queue[0].merge_method == "SQUASH"
-    error_message = "Merge queue must squash, matching the other six repos."
-  }
-
-  assert {
-    condition     = github_repository_ruleset.main_merge_gate[0].rules[0].merge_queue[0].grouping_strategy == "ALLGREEN"
-    error_message = "Grouping strategy must be ALLGREEN, matching the other six repos."
-  }
-
-  assert {
-    condition     = github_repository_ruleset.main_merge_gate[0].rules[0].merge_queue[0].check_response_timeout_minutes == 30
-    error_message = "check_response_timeout must match the org standard (30m)."
   }
 }
 
@@ -213,6 +194,11 @@ run "bypass_is_admin_role_only" {
     condition     = github_repository_ruleset.main_merge_gate[0].bypass_actors[0].actor_id == 5
     error_message = "Bypass actor must be role id 5 (Admin), matching the peer rulesets."
   }
+
+  assert {
+    condition     = github_repository_ruleset.main_merge_gate[0].bypass_actors[0].bypass_mode == "always"
+    error_message = "bypass_mode must stay `always` — narrowing it to `pull_request` silently removes the admin escape hatch for direct pushes during an incident."
+  }
 }
 
 # ── Human review stays out of the gate (the Phase-3 posture) ──────────────────
@@ -226,5 +212,19 @@ run "human_review_not_required" {
   assert {
     condition     = github_repository_ruleset.main_merge_gate[0].rules[0].pull_request[0].required_approving_review_count == 0
     error_message = "Phase 3 intentionally requires ZERO human approvals — agent sign-off is the gate. Changing this is a policy decision, not a config tweak."
+  }
+}
+
+# ── This ruleset must NOT declare a merge queue (see repo-ruleset.tf) ─────────
+run "declares_no_merge_queue" {
+  command = plan
+
+  variables {
+    enable_agent_review_merge_gate = true
+  }
+
+  assert {
+    condition     = length(github_repository_ruleset.main_merge_gate[0].rules[0].merge_queue) == 0
+    error_message = "This ruleset must not declare a merge_queue: the queue is owned by github_repository_ruleset.main (#462), and a queue combined with the plugin-posted agent-review/ada check locks main for every non-admin merge (the plugin never posts on merge_group SHAs)."
   }
 }
