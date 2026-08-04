@@ -1,7 +1,7 @@
 // test-automerge-gate.mjs — unit test for the auto-merge gate decision.
 // Run: node scripts/test-automerge-gate.mjs
 import assert from "node:assert/strict";
-import { evaluateGate, sensitiveGateFromEnv } from "./automerge-gate.mjs";
+import { evaluateGate, sensitiveGateFromEnv, classifyDependabotTitle } from "./automerge-gate.mjs";
 
 const base = {
   authorLogin: "agenticos-developer[bot]",
@@ -97,3 +97,59 @@ check("sensitive gate ON still allows ordinary paths", () => {
 
 if (failures) { console.error(`\n${failures} check(s) failed`); process.exit(1); }
 console.log("\nall checks passed");
+
+// ── Dependabot eligibility (2026-08-03) ──────────────────────────────────────
+// Real titles taken verbatim from open PRs on this repo.
+const dbot = { ...base, authorLogin: "app/dependabot" };
+
+check("dependabot title parsing handles single, grouped and bare-major forms", () => {
+  assert.deepEqual(classifyDependabotTitle("chore(deps)(deps-dev): bump jsdom from 29.1.1 to 30.0.1"), { isDev: true, major: true });
+  assert.deepEqual(classifyDependabotTitle("chore(deps)(deps-dev): bump postcss from 8.5.20 to 8.5.23"), { isDev: true, major: false });
+  assert.deepEqual(classifyDependabotTitle("chore(deps)(deps): bump actions/checkout from 5 to 7"), { isDev: false, major: true });
+  assert.deepEqual(classifyDependabotTitle("chore(deps)(deps): bump the production-dependencies group with 18 updates"), { isDev: false, major: null });
+});
+
+check("dependabot patch bump of a dev dependency auto-merges", () => {
+  const r = evaluateGate({ ...dbot, prTitle: "chore(deps)(deps-dev): bump postcss from 8.5.20 to 8.5.23" });
+  assert.equal(r.allow, true);
+});
+
+check("dependabot MAJOR bump of a dev dependency auto-merges (cannot reach prod; CI must be green)", () => {
+  const r = evaluateGate({ ...dbot, prTitle: "chore(deps)(deps-dev): bump jsdom from 29.1.1 to 30.0.1" });
+  assert.equal(r.allow, true);
+});
+
+check("dependabot MAJOR bump of a production dependency keeps a human", () => {
+  const r = evaluateGate({ ...dbot, prTitle: "chore(deps)(deps): bump left-pad from 1.2.3 to 2.0.0" });
+  assert.equal(r.allow, false);
+  assert.match(r.reason, /major version bump of a production dependency/);
+});
+
+check("dependabot GROUPED production update keeps a human (no single version pair)", () => {
+  const r = evaluateGate({ ...dbot, prTitle: "chore(deps)(deps): bump the production-dependencies group with 18 updates" });
+  assert.equal(r.allow, false);
+  assert.match(r.reason, /grouped production-dependency update/);
+});
+
+check("dependabot grouped DEV update auto-merges", () => {
+  const r = evaluateGate({ ...dbot, prTitle: "chore(deps)(deps-dev): bump the dev-dependencies group with 6 updates" });
+  assert.equal(r.allow, true);
+});
+
+check("dependabot still cannot touch sensitive paths (actions bumps live in .github/)", () => {
+  const r = evaluateGate({ ...dbot, sensitiveGate: true, changedFiles: [".github/workflows/ci.yml"], prTitle: "chore(deps)(deps): bump actions/checkout from 5 to 7" });
+  assert.equal(r.allow, false);
+  assert.match(r.reason, /sensitive path/);
+});
+
+check("dependabot is still bound by the blast-radius caps", () => {
+  const r = evaluateGate({ ...dbot, additions: 5000, deletions: 0, prTitle: "chore(deps)(deps-dev): bump x from 1.0.0 to 1.0.1" });
+  assert.equal(r.allow, false);
+  assert.match(r.reason, /exceeds AUTOMERGE_MAX_LINES/);
+});
+
+check("a random human author is still rejected", () => {
+  const r = evaluateGate({ ...base, authorLogin: "some-human", prTitle: "fix: thing" });
+  assert.equal(r.allow, false);
+  assert.match(r.reason, /not the agent App bot or dependabot/);
+});
