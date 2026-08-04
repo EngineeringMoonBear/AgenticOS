@@ -95,9 +95,6 @@ check("sensitive gate ON still allows ordinary paths", () => {
   assert.equal(evaluateGate({ ...base, sensitiveGate: true, changedFiles: ["src/a.ts"] }).allow, true);
 });
 
-if (failures) { console.error(`\n${failures} check(s) failed`); process.exit(1); }
-console.log("\nall checks passed");
-
 // ── Dependabot eligibility (2026-08-03) ──────────────────────────────────────
 // Real titles taken verbatim from open PRs on this repo.
 const dbot = { ...base, authorLogin: "app/dependabot" };
@@ -137,7 +134,9 @@ check("dependabot grouped DEV update auto-merges", () => {
 });
 
 check("dependabot still cannot touch sensitive paths (actions bumps live in .github/)", () => {
-  const r = evaluateGate({ ...dbot, sensitiveGate: true, changedFiles: [".github/workflows/ci.yml"], prTitle: "chore(deps)(deps): bump actions/checkout from 5 to 7" });
+  // Non-major production bump so the prod-major guard does NOT short-circuit
+  // first — this must reach and prove the sensitive-path branch itself.
+  const r = evaluateGate({ ...dbot, sensitiveGate: true, changedFiles: [".github/workflows/ci.yml"], prTitle: "chore(deps)(deps): bump actions/checkout from 5.1.0 to 5.2.0" });
   assert.equal(r.allow, false);
   assert.match(r.reason, /sensitive path/);
 });
@@ -153,3 +152,6 @@ check("a random human author is still rejected", () => {
   assert.equal(r.allow, false);
   assert.match(r.reason, /not the agent App bot or dependabot/);
 });
+
+if (failures) { console.error(`\n${failures} check(s) failed`); process.exit(1); }
+console.log("\nall checks passed");
