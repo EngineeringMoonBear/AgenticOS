@@ -138,7 +138,7 @@ importers:
         version: 6.0.3(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))
       autoprefixer:
         specifier: ^10.5.4
-        version: 10.5.4(postcss@8.5.20)
+        version: 10.5.4(postcss@8.5.23)
       eslint:
         specifier: ^9
         version: 9.39.5(jiti@2.7.0)
@@ -152,8 +152,8 @@ importers:
         specifier: ^9.0.0
         version: 9.0.0(@types/pg@8.20.0)(pg@8.22.0)
       postcss:
-        specifier: ^8.5.20
-        version: 8.5.20
+        specifier: ^8.5.23
+        version: 8.5.23
       tailwindcss:
         specifier: ^4
         version: 4.3.3
@@ -4102,8 +4102,8 @@ packages:
     resolution: {integrity: sha512-dkEJPVvun4FryqBmZ5KhDo0K9iDXAwn08tMLDinNdRBNPcYEDiWYysLcc6k3mjTMlbP9KyylvRpd4wFtwrT9rw==}
     engines: {node: ^20.17.0 || >=22.9.0}
 
-  nanoid@3.3.16:
-    resolution: {integrity: sha512-bzlKTyNJ7+LdGIIwy8ijFpIqEQIvafahV7eYykJ8Cvh42EdJeODoJ6gUJXpQJvej1BddH8OqTXZNE/KfbWAu8Q==}
+  nanoid@3.3.17:
+    resolution: {integrity: sha512-xQLf0A3HOMlgHq0n247/LRuAOYmB7dXJ/DvAxGvsSBij45XtBSmQycu+F8ODbHwns/XyFZagyL1+J0Offw1E0g==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
@@ -4444,8 +4444,8 @@ packages:
   postcss-value-parser@4.2.0:
     resolution: {integrity: sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ==}
 
-  postcss@8.5.20:
-    resolution: {integrity: sha512-lW616l85ucIQL+FocMmL7pQFPqBmwejrCMg+iPxyImlrANNJG9NHq/RkyCZopDhd8C3LA03PHRJDjkbGu8vvug==}
+  postcss@8.5.23:
+    resolution: {integrity: sha512-g50586zr4bZmwFiTlflMu8E0bDTb5I5gertgwAKmsdUlTQIhZtunzUlD1WSzwcVWPoAVpsrA6vlfCD7oXvRwgg==}
     engines: {node: ^10 || ^12 || >=14}
 
   postgres-array@2.0.0:
@@ -6806,7 +6806,7 @@ snapshots:
       '@alloc/quick-lru': 5.2.0
       '@tailwindcss/node': 4.3.3
       '@tailwindcss/oxide': 4.3.3
-      postcss: 8.5.20
+      postcss: 8.5.23
       tailwindcss: 4.3.3
 
   '@tanstack/query-core@5.101.4': {}
@@ -7314,13 +7314,13 @@ snapshots:
 
   atomically@1.7.0: {}
 
-  autoprefixer@10.5.4(postcss@8.5.20):
+  autoprefixer@10.5.4(postcss@8.5.23):
     dependencies:
       browserslist: 4.28.6
       caniuse-lite: 1.0.30001806
       fraction.js: 5.3.4
       picocolors: 1.1.1
-      postcss: 8.5.20
+      postcss: 8.5.23
       postcss-value-parser: 4.2.0
 
   available-typed-arrays@1.0.7:
@@ -9505,7 +9505,7 @@ snapshots:
   mute-stream@3.0.0:
     optional: true
 
-  nanoid@3.3.16: {}
+  nanoid@3.3.17: {}
 
   napi-postinstall@0.3.4: {}
 
@@ -9524,7 +9524,7 @@ snapshots:
       '@swc/helpers': 0.5.15
       baseline-browser-mapping: 2.11.12
       caniuse-lite: 1.0.30001806
-      postcss: 8.5.20
+      postcss: 8.5.23
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
       styled-jsx: 5.1.6(@babel/core@7.29.7)(react@19.2.8)
@@ -9846,9 +9846,9 @@ snapshots:
 
   postcss-value-parser@4.2.0: {}
 
-  postcss@8.5.20:
+  postcss@8.5.23:
     dependencies:
-      nanoid: 3.3.16
+      nanoid: 3.3.17
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
@@ -10257,7 +10257,7 @@ snapshots:
       kleur: 4.1.5
       open: 11.0.0
       ora: 8.2.0
-      postcss: 8.5.20
+      postcss: 8.5.23
       postcss-selector-parser: 7.1.4
       prompts: 2.4.2
       recast: 0.23.19
@@ -10821,7 +10821,7 @@ snapshots:
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.5
-      postcss: 8.5.20
+      postcss: 8.5.23
       rolldown: 1.1.5
       tinyglobby: 0.2.17
     optionalDependencies:
