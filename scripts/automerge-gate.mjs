@@ -5,7 +5,7 @@
 // still owns "are all checks green"; this owns author, size, and path policy.
 //
 // CLI: node scripts/automerge-gate.mjs
-//   env: PR_AUTHOR, PR_FILES (newline-separated), PR_ADDITIONS, PR_DELETIONS,
+//   env: PR_AUTHOR, PR_TITLE, PR_FILES (newline-separated), PR_ADDITIONS, PR_DELETIONS,
 //        AUTOMERGE_SENSITIVE_GATE (on|off, default ON — only explicit 'off' disables), AUTOMERGE_MAX_LINES, AUTOMERGE_MAX_FILES
 //   exit 0 = allow, exit 1 = skip (reason on stdout)
 import { pathToFileURL } from "node:url";
@@ -24,6 +24,30 @@ export function sensitiveGateFromEnv(env = process.env) {
 /** Authors permitted to auto-merge: the Paperclip agent App bot, both spellings. */
 const AGENT_AUTHORS = new Set(["agenticos-developer", "app/agenticos-developer", "agenticos-developer[bot]"]);
 
+/** Dependabot, all spellings GitHub uses across REST/GraphQL/`gh`. */
+const DEPENDABOT_AUTHORS = new Set(["dependabot", "app/dependabot", "dependabot[bot]"]);
+
+/**
+ * Classify a dependabot PR from its title. Dependabot titles are stable and
+ * machine-written, so parsing them avoids adding the fetch-metadata action (this
+ * script is deliberately zero-dependency).
+ *
+ *   "chore(deps)(deps-dev): bump jsdom from 29.1.1 to 30.0.1"
+ *   "chore(deps)(deps): bump the production-dependencies group with 18 updates"
+ *   "chore(deps)(deps): bump actions/checkout from 5 to 7"
+ *
+ * Returns { isDev, major } where `major` is true/false for a parseable single
+ * bump, or null when the title is a grouped update with no single version pair.
+ */
+export function classifyDependabotTitle(title = "") {
+  const isDev = /\(deps-dev\)/.test(title);
+  const m =
+    /\bfrom\s+v?(\d+)\.\S*\s+to\s+v?(\d+)\./.exec(title) ||
+    /\bfrom\s+v?(\d+)\s+to\s+v?(\d+)\b/.exec(title);
+  if (!m) return { isDev, major: null };
+  return { isDev, major: Number(m[2]) > Number(m[1]) };
+}
+
 /**
  * Security finding M2 (PR #359): CI is not an adversarial-code gate. A
  * prompt-injected agent editing these paths could self-ship. Mirrors
@@ -40,10 +64,29 @@ const SENSITIVE = [
 ];
 
 export function evaluateGate(input) {
-  const { authorLogin, changedFiles, additions, deletions, sensitiveGate, maxLines, maxFiles } = input;
+  const { authorLogin, changedFiles, additions, deletions, sensitiveGate, maxLines, maxFiles, prTitle = "" } = input;
 
-  if (!AGENT_AUTHORS.has(authorLogin)) {
-    return { allow: false, reason: `author '${authorLogin}' is not the agent App bot; human and external PRs keep human review` };
+  const isAgent = AGENT_AUTHORS.has(authorLogin);
+  const isDependabot = DEPENDABOT_AUTHORS.has(authorLogin);
+
+  if (!isAgent && !isDependabot) {
+    return { allow: false, reason: `author '${authorLogin}' is not the agent App bot or dependabot; human and external PRs keep human review` };
+  }
+
+  // Dependency bumps are the archetypal "small, not a feature" change, but not
+  // all of them are equal risk. A major bump can change runtime behaviour in
+  // ways green CI does not necessarily catch, so those keep a human — EXCEPT
+  // for dev dependencies, which cannot affect the shipped artifact (if a dev
+  // major breaks anything, it breaks CI itself, which is already required
+  // green before this gate runs).
+  if (isDependabot) {
+    const { isDev, major } = classifyDependabotTitle(prTitle);
+    if (!isDev && major === true) {
+      return { allow: false, reason: `major version bump of a production dependency — keeps a human reviewer ('${prTitle}')` };
+    }
+    if (!isDev && major === null) {
+      return { allow: false, reason: `grouped production-dependency update with no single version pair — keeps a human reviewer ('${prTitle}')` };
+    }
   }
 
   if (changedFiles.length > maxFiles) {
@@ -82,6 +125,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     changedFiles: (process.env.PR_FILES ?? "").split("\n").map((s) => s.trim()).filter(Boolean),
     additions: num(process.env.PR_ADDITIONS, 0),
     deletions: num(process.env.PR_DELETIONS, 0),
+    prTitle: process.env.PR_TITLE ?? "",
     sensitiveGate: sensitiveGateFromEnv(),
     maxLines: num(process.env.AUTOMERGE_MAX_LINES, 800),
     maxFiles: num(process.env.AUTOMERGE_MAX_FILES, 25),
