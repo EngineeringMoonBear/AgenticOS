@@ -170,6 +170,15 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Assert plugins converged to the built version (GOL-804)
+        # `shell: bash` is LOad-BEARING: it runs `bash --noprofile --norc -eo
+        # pipefail {0}`. GitHub's DEFAULT for `run:` is `bash -e {0}` -- WITHOUT
+        # pipefail -- so the `| tee assert.log` below would mask a nonzero exit
+        # from the assert script behind tee's 0, and this hard gate would report
+        # success while the assertion failed. That is not hypothetical: run
+        # 31039144506 (2026-08-05) printed "2 plugin(s) did not converge" and
+        # still concluded success, hiding a 31-hour outage in which every plugin
+        # was unloadable and all agent-review webhooks 502'd.
+        shell: bash
         env:
           HOST: ${{ secrets.DROPLET_HOST }}
           USER: ${{ secrets.DROPLET_USER }}
@@ -183,7 +192,7 @@ jobs:
           # dir whose dist was stale). This step turns that into a RED deploy.
           # The finish step's per-plugin assert only covers manifest-bumped
           # plugins that went through CD; an out-of-band install slips past it.
-          # Default shell `bash -eo pipefail` → a nonzero exit fails the deploy.
+          # With `shell: bash` above (-eo pipefail), a nonzero exit here fails the deploy.
           ssh -i ~/.ssh/deploy_key "${USER}@${HOST}" \
             "bash -lc 'set -euo pipefail; cd /opt/agenticos/repo && bash scripts/assert-plugin-versions.sh'" \
             | tee assert.log
