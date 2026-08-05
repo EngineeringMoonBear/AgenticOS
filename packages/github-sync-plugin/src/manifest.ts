@@ -113,7 +113,17 @@ const manifest: PaperclipPluginManifestV1 = {
   //   review pipeline runs, instead of reopening the review issue and re-pinging for
   //   unchanged code (the ~202 junk "Review PR" twins). One `getCommit` fetch +
   //   `classifyHeadChange` decide it; manifest surface unchanged bar version.
-  version: "0.13.0",
+  // 0.13.1 = sign-off reconcile sweep (GOL-1160). handleReviewSignoff mutes a transient
+  //   check-run completion failure (broker 401 / timeout / 5xx) expecting "the next
+  //   issue.updated re-fires the retry" — but a `done` sign-off is TERMINAL, so a blip at
+  //   that instant strands the REQUIRED `agent-review/*` check `in_progress` forever and
+  //   the Phase-3 gate blocks the merge until an admin bypass (observed 2026-08-03 on
+  //   grove-sites#407 / odoocker#387 / grove-odoo-modules#68 — all signed off `done`, checks
+  //   stuck pending; a manual App-token check POST returned 201, ruling out permissions).
+  //   New hourly `signoff-reconcile` job (jobs.schedule + jobs[] — manifest surface CHANGED,
+  //   fires at :38) re-drives handleReviewSignoff for any signed-off review issue whose check
+  //   is not yet green, bounded to a 3-day window + 200 rows, one check-run read per head.
+  version: "0.13.1",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",
@@ -167,6 +177,15 @@ const manifest: PaperclipPluginManifestV1 = {
       // Minute 23 — offset from the top of the hour so it never stacks on other
       // hourly jobs (openviking vault-ingest runs at :00).
       schedule: "23 * * * *",
+    },
+    {
+      jobKey: "signoff-reconcile",
+      displayName: "Sign-off reconcile",
+      description:
+        "Hourly sweep that re-drives stranded agent-review sign-off check-runs: a signed-off (`done`) review issue whose required `agent-review/*` check never completed to success — e.g. a transient broker-token blip at the terminal sign-off left the event-driven retry with no event to re-fire (GOL-1160). Idempotent; bounded per run.",
+      // Minute 38 — offset from mirror-reconcile (:23) and the top of the hour so the
+      // two sweeps never stack.
+      schedule: "38 * * * *",
     },
   ],
   // Inbound endpoint. The workflow POSTs the GitHub issue-opened payload here;

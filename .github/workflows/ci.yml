@@ -6,6 +6,7 @@ name: CI
 # the moment Task 1 (`Bootstrap monorepo`) lands.
 
 on:
+  merge_group:
   pull_request:
     branches: [main]
   push:

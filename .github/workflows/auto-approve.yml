@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out base-branch scripts
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: main
           persist-credentials: false
@@ -57,15 +57,18 @@ jobs:
           # Decision lives in scripts/automerge-gate.mjs so it is unit-tested
           # (scripts/test-automerge-gate.mjs). Gate 2 below still owns "all
           # checks green", which needs live API state.
-          PR_JSON=$(gh pr view "$PR" --repo "$REPO" --json author,files,additions,deletions)
+          PR_JSON=$(gh pr view "$PR" --repo "$REPO" --json author,files,additions,deletions,title)
           PR_AUTHOR=$(echo "$PR_JSON" | jq -r '.author.login')
+          # Dependabot risk classification reads the title (major vs minor,
+          # prod vs dev). Agent PRs ignore it.
+          PR_TITLE=$(echo "$PR_JSON" | jq -r '.title')
           PR_FILES=$(echo "$PR_JSON" | jq -r '.files[].path')
           PR_ADDITIONS=$(echo "$PR_JSON" | jq -r '.additions')
           PR_DELETIONS=$(echo "$PR_JSON" | jq -r '.deletions')
           AUTOMERGE_SENSITIVE_GATE="${{ vars.AUTOMERGE_SENSITIVE_GATE || 'on' }}"
           AUTOMERGE_MAX_LINES="${{ vars.AUTOMERGE_MAX_LINES || '800' }}"
           AUTOMERGE_MAX_FILES="${{ vars.AUTOMERGE_MAX_FILES || '25' }}"
-          export PR_AUTHOR PR_FILES PR_ADDITIONS PR_DELETIONS \
+          export PR_AUTHOR PR_TITLE PR_FILES PR_ADDITIONS PR_DELETIONS \
                  AUTOMERGE_SENSITIVE_GATE AUTOMERGE_MAX_LINES AUTOMERGE_MAX_FILES
 
           if ! REASON=$(node scripts/automerge-gate.mjs); then
