@@ -237,3 +237,90 @@ describe("withRestFallback", () => {
     expect(lines).toEqual([]);
   });
 });
+
+// --- listIssues: the READ fallback the scheduled sweep needs (GOL-1163) ----------
+//
+// A cron tick has no ambient invocation scope to inherit, so ctx.issues.list —
+// unlike every other privileged call in this plugin — can fail on the FIRST
+// attempt rather than mid-sequence. These pin the request shape and, critically,
+// that the sweep's read survives that failure.
+
+describe("PaperclipRestClient.listIssues", () => {
+  const base = { baseUrl: "https://paperclip.example.com", token: "t" };
+
+  it("builds the company-scoped URL with projectId/limit/offset and returns the array", async () => {
+    const rows = [{ id: "i1", status: "todo" }, { id: "i2", status: "blocked" }];
+    const { calls, http } = makeFakeHttp(() => ({ status: 200, body: rows }));
+    const client = new PaperclipRestClient({ ...base, http });
+
+    const out = await client.listIssues("co-1", { projectId: "p-9", limit: 100, offset: 200 });
+
+    expect(out).toEqual(rows);
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/api/companies/co-1/issues");
+    expect(url.searchParams.get("projectId")).toBe("p-9");
+    expect(url.searchParams.get("limit")).toBe("100");
+    expect(url.searchParams.get("offset")).toBe("200");
+    expect(calls[0]!.init.method).toBe("GET");
+  });
+
+  it("omits absent params entirely (no ?projectId=undefined)", async () => {
+    const { calls, http } = makeFakeHttp(() => ({ status: 200, body: [] }));
+    const client = new PaperclipRestClient({ ...base, http });
+    await client.listIssues("co-1");
+    expect(calls[0]!.url).toBe("https://paperclip.example.com/api/companies/co-1/issues");
+  });
+
+  it("degrades a non-array body to [] instead of throwing (sweep no-ops, never dies)", async () => {
+    const { http } = makeFakeHttp(() => ({ status: 200, body: { unexpected: "shape" } }));
+    const client = new PaperclipRestClient({ ...base, http });
+    await expect(client.listIssues("co-1")).resolves.toEqual([]);
+  });
+
+  it("throws PaperclipRestError with the status on a non-2xx", async () => {
+    const { http } = makeFakeHttp(() => ({ status: 403, body: "forbidden" }));
+    const client = new PaperclipRestClient({ ...base, http });
+    await expect(client.listIssues("co-1")).rejects.toBeInstanceOf(PaperclipRestError);
+  });
+
+  it("withRestFallback routes the sweep's read to REST on the EXACT host scope error", async () => {
+    const rows = [{ id: "i1" }];
+    const { http } = makeFakeHttp(() => ({ status: 200, body: rows }));
+    const rest = new PaperclipRestClient({ ...base, http });
+    const lines: string[] = [];
+    const logger = {
+      info: (m: string) => lines.push(`info:${m}`),
+      warn: (m: string) => lines.push(`warn:${m}`),
+      error: (m: string) => lines.push(`error:${m}`),
+    };
+    // Verbatim wording observed on 2026-08-03 21:23Z when the sweep stopped.
+    const hostErr = new Error(
+      'Plugin "f46075f1" is not allowed to perform "issues.list": the worker referenced a missing, expired, or unknown invocation scope',
+    );
+
+    const out = await withRestFallback(
+      { logger, rest },
+      "reconcile.list",
+      async () => {
+        throw hostErr;
+      },
+      (r) => r.listIssues("co-1", { projectId: "p-1" }),
+    );
+
+    expect(out).toEqual(rows); // the sweep still sees its issues
+    expect(lines.some((l) => l.startsWith("warn:"))).toBe(true);
+  });
+
+  it("does NOT fall back on a non-scope failure (a real outage must surface)", async () => {
+    const { calls, http } = makeFakeHttp(() => ({ status: 200, body: [] }));
+    const rest = new PaperclipRestClient({ ...base, http });
+    const logger = { info() {}, warn() {}, error() {} };
+
+    await expect(
+      withRestFallback({ logger, rest }, "reconcile.list", async () => {
+        throw new Error("database connection refused");
+      }, (r) => r.listIssues("co-1")),
+    ).rejects.toThrow("database connection refused");
+    expect(calls).toHaveLength(0); // REST never consulted
+  });
+});

@@ -123,7 +123,18 @@ const manifest: PaperclipPluginManifestV1 = {
   //   New hourly `signoff-reconcile` job (jobs.schedule + jobs[] — manifest surface CHANGED,
   //   fires at :38) re-drives handleReviewSignoff for any signed-off review issue whose check
   //   is not yet green, bounded to a 3-day window + 200 rows, one check-run read per head.
-  version: "0.13.1",
+  // 0.13.2 = mirror-reconcile survives scope expiry (GOL-1163). A scheduled job has
+  //   NO ambient invocation scope to inherit — unlike a webhook delivery or event
+  //   dispatch — so the sweep's `ctx.issues.list` is the most scope-fragile call in
+  //   the plugin. Bare, it threw "referenced a missing, expired, or unknown
+  //   invocation scope" (2026-08-03 21:23Z) and the twin backfill stopped dead with
+  //   38 issues still unmapped. The read now goes through the same withRestFallback
+  //   the inbound mirror path uses (GOL-323); PaperclipRestClient gains listIssues,
+  //   its first READ mirror. Worker-code + REST-client only — manifest surface
+  //   unchanged bar version (bumped so the dev-watcher actually hot-reloads it:
+  //   it only fires on dist/manifest.js changes, so a worker-only fix would
+  //   otherwise sit on disk unused).
+  version: "0.13.2",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",
