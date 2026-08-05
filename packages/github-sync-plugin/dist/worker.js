@@ -13877,6 +13877,7 @@ function logSkipped(deps, row, reviewer, reason, detail) {
 // src/reconcile.ts
 var PAGE_SIZE = 100;
 var DEFAULT_MAX_CREATES = 20;
+var ACTIVE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked"];
 async function runMirrorReconcile(input) {
   const maxCreates = input.maxCreates ?? DEFAULT_MAX_CREATES;
   const summary = {
@@ -13891,43 +13892,48 @@ async function runMirrorReconcile(input) {
   for (const projectId of input.projectIds) {
     const deps = input.depsForProject(projectId);
     if (!deps) continue;
-    for (let offset = 0; ; offset += PAGE_SIZE) {
-      const page = await input.listIssues(projectId, offset, PAGE_SIZE);
-      for (const issue of page) {
-        summary.scanned++;
-        if (isTerminalStatus(issue.status)) {
-          summary.skippedTerminal++;
-          continue;
-        }
-        if (isPluginOperationalIssue(issue.description)) {
-          summary.skippedPluginOp++;
-          continue;
-        }
-        if (await getByPaperclipId(deps.db, issue.id)) {
-          summary.skippedMapped++;
-          continue;
-        }
-        if (summary.created + summary.failed >= maxCreates) {
-          summary.capped = true;
-          return summary;
-        }
-        try {
-          await handleIssueCreated(deps, { issueId: issue.id, companyId: input.companyId });
-          if (await getByPaperclipId(deps.db, issue.id)) {
-            summary.created++;
-          } else {
-            summary.failed++;
+    for (const status of ACTIVE_STATUSES) {
+      for (let offset = 0; ; offset += PAGE_SIZE) {
+        const page = await input.listIssues(projectId, status, offset, PAGE_SIZE);
+        for (const issue of page) {
+          summary.scanned++;
+          if (isTerminalStatus(issue.status)) {
+            summary.skippedTerminal++;
+            continue;
           }
-        } catch (err) {
-          summary.failed++;
-          input.logger.error("mirror-reconcile: mirror-create failed; continuing sweep", {
-            issueId: issue.id,
-            projectId,
-            error: err instanceof Error ? err.message : String(err)
-          });
+          if (isPluginOperationalIssue(issue.description)) {
+            summary.skippedPluginOp++;
+            continue;
+          }
+          if (await getByPaperclipId(deps.db, issue.id)) {
+            summary.skippedMapped++;
+            continue;
+          }
+          if (summary.created + summary.failed >= maxCreates) {
+            summary.capped = true;
+            return summary;
+          }
+          try {
+            await handleIssueCreated(deps, {
+              issueId: issue.id,
+              companyId: input.companyId
+            });
+            if (await getByPaperclipId(deps.db, issue.id)) {
+              summary.created++;
+            } else {
+              summary.failed++;
+            }
+          } catch (err) {
+            summary.failed++;
+            input.logger.error("mirror-reconcile: mirror-create failed; continuing sweep", {
+              issueId: issue.id,
+              projectId,
+              error: err instanceof Error ? err.message : String(err)
+            });
+          }
         }
+        if (page.length < PAGE_SIZE) break;
       }
-      if (page.length < PAGE_SIZE) break;
     }
   }
   return summary;
@@ -14338,6 +14344,7 @@ var PaperclipRestClient = class {
   async listIssues(companyId, params = {}) {
     const qs = new URLSearchParams();
     if (params.projectId) qs.set("projectId", params.projectId);
+    if (params.status) qs.set("status", params.status);
     if (params.limit !== void 0) qs.set("limit", String(params.limit));
     if (params.offset !== void 0) qs.set("offset", String(params.offset));
     const query = qs.toString();
@@ -15347,11 +15354,22 @@ var plugin = definePlugin({
           // missing, expired, or unknown invocation scope" on 2026-08-03 21:23Z
           // and the sweep has not created a twin since (38 issues left unmapped).
           // Same withRestFallback the inbound mirror path uses (GOL-323).
-          listIssues: (projectId, offset, limit) => withRestFallback(
+          listIssues: (projectId, status, offset, limit) => withRestFallback(
             restFallbackDeps(ctx, cfg),
             "reconcile.list",
-            () => ctx.issues.list({ companyId: cfg.companyId, projectId, offset, limit }),
-            async (rest) => await rest.listIssues(cfg.companyId, { projectId, offset, limit })
+            () => ctx.issues.list({
+              companyId: cfg.companyId,
+              projectId,
+              status,
+              offset,
+              limit
+            }),
+            async (rest) => await rest.listIssues(cfg.companyId, {
+              projectId,
+              status,
+              offset,
+              limit
+            })
           ),
           depsForProject: (projectId) => depsByProject.get(projectId),
           logger: ctx.logger

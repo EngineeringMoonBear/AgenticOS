@@ -1578,13 +1578,25 @@ const plugin = definePlugin({
           // missing, expired, or unknown invocation scope" on 2026-08-03 21:23Z
           // and the sweep has not created a twin since (38 issues left unmapped).
           // Same withRestFallback the inbound mirror path uses (GOL-323).
-          listIssues: (projectId, offset, limit) =>
+          listIssues: (projectId, status, offset, limit) =>
             withRestFallback<Issue[]>(
               restFallbackDeps(ctx, cfg),
               "reconcile.list",
-              () => ctx.issues.list({ companyId: cfg.companyId!, projectId, offset, limit }),
+              () =>
+                ctx.issues.list({
+                  companyId: cfg.companyId!,
+                  projectId,
+                  status: status as Issue["status"],
+                  offset,
+                  limit,
+                }),
               async (rest) =>
-                (await rest.listIssues(cfg.companyId!, { projectId, offset, limit })) as unknown as Issue[],
+                (await rest.listIssues(cfg.companyId!, {
+                  projectId,
+                  status,
+                  offset,
+                  limit,
+                })) as unknown as Issue[],
             ),
           depsForProject: (projectId) => depsByProject.get(projectId),
           logger: ctx.logger,
