@@ -135,6 +135,38 @@ export class PaperclipRestClient {
   }
 
   /**
+   * GET /api/companies/{companyId}/issues — mirror of `ctx.issues.list`.
+   *
+   * Added for the mirror-reconcile SWEEP (GOL-1163), which is the first caller to
+   * need a READ fallback. Scheduled jobs are the sharpest case for scope expiry:
+   * unlike a webhook delivery or event dispatch, a cron tick has no ambient
+   * invocation scope to inherit, so `ctx.issues.list` can fail outright with
+   * "referenced a missing, expired, or unknown invocation scope" — observed
+   * 2026-08-03 21:23Z, which silently stopped the twin backfill.
+   *
+   * The host returns a bare JSON array; a non-array body yields [] rather than a
+   * throw, so a shape change degrades the sweep to a no-op instead of erroring
+   * the whole job.
+   */
+  async listIssues(
+    companyId: string,
+    params: { projectId?: string; limit?: number; offset?: number } = {},
+  ): Promise<RestIssue[]> {
+    const qs = new URLSearchParams();
+    if (params.projectId) qs.set("projectId", params.projectId);
+    if (params.limit !== undefined) qs.set("limit", String(params.limit));
+    if (params.offset !== undefined) qs.set("offset", String(params.offset));
+    const query = qs.toString();
+    const url =
+      `${this.baseUrl}/api/companies/${encodeURIComponent(companyId)}/issues` +
+      (query ? `?${query}` : "");
+    const res = await this.http.fetch(url, { method: "GET", headers: this.headers() });
+    await this.assertOk(res, "listIssues");
+    const body = (await res.json()) as unknown;
+    return Array.isArray(body) ? (body as RestIssue[]) : [];
+  }
+
+  /**
    * GET /api/issues/{issueId} — mirror of `ctx.issues.get`. Returns the issue JSON,
    * or null on 404 (matching ctx.issues.get's `Issue | null`).
    */

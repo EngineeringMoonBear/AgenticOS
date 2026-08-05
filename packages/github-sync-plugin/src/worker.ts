@@ -1571,8 +1571,21 @@ const plugin = definePlugin({
         const summary = await runMirrorReconcile({
           companyId: cfg.companyId,
           projectIds: Array.from(depsByProject.keys()),
+          // REST fallback is NOT optional here (GOL-1163). A scheduled job has no
+          // ambient invocation scope — there is no webhook delivery or event
+          // dispatch to inherit one from — so this privileged read is the single
+          // most scope-fragile call in the plugin. Bare, it threw "referenced a
+          // missing, expired, or unknown invocation scope" on 2026-08-03 21:23Z
+          // and the sweep has not created a twin since (38 issues left unmapped).
+          // Same withRestFallback the inbound mirror path uses (GOL-323).
           listIssues: (projectId, offset, limit) =>
-            ctx.issues.list({ companyId: cfg.companyId!, projectId, offset, limit }),
+            withRestFallback<Issue[]>(
+              restFallbackDeps(ctx, cfg),
+              "reconcile.list",
+              () => ctx.issues.list({ companyId: cfg.companyId!, projectId, offset, limit }),
+              async (rest) =>
+                (await rest.listIssues(cfg.companyId!, { projectId, offset, limit })) as unknown as Issue[],
+            ),
           depsForProject: (projectId) => depsByProject.get(projectId),
           logger: ctx.logger,
         });
