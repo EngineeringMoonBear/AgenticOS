@@ -18,6 +18,14 @@
 #
 # Runs in the base-repo context but never checks out or executes PR code —
 # it only reads run metadata and writes comments/issues.
+#
+# Auto-close (GOL-1216): the router also CLOSES the issues it mints so they
+# don't accumulate as stale GitHub noise. An open `ci-failure` issue is closed
+# when any of these resolve the failure it recorded:
+#   - a later run of the same workflow+branch SUCCEEDS (green run);
+#   - the branch is deleted, or its PR is closed (the branch is gone);
+#   - a daily scheduled sweep finds its branch no longer exists.
+# Matching is by the same `<!-- d3-ci-failure:WF:BRANCH -->` marker used to mint.
 name: CI failure router
 
 on:
@@ -33,23 +41,34 @@ on:
       - Recreate paperclip-server
       - Sync new GitHub issues → Paperclip
     types: [completed]
+  # Auto-close triggers (GOL-1216)
+  delete: # branch/tag deleted → close its stale ci-failure issues
+  pull_request:
+    types: [closed] # PR gone → close its branch's ci-failure issues
+  schedule:
+    - cron: "17 6 * * *" # daily sweep: close issues whose branch vanished
+  workflow_dispatch: # manual sweep
 
 permissions:
   actions: read # list runs + jobs for the failed run / 3-strike lookback
   issues: write # mint/update failure issues
   pull-requests: write # sticky comment on the owning PR
+  contents: read # sweep: repos.getBranch to check whether a branch still exists
 
 concurrency:
   # Serialize per workflow+branch so dedup lookups don't race; never cancel —
-  # each failure must be processed.
-  group: ci-failure-router-${{ github.event.workflow_run.name }}-${{ github.event.workflow_run.head_branch }}
+  # each failure must be processed. Non-workflow_run events (delete / PR-close /
+  # sweep) key off their own identity so they don't serialize against routing.
+  group: ci-failure-router-${{ github.event_name }}-${{ github.event.workflow_run.name || github.event.pull_request.head.ref || github.event.ref || 'sweep' }}-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 jobs:
   route:
     name: Route failure by provenance
     # Run on failure (route it) AND success (resolve a lingering sticky comment).
-    if: github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success'
+    # Only the workflow_run path routes; delete / PR-close / schedule / dispatch
+    # events fall through to the close jobs below.
+    if: github.event_name == 'workflow_run' && (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Route
@@ -229,3 +248,129 @@ jobs:
                 `Escalation from PR #${pr.number} — ${escalateReason}`,
               );
             }
+
+  # ── Auto-close: green run of the same workflow+branch resolves it ──────────
+  close-on-success:
+    name: Close resolved failure issue on green run
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close matching ci-failure issue
+        uses: actions/github-script@v9
+        env:
+          WF_NAME: ${{ github.event.workflow_run.name }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        with:
+          script: |
+            const { WF_NAME, HEAD_BRANCH, RUN_URL } = process.env;
+            const { owner, repo } = context.repo;
+            const marker = `<!-- d3-ci-failure:${WF_NAME}:${HEAD_BRANCH} -->`;
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: "open", labels: "ci-failure", per_page: 100,
+            });
+            const match = openIssues.find((i) => (i.body ?? "").includes(marker));
+            if (!match) {
+              core.info(`No open ci-failure issue for ${WF_NAME} on ${HEAD_BRANCH}.`);
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: match.number,
+              body: [
+                `✅ Resolved — a later run of **${WF_NAME}** on \`${HEAD_BRANCH}\` succeeded.`,
+                "",
+                RUN_URL,
+                "",
+                "_Auto-closed by the D3 CI failure router._",
+              ].join("\n"),
+            });
+            await github.rest.issues.update({
+              owner, repo, issue_number: match.number,
+              state: "closed", state_reason: "completed",
+            });
+            core.info(`Closed #${match.number} on green run.`);
+
+  # ── Auto-close: branch deleted or its PR closed → branch is gone ───────────
+  close-on-branch-gone:
+    name: Close failure issues when branch/PR is gone
+    if: >-
+      (github.event_name == 'delete' && github.event.ref_type == 'branch') ||
+      github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close ci-failure issues for the gone branch
+        uses: actions/github-script@v9
+        env:
+          GONE_BRANCH: ${{ github.event.ref || github.event.pull_request.head.ref }}
+          TRIGGER: ${{ github.event_name }}
+        with:
+          script: |
+            const { GONE_BRANCH, TRIGGER } = process.env;
+            const { owner, repo } = context.repo;
+            if (!GONE_BRANCH) { core.info("No branch to reconcile."); return; }
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: "open", labels: "ci-failure", per_page: 100,
+            });
+            const matches = openIssues.filter((i) => {
+              const m = (i.body ?? "").match(/<!-- d3-ci-failure:(.+):(.+?) -->/);
+              return m && m[2] === GONE_BRANCH;
+            });
+            if (!matches.length) {
+              core.info(`No ci-failure issues for branch ${GONE_BRANCH}.`);
+              return;
+            }
+            const reason = TRIGGER === "delete"
+              ? `branch \`${GONE_BRANCH}\` was deleted`
+              : `the PR for \`${GONE_BRANCH}\` was closed`;
+            for (const m of matches) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: m.number,
+                body: `🧹 Auto-closed — ${reason}, so this CI-failure issue is stale.\n\n_Auto-closed by the D3 CI failure router._`,
+              });
+              await github.rest.issues.update({
+                owner, repo, issue_number: m.number,
+                state: "closed", state_reason: "not_planned",
+              });
+              core.info(`Closed #${m.number} (${reason}).`);
+            }
+
+  # ── Auto-close: scheduled sweep for issues whose branch no longer exists ───
+  sweep:
+    name: Sweep ci-failure issues whose branch vanished
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close issues for branches that no longer exist
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: "open", labels: "ci-failure", per_page: 100,
+            });
+            let closed = 0;
+            for (const issue of openIssues) {
+              const m = (issue.body ?? "").match(/<!-- d3-ci-failure:(.+):(.+?) -->/);
+              if (!m) continue;
+              const branch = m[2];
+              // Long-lived branches always exist; their failures are real, never sweep.
+              if (["main", "master", "develop"].includes(branch)) continue;
+              let exists = true;
+              try {
+                await github.rest.repos.getBranch({ owner, repo, branch });
+              } catch (e) {
+                if (e.status === 404) exists = false; else throw e;
+              }
+              if (exists) continue;
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issue.number,
+                body: `🧹 Auto-closed by sweep — branch \`${branch}\` no longer exists.\n\n_Auto-closed by the D3 CI failure router._`,
+              });
+              await github.rest.issues.update({
+                owner, repo, issue_number: issue.number,
+                state: "closed", state_reason: "not_planned",
+              });
+              closed++;
+              core.info(`Swept #${issue.number} (branch ${branch} gone).`);
+            }
+            core.info(`Sweep closed ${closed} issue(s).`);
