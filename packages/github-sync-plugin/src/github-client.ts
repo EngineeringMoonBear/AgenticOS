@@ -228,6 +228,49 @@ export class GitHubClient {
   }
 
   /**
+   * List a repo's issues (GOL-1206 inbound-close reconcile sweep). GitHub's
+   * `/issues` endpoint returns BOTH issues and pull requests — a PR item carries
+   * a `pull_request` object — so any item with that key is dropped: this sweep
+   * only reconciles *issue* closures back onto Paperclip mirrors (PR closes drive
+   * the review/CI pipelines, not the mirror). Paginated at 100/page and capped at
+   * `maxPages` to bound cost; `truncated` reports whether the cap cut the scan
+   * short. `since` (ISO 8601) filters to issues updated at/after that instant so an
+   * hourly sweep only re-examines recently-touched issues; `sort=updated&desc`
+   * keeps the freshest closures in the first page(s).
+   */
+  async listIssues(
+    repo: string,
+    opts: { state: "open" | "closed" | "all"; since?: string; maxPages?: number },
+  ): Promise<Result<{ issues: GitHubIssue[]; truncated: boolean }>> {
+    const PER_PAGE = 100;
+    const maxPages = opts.maxPages ?? 5;
+    const issues: GitHubIssue[] = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const qs = new URLSearchParams({
+        state: opts.state,
+        per_page: String(PER_PAGE),
+        page: String(page),
+        sort: "updated",
+        direction: "desc",
+      });
+      if (opts.since) qs.set("since", opts.since);
+      const res = await this.request<Array<Record<string, any>>>(
+        "GET",
+        repo,
+        `/repos/${this.org}/${repo}/issues?${qs.toString()}`,
+      );
+      if (!res.ok) return res;
+      const batch = Array.isArray(res.data) ? res.data : [];
+      for (const raw of batch) {
+        if (raw && raw.pull_request) continue; // PRs are issues in GitHub's model — skip
+        issues.push(this.parseIssue(raw));
+      }
+      if (batch.length < PER_PAGE) return { ok: true, data: { issues, truncated: false } };
+    }
+    return { ok: true, data: { issues, truncated: true } };
+  }
+
+  /**
    * List a PR's changed-file paths (GOL-158). Paginated at 100/page, capped at
    * MAX_FILE_PAGES to bound cost; the `truncated` flag says whether the cap was
    * hit so the caller can log it (frontendPaths matching stays correct — a match
