@@ -90,7 +90,8 @@ function sweep(
   return runMirrorReconcile({
     companyId: "co-1",
     projectIds: [PROJECT],
-    listIssues: async (_p, offset, limit) => issues.slice(offset, offset + limit),
+    listIssues: async (_p, status, offset, limit) =>
+      issues.filter((i) => i.status === status).slice(offset, offset + limit),
     depsForProject: () => deps,
     logger: silentLogger,
     ...opts,
@@ -131,11 +132,13 @@ describe("runMirrorReconcile", () => {
     const create = okCreate();
     const s = await sweep(db, issues, makeDeps(db, issues, create));
 
+    // done/cancelled are no longer SCANNED at all — ACTIVE_STATUSES never asks
+    // the host for them, which is the whole point of the per-status queries.
     expect(s).toMatchObject({
-      scanned: 6,
+      scanned: 4,
       created: 1,
       skippedMapped: 1,
-      skippedTerminal: 2,
+      skippedTerminal: 0,
       skippedPluginOp: 2,
       failed: 0,
     });
@@ -178,15 +181,50 @@ describe("runMirrorReconcile", () => {
     expect(await getByPaperclipId(db, issues[1]!.id)).not.toBeNull();
   });
 
-  it("pages through more than one page of issues", async () => {
+  it("pages through more than one page WITHIN a status", async () => {
     const db = makeFakeDb();
-    const issues = Array.from({ length: 130 }, () => makeIssue({ status: "done" }));
-    issues.push(makeIssue({}));
+    // 130 mapped-already rows in ONE active status: paging must cross the
+    // 100-row boundary rather than stopping at the first page.
+    const issues = Array.from({ length: 130 }, () => makeIssue({ status: "blocked" }));
+    for (const i of issues) {
+      await upsert(db, {
+        paperclipIssueId: i.id,
+        githubRepo: "target-repo",
+        githubIssueNumber: 1,
+        lastSyncedAt: "2026-07-01T00:00:00Z",
+        origin: "paperclip",
+      });
+    }
+    issues.push(makeIssue({ status: "todo" })); // the one real candidate
     const create = okCreate();
     const s = await sweep(db, issues, makeDeps(db, issues, create), { maxCreates: 5 });
 
     expect(s.scanned).toBe(131); // crossed the 100-issue page boundary
+    expect(s.skippedMapped).toBe(130);
     expect(s.created).toBe(1);
+  });
+
+  it("queries EVERY active status, so a backlog-heavy project is still reached", async () => {
+    const db = makeFakeDb();
+    const asked: string[] = [];
+    const issues = [makeIssue({ status: "backlog" }), makeIssue({ status: "in_review" })];
+    const create = okCreate();
+    const s = await runMirrorReconcile({
+      companyId: "co-1",
+      projectIds: [PROJECT],
+      listIssues: async (_p, status, offset, limit) => {
+        asked.push(status);
+        return issues.filter((i) => i.status === status).slice(offset, offset + limit);
+      },
+      depsForProject: () => makeDeps(db, issues, create),
+      logger: silentLogger,
+    });
+
+    // The regression this guards: an unfiltered sweep saw ONE 100-row window per
+    // project, which on a mature board was ~90% closed work, so the real backlog
+    // was never reached (36 issues stranded on 2026-08-05).
+    expect(asked).toEqual(["backlog", "todo", "in_progress", "in_review", "blocked"]);
+    expect(s.created).toBe(2); // both non-terminal issues mirrored
   });
 
   it("skips projects with no deps (bridge dropped at setup)", async () => {

@@ -150,10 +150,11 @@ export class PaperclipRestClient {
    */
   async listIssues(
     companyId: string,
-    params: { projectId?: string; limit?: number; offset?: number } = {},
+    params: { projectId?: string; status?: string; limit?: number; offset?: number } = {},
   ): Promise<RestIssue[]> {
     const qs = new URLSearchParams();
     if (params.projectId) qs.set("projectId", params.projectId);
+    if (params.status) qs.set("status", params.status);
     if (params.limit !== undefined) qs.set("limit", String(params.limit));
     if (params.offset !== undefined) qs.set("offset", String(params.offset));
     const query = qs.toString();

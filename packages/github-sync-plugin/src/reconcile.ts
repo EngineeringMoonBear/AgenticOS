@@ -30,8 +30,17 @@ export interface ReconcileInput {
   companyId: string;
   /** Distinct bridged project ids (depsByProject keys). */
   projectIds: readonly string[];
-  /** Page through a project's issues. Backed by ctx.issues.list. */
-  listIssues: (projectId: string, offset: number, limit: number) => Promise<Issue[]>;
+  /**
+   * Page through a project's issues in ONE status. Backed by ctx.issues.list.
+   *
+   * Status is a server-side filter, not a client-side skip, because the sweep is
+   * reach-limited: the host returns at most one 100-row page per (project,
+   * status) — a second page comes back empty regardless of `offset`. Scanning
+   * unfiltered burned that single window on whatever the host returned first,
+   * which in practice was overwhelmingly terminal work (273 of 300 rows on
+   * 2026-08-05), leaving the actual backlog permanently out of reach.
+   */
+  listIssues: (projectId: string, status: string, offset: number, limit: number) => Promise<Issue[]>;
   /** The same per-project SyncDeps the event dispatch uses. */
   depsForProject: (projectId: string) => SyncDeps | undefined;
   logger: SyncLogger;
@@ -52,6 +61,23 @@ export interface ReconcileSummary {
 const PAGE_SIZE = 100;
 const DEFAULT_MAX_CREATES = 20;
 
+/**
+ * Every NON-terminal issue status, queried one at a time.
+ *
+ * Deliberately enumerated rather than "all issues, skip terminal ones": the host
+ * yields a single 100-row page per query, so an unfiltered sweep can only ever
+ * see 100 issues per project — and on a mature project those are dominated by
+ * closed work (the 2026-08-05 run scanned 300 rows, 273 of them terminal, and
+ * therefore never reached the 36 issues actually missing a twin). Per-status
+ * queries give the backlog its own window each.
+ *
+ * If a new status is added host-side and not listed here, the sweep silently
+ * stops covering it — the trade for reach. `isTerminalStatus` still guards each
+ * row, so the failure mode is under-coverage (a missing twin, which the next
+ * status addition fixes) rather than mirroring closed work.
+ */
+const ACTIVE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked"] as const;
+
 export async function runMirrorReconcile(input: ReconcileInput): Promise<ReconcileSummary> {
   const maxCreates = input.maxCreates ?? DEFAULT_MAX_CREATES;
   const summary: ReconcileSummary = {
@@ -68,48 +94,55 @@ export async function runMirrorReconcile(input: ReconcileInput): Promise<Reconci
     const deps = input.depsForProject(projectId);
     if (!deps) continue; // bridge skipped at setup (no auth) — nothing to mirror into
 
-    for (let offset = 0; ; offset += PAGE_SIZE) {
-      const page = await input.listIssues(projectId, offset, PAGE_SIZE);
-      for (const issue of page) {
-        summary.scanned++;
-        if (isTerminalStatus(issue.status)) {
-          summary.skippedTerminal++;
-          continue;
-        }
-        if (isPluginOperationalIssue(issue.description)) {
-          summary.skippedPluginOp++;
-          continue;
-        }
-        if (await getByPaperclipId(deps.db, issue.id)) {
-          summary.skippedMapped++;
-          continue;
-        }
-        // Budget ATTEMPTS (not successes) so a failing GitHub API is retried at
-        // next run's pace instead of hammered for the whole backlog in one sweep.
-        if (summary.created + summary.failed >= maxCreates) {
-          summary.capped = true;
-          return summary;
-        }
-        try {
-          // Same idempotent path as the issue.created event; records the mapping.
-          await handleIssueCreated(deps, { issueId: issue.id, companyId: input.companyId });
-          // handleIssueCreated logs-and-returns on GitHub failure rather than
-          // throwing — the mapping row is the ground truth for success.
-          if (await getByPaperclipId(deps.db, issue.id)) {
-            summary.created++;
-          } else {
-            summary.failed++;
+    for (const status of ACTIVE_STATUSES) {
+      for (let offset = 0; ; offset += PAGE_SIZE) {
+        const page = await input.listIssues(projectId, status, offset, PAGE_SIZE);
+        for (const issue of page) {
+          summary.scanned++;
+          // Defence in depth: the status filter is server-side, but a host that
+          // ignores the param must not make us mirror closed work.
+          if (isTerminalStatus(issue.status)) {
+            summary.skippedTerminal++;
+            continue;
           }
-        } catch (err) {
-          summary.failed++;
-          input.logger.error("mirror-reconcile: mirror-create failed; continuing sweep", {
-            issueId: issue.id,
-            projectId,
-            error: err instanceof Error ? err.message : String(err),
-          });
+          if (isPluginOperationalIssue(issue.description)) {
+            summary.skippedPluginOp++;
+            continue;
+          }
+          if (await getByPaperclipId(deps.db, issue.id)) {
+            summary.skippedMapped++;
+            continue;
+          }
+          // Budget ATTEMPTS (not successes) so a failing GitHub API is retried at
+          // next run's pace instead of hammered for the whole backlog in one sweep.
+          if (summary.created + summary.failed >= maxCreates) {
+            summary.capped = true;
+            return summary;
+          }
+          try {
+            // Same idempotent path as the issue.created event; records the mapping.
+            await handleIssueCreated(deps, {
+              issueId: issue.id,
+              companyId: input.companyId,
+            });
+            // handleIssueCreated logs-and-returns on GitHub failure rather than
+            // throwing — the mapping row is the ground truth for success.
+            if (await getByPaperclipId(deps.db, issue.id)) {
+              summary.created++;
+            } else {
+              summary.failed++;
+            }
+          } catch (err) {
+            summary.failed++;
+            input.logger.error("mirror-reconcile: mirror-create failed; continuing sweep", {
+              issueId: issue.id,
+              projectId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
         }
+        if (page.length < PAGE_SIZE) break;
       }
-      if (page.length < PAGE_SIZE) break;
     }
   }
   return summary;

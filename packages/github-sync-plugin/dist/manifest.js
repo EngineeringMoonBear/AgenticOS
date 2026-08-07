@@ -148,7 +148,17 @@ var manifest = {
   //   REST-fallback write — so the polling leg can never diverge from the event leg.
   //   AgenticOS stays a no-op (its closes reach the mirror before the sweep → loop-guard
   //   skip). Bounded to a 14-day window + 5 pages/repo; idempotent, safe every cycle.
-  version: "0.14.0",
+  // 0.14.1 = mirror-reconcile actually REACHES the backlog (follow-up to 0.13.2).
+  //   With the scope crash fixed the sweep ran clean but created ~nothing: the
+  //   host serves ONE 100-row page per query (a second page is empty regardless
+  //   of offset), so an unfiltered scan saw 300 of 733 issues — 273 already
+  //   done — and never reached the 36 lacking a twin. It now queries each ACTIVE
+  //   status separately (backlog/todo/in_progress/in_review/blocked), giving the
+  //   backlog its own window per status instead of competing with closed work.
+  //   isTerminalStatus still guards each row, so a host ignoring the filter
+  //   cannot make us mirror closed issues. Worker-code only — surface unchanged
+  //   bar version (bumped so the dev-watcher reloads it; see 0.13.2).
+  version: "0.14.1",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",
