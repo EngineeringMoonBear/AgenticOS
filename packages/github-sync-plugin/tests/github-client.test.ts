@@ -386,3 +386,58 @@ describe("GitHubClient.getCommit", () => {
     expect(result.ok).toBe(false);
   });
 });
+
+describe("GitHubClient.listIssues", () => {
+  it("filters out pull requests and passes state/since/sort query params (GOL-1206)", async () => {
+    // GitHub's /issues endpoint returns PRs as issues (they carry `pull_request`);
+    // the sweep must never treat a PR close as an issue mirror close.
+    const fetchMock = mockFetch([
+      { number: 10, title: "real issue", state: "closed", html_url: "u", labels: [] },
+      { number: 11, title: "a PR", state: "closed", html_url: "u", labels: [], pull_request: { url: "p" } },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new GitHubClient({ token: "t", org: "o", timeoutMs: 5000 });
+    const result = await client.listIssues("r", { state: "all", since: "2026-08-01T00:00:00Z", maxPages: 3 });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.truncated).toBe(false);
+      expect(result.data.issues.map((i) => i.number)).toEqual([10]); // PR #11 dropped
+    }
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname).toBe("/repos/o/r/issues");
+    expect(url.searchParams.get("state")).toBe("all");
+    expect(url.searchParams.get("since")).toBe("2026-08-01T00:00:00Z");
+    expect(url.searchParams.get("sort")).toBe("updated");
+    expect(url.searchParams.get("direction")).toBe("desc");
+  });
+
+  it("reports truncated=true when every page is full up to the cap", async () => {
+    // A full page (100 items) forces another fetch; capping at maxPages=1 with a
+    // full page means the scan was cut short.
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({
+      number: i + 1,
+      title: "x",
+      state: "closed",
+      html_url: "u",
+      labels: [],
+    }));
+    vi.stubGlobal("fetch", mockFetch(fullPage));
+    const client = new GitHubClient({ token: "t", org: "o", timeoutMs: 5000 });
+    const result = await client.listIssues("r", { state: "closed", maxPages: 1 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.issues).toHaveLength(100);
+      expect(result.data.truncated).toBe(true);
+    }
+  });
+
+  it("propagates a list failure (transient auth/network)", async () => {
+    vi.stubGlobal("fetch", mockFetch({ message: "Bad credentials" }, false, 401));
+    const client = new GitHubClient({ token: "t", org: "o", timeoutMs: 5000 });
+    const result = await client.listIssues("r", { state: "all" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("Bad credentials");
+  });
+});

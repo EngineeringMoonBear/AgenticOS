@@ -134,7 +134,22 @@ const manifest: PaperclipPluginManifestV1 = {
   //   unchanged bar version (bumped so the dev-watcher actually hot-reloads it:
   //   it only fires on dist/manifest.js changes, so a worker-only fix would
   //   otherwise sit on disk unused).
-  version: "0.13.2",
+  // 0.14.0 = inbound-close reconcile sweep (GOL-1206 / GOL-289). Closure propagation
+  //   (GitHub close → Paperclip mirror `done`) works event-driven on AgenticOS, where
+  //   the GitHub App delivers the `issues` `closed`/`reopened` event. But the App is
+  //   installed ONLY on AgenticOS, so the Goldberry-Playground bridged repos
+  //   (grove-sites, odoocker-goldberrygrove, grove-odoo-modules) receive NO such event —
+  //   a merged `Closes #N` PR closes the twin, but nothing brings that close back into
+  //   Paperclip (mirror-reconcile is outbound-only, skips terminal issues). CEO chose
+  //   the polling fix (Option B) over installing the App org-wide. New hourly
+  //   `inbound-close-reconcile` job (jobs.schedule + jobs[] — manifest surface CHANGED,
+  //   fires at :51) lists each bridged repo's recently-updated issues and re-drives the
+  //   SAME handleAppClosure code path per issue: identical mapping lookup, the existing
+  //   resolveMirrorClosureStatus matrix, the identical loop guard, and the scope-safe
+  //   REST-fallback write — so the polling leg can never diverge from the event leg.
+  //   AgenticOS stays a no-op (its closes reach the mirror before the sweep → loop-guard
+  //   skip). Bounded to a 14-day window + 5 pages/repo; idempotent, safe every cycle.
+  version: "0.14.0",
   displayName: "GitHub Sync",
   description:
     "Bidirectional issue sync between Paperclip and GitHub. Paperclip → GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub → Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo↔project bridges across orgs.",
@@ -197,6 +212,15 @@ const manifest: PaperclipPluginManifestV1 = {
       // Minute 38 — offset from mirror-reconcile (:23) and the top of the hour so the
       // two sweeps never stack.
       schedule: "38 * * * *",
+    },
+    {
+      jobKey: "inbound-close-reconcile",
+      displayName: "Inbound-close reconcile",
+      description:
+        "Hourly sweep that mirrors GitHub-side issue closes back onto their Paperclip twins for org bridges the GitHub App does not deliver `issues` events to (Goldberry-Playground). Lists each bridged repo's recently-updated issues and re-drives the event-path closure handler — same mapping lookup, status matrix, and loop guard — so a merged `Closes #N` PR reaches the mirror without an App installation (GOL-1206). Idempotent; bounded per run.",
+      // Minute 51 — offset from mirror-reconcile (:23) and signoff-reconcile (:38) and
+      // the top of the hour so no two hourly sweeps ever stack.
+      schedule: "51 * * * *",
     },
   ],
   // Inbound endpoint. The workflow POSTs the GitHub issue-opened payload here;

@@ -43,6 +43,7 @@ import { getReviewRecord, upsertReviewRecord, listReviewRecordsUpdatedSince } fr
 import { handleReviewSignoff } from "./pr-signoff.js";
 import { runMirrorReconcile, buildReconcilePing } from "./reconcile.js";
 import { runSignoffReconcile } from "./signoff-reconcile.js";
+import { runInboundCloseReconcile, buildInboundCloseReconcilePing } from "./inbound-close-reconcile.js";
 import { recordError, buildSwallowedFailurePing, OpsPingThrottle, withSuppressionNote } from "./error-log.js";
 import {
   buildCiFixBody,
@@ -79,6 +80,17 @@ const PR_WEBHOOK_ENDPOINT_KEY = "github-pr";
 const SIGNOFF_RECONCILE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 /** Row cap per sweep — idempotent; the next run re-scans the same bounded window. */
 const SIGNOFF_RECONCILE_ROW_CAP = 200;
+
+/**
+ * Inbound-close reconcile sweep (GOL-1206): how far back to look for GitHub-side
+ * closes to mirror. Generous (14 days) because the sweep is idempotent and
+ * loop-guarded — re-scanning a settled close is free — so a wide window only buys
+ * resilience to a few missed cycles / a redeploy gap without unbounded cost.
+ */
+const INBOUND_CLOSE_RECONCILE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+/** Page cap per repo per run (100/page) — bounds a large repo's scan; a hit sets
+ *  `truncated` and the freshest closes (sort=updated desc) are scanned first. */
+const INBOUND_CLOSE_RECONCILE_MAX_PAGES = 5;
 
 /** Captured in setup() so onWebhook (which only receives `input`) can reach ctx. */
 let currentContext: PluginContext | null = null;
@@ -629,23 +641,31 @@ async function handleCustomInbound(
  * matches, so the outbound-close → GitHub-`closed`-echo → inbound path is a no-op
  * and never bounces. We do not create a mirror on close/reopen — an unmapped
  * GitHub issue has no Paperclip twin to propagate to.
+ *
+ * Returns a `ClosureOutcome` so the polling inbound-close reconcile sweep
+ * (GOL-1206) can tally what each re-drive did; the event path ignores it. The
+ * webhook and the sweep share this ONE code path — same mapping lookup, same
+ * `resolveMirrorClosureStatus` matrix, same loop guard, same write — so the
+ * polling fallback can never diverge from the event-driven behaviour.
  */
+type ClosureOutcome = "no-bridge" | "no-company" | "unmapped" | "unreadable" | "in-sync" | "propagated";
+
 async function handleAppClosure(
   ctx: PluginContext,
   cfg: GithubSyncConfig,
   event: { action: string; payload: InboundPayload },
   runInScope: InvocationScopeRunner,
-): Promise<void> {
+): Promise<ClosureOutcome> {
   const bridge = matchBridge(cfg, event.payload.repo);
   if (!bridge) {
     ctx.logger.info("app webhook: closure for repo not in a synced bridge; ignoring", {
       repo: event.payload.repo,
     });
-    return;
+    return "no-bridge";
   }
   if (!cfg.companyId) {
     ctx.logger.error("app webhook: companyId not configured — cannot propagate closure");
-    return;
+    return "no-company";
   }
 
   const mapping = await getByRepoNumber(ctx.db, event.payload.repo, event.payload.number);
@@ -656,7 +676,7 @@ async function handleAppClosure(
       number: event.payload.number,
       action: event.action,
     });
-    return;
+    return "unmapped";
   }
 
   // REST-bypass fallback (GOL-323): retry the read via REST only on scope-expiry.
@@ -672,7 +692,7 @@ async function handleAppClosure(
     ctx.logger.warn("app webhook: mirror issue not readable; skipping closure", {
       issueId: mapping.paperclipIssueId,
     });
-    return;
+    return "unreadable";
   }
 
   const target = resolveMirrorClosureStatus(event.action, issue.status);
@@ -683,7 +703,7 @@ async function handleAppClosure(
       action: event.action,
       status: issue.status,
     });
-    return;
+    return "in-sync";
   }
 
   // REST-bypass fallback (GOL-323): retry the status write via REST on scope-expiry.
@@ -706,6 +726,7 @@ async function handleAppClosure(
     action: event.action,
     status: target,
   });
+  return "propagated";
 }
 
 /**
@@ -1629,6 +1650,63 @@ const plugin = definePlugin({
         ctx.logger.info("signoff-reconcile complete", summary as unknown as Record<string, unknown>);
       } catch (err) {
         await recordSwallowedFailure(ctx, cfg, "signoff-reconcile job failed", err, {});
+      }
+    });
+
+    // Inbound-close reconcile sweep (GOL-1206): the polling inbound leg of closure
+    // propagation. The GitHub App is installed ONLY on AgenticOS, so the
+    // Goldberry-Playground bridged repos (grove-sites, odoocker-goldberrygrove,
+    // grove-odoo-modules) never receive an `issues` `closed`/`reopened` App event —
+    // a merged `Closes #N` PR closes the twin but nothing brings that close back into
+    // Paperclip (mirror-reconcile is outbound-only). This hourly sweep lists each
+    // bridged repo's recently-updated issues and re-drives the SAME handleAppClosure
+    // code path per issue — same mapping lookup, same resolveMirrorClosureStatus
+    // matrix, same loop guard, same REST-fallback write. AgenticOS stays a no-op here
+    // (its closes reach the mirror event-driven before the sweep runs → loop guard
+    // skips them). Idempotent and safe every cycle.
+    ctx.jobs.register("inbound-close-reconcile", async () => {
+      try {
+        if (!cfg.companyId) {
+          ctx.logger.warn("inbound-close-reconcile: companyId not configured; skipping sweep");
+          return;
+        }
+        const sinceIso = new Date(Date.now() - INBOUND_CLOSE_RECONCILE_WINDOW_MS).toISOString();
+        const summary = await runInboundCloseReconcile({
+          repoSlugs: Array.from(clientsBySlug.keys()),
+          listIssues: async (repoSlug) => {
+            const entry = clientsBySlug.get(repoSlug);
+            if (!entry) return { ok: false, error: "no client for repo" };
+            const res = await entry.github.listIssues(entry.repo, {
+              state: "all",
+              since: sinceIso,
+              maxPages: INBOUND_CLOSE_RECONCILE_MAX_PAGES,
+            });
+            if (!res.ok) return { ok: false, error: res.error };
+            return {
+              ok: true,
+              issues: res.data.issues.map((i) => ({ number: i.number, state: i.state })),
+              truncated: res.data.truncated,
+            };
+          },
+          // Re-drive the event handler with NO ambient scope ((fn) => fn()); its
+          // ctx.issues.get/update go through withRestFallback, so a cron-tick scope
+          // expiry falls back to the Paperclip REST API (GOL-323/GOL-1163).
+          driveClosure: ({ action, repoSlug, number }) =>
+            handleAppClosure(
+              ctx,
+              cfg,
+              { action, payload: { repo: repoSlug, number, title: "", body: "", url: "" } },
+              (fn) => fn(),
+            ),
+          logger: ctx.logger,
+        });
+        ctx.logger.info("inbound-close-reconcile complete", summary as unknown as Record<string, unknown>);
+        if (summary.propagated > 0 || summary.failed > 0) {
+          if (wantPing(cfg, "outcome"))
+            await postOpsPing(ctx, cfg.opsWebhookUrl, buildInboundCloseReconcilePing(summary));
+        }
+      } catch (err) {
+        await recordSwallowedFailure(ctx, cfg, "inbound-close-reconcile job failed", err, {});
       }
     });
 
