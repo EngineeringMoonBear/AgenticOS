@@ -53,6 +53,7 @@ permissions:
   actions: read # list runs + jobs for the failed run / 3-strike lookback
   issues: write # mint/update failure issues
   pull-requests: write # sticky comment on the owning PR
+  contents: read # sweep: repos.getBranch to check whether a branch still exists
 
 concurrency:
   # Serialize per workflow+branch so dedup lookups don't race; never cancel —
