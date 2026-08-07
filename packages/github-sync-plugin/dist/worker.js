@@ -13018,6 +13018,45 @@ var GitHubClient = class {
     return { ok: true, data: this.parseIssue(res.data) };
   }
   /**
+   * List a repo's issues (GOL-1206 inbound-close reconcile sweep). GitHub's
+   * `/issues` endpoint returns BOTH issues and pull requests — a PR item carries
+   * a `pull_request` object — so any item with that key is dropped: this sweep
+   * only reconciles *issue* closures back onto Paperclip mirrors (PR closes drive
+   * the review/CI pipelines, not the mirror). Paginated at 100/page and capped at
+   * `maxPages` to bound cost; `truncated` reports whether the cap cut the scan
+   * short. `since` (ISO 8601) filters to issues updated at/after that instant so an
+   * hourly sweep only re-examines recently-touched issues; `sort=updated&desc`
+   * keeps the freshest closures in the first page(s).
+   */
+  async listIssues(repo, opts) {
+    const PER_PAGE = 100;
+    const maxPages = opts.maxPages ?? 5;
+    const issues = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const qs = new URLSearchParams({
+        state: opts.state,
+        per_page: String(PER_PAGE),
+        page: String(page),
+        sort: "updated",
+        direction: "desc"
+      });
+      if (opts.since) qs.set("since", opts.since);
+      const res = await this.request(
+        "GET",
+        repo,
+        `/repos/${this.org}/${repo}/issues?${qs.toString()}`
+      );
+      if (!res.ok) return res;
+      const batch = Array.isArray(res.data) ? res.data : [];
+      for (const raw of batch) {
+        if (raw && raw.pull_request) continue;
+        issues.push(this.parseIssue(raw));
+      }
+      if (batch.length < PER_PAGE) return { ok: true, data: { issues, truncated: false } };
+    }
+    return { ok: true, data: { issues, truncated: true } };
+  }
+  /**
    * List a PR's changed-file paths (GOL-158). Paginated at 100/page, capped at
    * MAX_FILE_PAGES to bound cost; the `truncated` flag says whether the cap was
    * hit so the caller can log it (frontendPaths matching stays correct — a match
@@ -14009,6 +14048,66 @@ ${row.headSha}`;
   return summary;
 }
 
+// src/inbound-close-reconcile.ts
+async function runInboundCloseReconcile(input) {
+  const summary = {
+    scanned: 0,
+    propagated: 0,
+    skippedUnmapped: 0,
+    skippedInSync: 0,
+    failed: 0,
+    reposFailed: 0,
+    truncated: false
+  };
+  for (const repoSlug of input.repoSlugs) {
+    const listed = await input.listIssues(repoSlug);
+    if (!listed.ok) {
+      summary.reposFailed++;
+      input.logger.warn("inbound-close-reconcile: issue list failed; skipping repo this run", {
+        repo: repoSlug,
+        error: listed.error
+      });
+      continue;
+    }
+    if (listed.truncated) summary.truncated = true;
+    for (const issue of listed.issues) {
+      summary.scanned++;
+      const action = issue.state === "closed" ? "closed" : "reopened";
+      try {
+        const outcome = await input.driveClosure({ action, repoSlug, number: issue.number });
+        switch (outcome) {
+          case "propagated":
+            summary.propagated++;
+            break;
+          case "in-sync":
+            summary.skippedInSync++;
+            break;
+          case "unmapped":
+          case "no-bridge":
+            summary.skippedUnmapped++;
+            break;
+          case "unreadable":
+          case "no-company":
+            summary.failed++;
+            break;
+        }
+      } catch (err) {
+        summary.failed++;
+        input.logger.warn("inbound-close-reconcile: closure re-drive failed; continuing sweep", {
+          repo: repoSlug,
+          number: issue.number,
+          action,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+  }
+  return summary;
+}
+function buildInboundCloseReconcilePing(s) {
+  return `\u{1F501} inbound-close-reconcile: propagated ${s.propagated} GitHub close(s) \u2192 Paperclip, ${s.failed} failed (scanned ${s.scanned})`;
+}
+
 // src/error-log.ts
 var ERROR_TABLE = "github_sync_error";
 function qualifiedTable2(db) {
@@ -14425,6 +14524,8 @@ var APP_WEBHOOK_ENDPOINT_KEY = "github-app";
 var PR_WEBHOOK_ENDPOINT_KEY = "github-pr";
 var SIGNOFF_RECONCILE_WINDOW_MS = 3 * 24 * 60 * 60 * 1e3;
 var SIGNOFF_RECONCILE_ROW_CAP = 200;
+var INBOUND_CLOSE_RECONCILE_WINDOW_MS = 14 * 24 * 60 * 60 * 1e3;
+var INBOUND_CLOSE_RECONCILE_MAX_PAGES = 5;
 var currentContext = null;
 function safeJson(raw) {
   try {
@@ -14688,11 +14789,11 @@ async function handleAppClosure(ctx, cfg, event, runInScope) {
     ctx.logger.info("app webhook: closure for repo not in a synced bridge; ignoring", {
       repo: event.payload.repo
     });
-    return;
+    return "no-bridge";
   }
   if (!cfg.companyId) {
     ctx.logger.error("app webhook: companyId not configured \u2014 cannot propagate closure");
-    return;
+    return "no-company";
   }
   const mapping = await getByRepoNumber(ctx.db, event.payload.repo, event.payload.number);
   if (!mapping) {
@@ -14701,7 +14802,7 @@ async function handleAppClosure(ctx, cfg, event, runInScope) {
       number: event.payload.number,
       action: event.action
     });
-    return;
+    return "unmapped";
   }
   const issue = await withRestFallback(
     restFallbackDeps(ctx, cfg),
@@ -14713,7 +14814,7 @@ async function handleAppClosure(ctx, cfg, event, runInScope) {
     ctx.logger.warn("app webhook: mirror issue not readable; skipping closure", {
       issueId: mapping.paperclipIssueId
     });
-    return;
+    return "unreadable";
   }
   const target = resolveMirrorClosureStatus(event.action, issue.status);
   if (!target) {
@@ -14722,7 +14823,7 @@ async function handleAppClosure(ctx, cfg, event, runInScope) {
       action: event.action,
       status: issue.status
     });
-    return;
+    return "in-sync";
   }
   await withRestFallback(
     restFallbackDeps(ctx, cfg),
@@ -14742,6 +14843,7 @@ async function handleAppClosure(ctx, cfg, event, runInScope) {
     action: event.action,
     status: target
   });
+  return "propagated";
 }
 async function handleAppInbound(ctx, cfg, input, runInScope) {
   if (!cfg.appWebhookSecret) {
@@ -15404,6 +15506,50 @@ var plugin = definePlugin({
         ctx.logger.info("signoff-reconcile complete", summary);
       } catch (err) {
         await recordSwallowedFailure(ctx, cfg, "signoff-reconcile job failed", err, {});
+      }
+    });
+    ctx.jobs.register("inbound-close-reconcile", async () => {
+      try {
+        if (!cfg.companyId) {
+          ctx.logger.warn("inbound-close-reconcile: companyId not configured; skipping sweep");
+          return;
+        }
+        const sinceIso = new Date(Date.now() - INBOUND_CLOSE_RECONCILE_WINDOW_MS).toISOString();
+        const summary = await runInboundCloseReconcile({
+          repoSlugs: Array.from(clientsBySlug.keys()),
+          listIssues: async (repoSlug) => {
+            const entry = clientsBySlug.get(repoSlug);
+            if (!entry) return { ok: false, error: "no client for repo" };
+            const res = await entry.github.listIssues(entry.repo, {
+              state: "all",
+              since: sinceIso,
+              maxPages: INBOUND_CLOSE_RECONCILE_MAX_PAGES
+            });
+            if (!res.ok) return { ok: false, error: res.error };
+            return {
+              ok: true,
+              issues: res.data.issues.map((i) => ({ number: i.number, state: i.state })),
+              truncated: res.data.truncated
+            };
+          },
+          // Re-drive the event handler with NO ambient scope ((fn) => fn()); its
+          // ctx.issues.get/update go through withRestFallback, so a cron-tick scope
+          // expiry falls back to the Paperclip REST API (GOL-323/GOL-1163).
+          driveClosure: ({ action, repoSlug, number }) => handleAppClosure(
+            ctx,
+            cfg,
+            { action, payload: { repo: repoSlug, number, title: "", body: "", url: "" } },
+            (fn) => fn()
+          ),
+          logger: ctx.logger
+        });
+        ctx.logger.info("inbound-close-reconcile complete", summary);
+        if (summary.propagated > 0 || summary.failed > 0) {
+          if (wantPing(cfg, "outcome"))
+            await postOpsPing(ctx, cfg.opsWebhookUrl, buildInboundCloseReconcilePing(summary));
+        }
+      } catch (err) {
+        await recordSwallowedFailure(ctx, cfg, "inbound-close-reconcile job failed", err, {});
       }
     });
     ctx.logger.info("github sync listening", {
