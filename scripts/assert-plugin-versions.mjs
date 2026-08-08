@@ -22,8 +22,11 @@
 //   EXPECT          space/comma-separated <pluginKey>=<version> pairs, e.g.
 //                   "agenticos.github-sync-plugin=0.11.6 agenticos.vault-plugin=0.4.2"
 //
-// Exits 0 only when every expected plugin is installed, at the expected version,
-// and healthy. Exits nonzero (CI RED) listing every plugin that drifted.
+// Exits 0 when every expected plugin is installed at the expected version and
+// either healthy OR installed-but-unconfigured (activation blocked purely on
+// missing config — a soft WARN, GOL-1276; set STRICT_HEALTH=1 to disallow).
+// Exits nonzero (CI RED) listing every plugin that drifted on version or is
+// unhealthy for any other reason.
 
 const base = process.env.PAPERCLIP_BASE;
 const board = process.env.BOARD_KEY || "";
@@ -57,6 +60,20 @@ function findPlugin(list, k) {
 const healthy = (p) =>
   !!p && p.status !== "error" && p.status !== "failed" && !!p.status;
 
+// An installed plugin whose activation is blocked ONLY because its config has
+// not been supplied yet (e.g. discord-plugin awaiting discordBotToken, GOL-470)
+// is an intentional not-yet-configured state — NOT a version/health regression
+// this deploy caused. Its dist still converges to the built version (asserted
+// separately), so surfacing it as a hard RED would permanently mask genuine
+// deploy failures (GOL-1276). Detect the config-validation error the plugin
+// worker raises pre-flight and treat it as a soft warning instead.
+//   Set STRICT_HEALTH=1 to force every unhealthy plugin back to hard RED.
+const UNCONFIGURED = /config(uration)?\s+missing|missing[\s\S]{0,40}\bconfig(uration)?\b/i;
+const unconfigured = (p) => {
+  if (process.env.STRICT_HEALTH === "1") return false;
+  return UNCONFIGURED.test(String((p && p.lastError) || ""));
+};
+
 (async () => {
   const r = await fetch(base + "/api/plugins", { headers: H });
   const text = await r.text();
@@ -64,6 +81,7 @@ const healthy = (p) =>
   const list = text ? JSON.parse(text) : [];
 
   const drift = [];
+  const warn = [];
   for (const e of expect) {
     const p = findPlugin(list, e.key);
     if (!p) {
@@ -71,16 +89,30 @@ const healthy = (p) =>
       continue;
     }
     if (p.version !== e.version) {
+      // Version drift is a genuine deploy failure regardless of health — the
+      // registry is serving code other than what this deploy just built.
       drift.push(
         `${e.key}: registry ${p.version} != built ${e.version}` +
           ` (packagePath=${p.packagePath || "?"}) — deploy shipped STALE code`,
       );
-    } else if (!healthy(p)) {
-      drift.push(`${e.key}: version ok (${p.version}) but UNHEALTHY status=${p.status}`);
-    } else {
+    } else if (healthy(p)) {
       console.log(`  ok  ${e.key} @ ${p.version} (${p.status})`);
+    } else if (unconfigured(p)) {
+      // Version converged; only unhealthy because config isn't wired yet.
+      warn.push(
+        `${e.key}: version ok (${p.version}) but installed-but-unconfigured` +
+          ` (status=${p.status}) — activation blocked on missing config, not a` +
+          ` deploy regression: ${String(p.lastError || "").slice(0, 200)}`,
+      );
+    } else {
+      drift.push(
+        `${e.key}: version ok (${p.version}) but UNHEALTHY status=${p.status}` +
+          (p.lastError ? ` — ${String(p.lastError).slice(0, 200)}` : ""),
+      );
     }
   }
+
+  for (const w of warn) console.error("  WARN  " + w);
 
   if (drift.length) {
     for (const d of drift) console.error("  DRIFT " + d);
@@ -88,7 +120,10 @@ const healthy = (p) =>
       drift.length + " plugin(s) did not converge to the built version — see above",
     );
   }
-  console.log("assert-plugin-versions: all " + expect.length + " converged");
+  console.log(
+    "assert-plugin-versions: all " + expect.length + " converged" +
+      (warn.length ? ` (${warn.length} installed-but-unconfigured, soft-warned)` : ""),
+  );
 })().catch((e) => {
   console.error(String((e && e.message) || e));
   process.exit(1);

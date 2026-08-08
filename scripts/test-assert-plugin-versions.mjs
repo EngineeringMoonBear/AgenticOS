@@ -5,7 +5,10 @@
 //   2. FAILS (nonzero) when any plugin's registry version != built version
 //      (the GOL-804 stale-deploy signal), and names the drift,
 //   3. FAILS when an expected plugin is not installed,
-//   4. FAILS when a plugin is at the right version but unhealthy,
+//   4. FAILS when a plugin is at the right version but unhealthy (a crash),
+//   4b. PASSES (soft WARN, GOL-1276) when the only unhealthy plugin is
+//       installed-but-unconfigured (lastError = "…config missing…"),
+//   4c. FAILS that same case under STRICT_HEALTH=1,
 //   5. no-ops (exit 0) when EXPECT is empty.
 //
 // Run: node scripts/test-assert-plugin-versions.mjs
@@ -29,6 +32,7 @@ function makeServer(registry) {
             pluginKey: p.key,
             version: p.version,
             status: p.status || "ready",
+            lastError: p.lastError ?? null,
             packagePath: "/paperclip/staged-plugins/" + p.key,
           })),
         }),
@@ -39,10 +43,10 @@ function makeServer(registry) {
   return srv;
 }
 
-function run(base, expect) {
+function run(base, expect, extraEnv = {}) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [TARGET], {
-      env: { ...process.env, PAPERCLIP_BASE: base, BOARD_KEY: "k", EXPECT: expect },
+      env: { ...process.env, PAPERCLIP_BASE: base, BOARD_KEY: "k", EXPECT: expect, ...extraEnv },
     });
     let out = "", err = "";
     child.stdout.on("data", (d) => (out += d));
@@ -94,13 +98,48 @@ await withServer(REG, async (base) => {
   check("not-installed named", /NOT INSTALLED/.test(r.err), r.err.trim());
 });
 
-// 4) right version, unhealthy => FAIL
+// 4) right version, unhealthy (a real crash, no config-missing lastError) => FAIL
 await withServer(
-  [{ key: "agenticos.github-sync-plugin", version: "0.11.6", status: "error" }],
+  [{ key: "agenticos.github-sync-plugin", version: "0.11.6", status: "error",
+     lastError: "TypeError: Cannot read properties of undefined" }],
   async (base) => {
     const r = await run(base, "agenticos.github-sync-plugin=0.11.6");
-    check("unhealthy fails nonzero", r.code !== 0, "code=" + r.code);
-    check("unhealthy named", /UNHEALTHY/.test(r.err), r.err.trim());
+    check("crash unhealthy fails nonzero", r.code !== 0, "code=" + r.code);
+    check("crash unhealthy named", /UNHEALTHY/.test(r.err), r.err.trim());
+  },
+);
+
+// 4b) right version, unhealthy ONLY because config isn't wired => soft WARN, exit 0
+await withServer(
+  [{ key: "agenticos.discord-plugin", version: "0.2.0", status: "error",
+     lastError: "Activation failed: Worker initialize failed: discord-plugin config missing: discordBotToken" }],
+  async (base) => {
+    const r = await run(base, "agenticos.discord-plugin=0.2.0");
+    check("unconfigured soft-warns, exit 0", r.code === 0, "code=" + r.code + " " + r.err);
+    check("unconfigured emits WARN not DRIFT", /WARN/.test(r.err) && !/DRIFT/.test(r.err), r.err.trim());
+    check("unconfigured reports soft-warned count", /1 installed-but-unconfigured, soft-warned/.test(r.out), r.out.trim());
+  },
+);
+
+// 4c) same unconfigured case under STRICT_HEALTH=1 => hard FAIL
+await withServer(
+  [{ key: "agenticos.discord-plugin", version: "0.2.0", status: "error",
+     lastError: "discord-plugin config missing: discordBotToken" }],
+  async (base) => {
+    const r = await run(base, "agenticos.discord-plugin=0.2.0", { STRICT_HEALTH: "1" });
+    check("STRICT_HEALTH re-hardens unconfigured to nonzero", r.code !== 0, "code=" + r.code);
+    check("STRICT_HEALTH names UNHEALTHY", /UNHEALTHY/.test(r.err), r.err.trim());
+  },
+);
+
+// 4d) version drift on an unconfigured plugin is still hard FAIL (not soft-warned)
+await withServer(
+  [{ key: "agenticos.discord-plugin", version: "0.2.0", status: "error",
+     lastError: "discord-plugin config missing: discordBotToken" }],
+  async (base) => {
+    const r = await run(base, "agenticos.discord-plugin=0.3.0");
+    check("unconfigured + drift still fails nonzero", r.code !== 0, "code=" + r.code);
+    check("unconfigured + drift named as STALE", /registry 0\.2\.0 != built 0\.3\.0/.test(r.err), r.err.trim());
   },
 );
 
