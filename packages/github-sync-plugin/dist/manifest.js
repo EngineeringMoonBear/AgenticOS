@@ -158,7 +158,19 @@ var manifest = {
   //   isTerminalStatus still guards each row, so a host ignoring the filter
   //   cannot make us mirror closed issues. Worker-code only — surface unchanged
   //   bar version (bumped so the dev-watcher reloads it; see 0.13.2).
-  version: "0.14.1",
+  // 0.14.2 = inbound-close-reconcile self-heals orphaned mappings (GOL-1274, follow-up
+  //   to GOL-1273). When a Paperclip issue with a GitHub twin is hard-deleted, its
+  //   github_sync_mapping row is orphaned: every hourly sweep re-found the closed twin,
+  //   read the mirror as not-found, counted it `failed`, and paged ops Discord FOREVER
+  //   (the false alarm behind GOL-1273, failed:2). handleAppClosure now distinguishes a
+  //   PERMANENT delete (withRestFallback returns null only on a positive 404 — a
+  //   5xx/timeout throws and is still tallied `failed`) from a transient blip: it prunes
+  //   the orphaned row (new mapping.deleteByPaperclipIssueId) and returns a new `pruned`
+  //   outcome. The sweep counts it in a `pruned` bucket (observable, one-time) instead of
+  //   `failed`, so the next sweep sees the twin as `unmapped` and stops paging. `failed`
+  //   is now purely actionable. Worker-code + mapping helper (reuses the existing table,
+  //   no migration) — manifest surface unchanged bar version.
+  version: "0.14.2",
   displayName: "GitHub Sync",
   description: "Bidirectional issue sync between Paperclip and GitHub. Paperclip \u2192 GitHub mirrors issue changes via the gh-token-broker (GitHub App, no PAT); GitHub \u2192 Paperclip creates mirror issues from an inbound HMAC webhook (agent-free). Multiple repo\u2194project bridges across orgs.",
   author: "AgenticOS",

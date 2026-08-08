@@ -51,6 +51,7 @@ export type ClosureDriveOutcome =
   | "no-company"
   | "unmapped"
   | "unreadable"
+  | "pruned"
   | "in-sync"
   | "propagated";
 
@@ -84,7 +85,16 @@ export interface InboundCloseReconcileSummary {
   skippedUnmapped: number;
   /** Mirror already in the target state — the loop guard. */
   skippedInSync: number;
-  /** Per-issue re-drive failures (unreadable mirror, write error) — next sweep retries. */
+  /**
+   * Orphaned mappings self-healed this run: the mirror was confirmed permanently
+   * gone (twin hard-deleted → not-found on both the in-scope read and the REST
+   * fallback), so the stale row was pruned instead of retried forever (GOL-1274).
+   * A cleanup, NOT a failure — deliberately kept out of `failed` so it does not
+   * page ops every hour.
+   */
+  pruned: number;
+  /** Per-issue re-drive failures that ARE actionable (transient unreadable /
+   *  write error) — next sweep retries. Excludes permanent-deletion prunes. */
   failed: number;
   /** Repos whose issue-list call failed outright — next sweep retries. */
   reposFailed: number;
@@ -100,6 +110,7 @@ export async function runInboundCloseReconcile(
     propagated: 0,
     skippedUnmapped: 0,
     skippedInSync: 0,
+    pruned: 0,
     failed: 0,
     reposFailed: 0,
     truncated: false,
@@ -134,6 +145,11 @@ export async function runInboundCloseReconcile(
             // Not a mirrored issue (or the repo dropped out of config mid-run) — nothing to do.
             summary.skippedUnmapped++;
             break;
+          case "pruned":
+            // Mirror confirmed permanently gone; the orphaned mapping was pruned.
+            // A cleanup, not a failure — next sweep sees the twin as unmapped (GOL-1274).
+            summary.pruned++;
+            break;
           case "unreadable":
           case "no-company":
             // Transient: mirror unreadable, or companyId lost mid-run — retry next sweep.
@@ -155,7 +171,8 @@ export async function runInboundCloseReconcile(
   return summary;
 }
 
-/** Ops-channel one-liner for a sweep that changed something. */
+/** Ops-channel one-liner for a sweep that changed something. `pruned` is surfaced
+ *  as an observable cleanup, distinct from `failed` (which stays actionable). */
 export function buildInboundCloseReconcilePing(s: InboundCloseReconcileSummary): string {
-  return `🔁 inbound-close-reconcile: propagated ${s.propagated} GitHub close(s) → Paperclip, ${s.failed} failed (scanned ${s.scanned})`;
+  return `🔁 inbound-close-reconcile: propagated ${s.propagated} GitHub close(s) → Paperclip, pruned ${s.pruned} orphaned mapping(s), ${s.failed} failed (scanned ${s.scanned})`;
 }

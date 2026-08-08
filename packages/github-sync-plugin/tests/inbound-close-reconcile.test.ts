@@ -84,6 +84,18 @@ describe("runInboundCloseReconcile", () => {
     expect(s).toMatchObject({ scanned: 1, propagated: 0, failed: 1 });
   });
 
+  it("self-heals an orphaned mapping (deleted twin): pruned, NOT failed (GOL-1274)", async () => {
+    // The exact GOL-1273 shape: a closed GitHub twin whose Paperclip mirror was
+    // hard-deleted. handleAppClosure prunes the orphaned row and returns "pruned",
+    // so the sweep records failed==0 / pruned==1 and stops paging ops every hour.
+    const { input } = makeInput({
+      listByRepo: { "org/grove-sites": { ok: true, issues: [{ number: 355, state: "closed" }], truncated: false } },
+      outcomes: { "org/grove-sites#355": "pruned" },
+    });
+    const s = await runInboundCloseReconcile(input);
+    expect(s).toMatchObject({ scanned: 1, propagated: 0, pruned: 1, failed: 0 });
+  });
+
   it("skips a repo whose issue list fails, and still sweeps the others", async () => {
     const warn = vi.fn();
     const { input, drives } = makeInput({
@@ -139,17 +151,19 @@ describe("runInboundCloseReconcile", () => {
 });
 
 describe("buildInboundCloseReconcilePing", () => {
-  it("summarises propagated + failed counts", () => {
+  it("summarises propagated + pruned + failed counts", () => {
     const ping = buildInboundCloseReconcilePing({
       scanned: 12,
       propagated: 2,
       skippedUnmapped: 8,
       skippedInSync: 2,
+      pruned: 3,
       failed: 1,
       reposFailed: 0,
       truncated: false,
     });
     expect(ping).toContain("propagated 2");
+    expect(ping).toContain("pruned 3");
     expect(ping).toContain("1 failed");
     expect(ping).toContain("scanned 12");
   });

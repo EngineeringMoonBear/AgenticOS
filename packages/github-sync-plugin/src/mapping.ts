@@ -92,6 +92,28 @@ export async function getByRepoNumber(
 }
 
 /**
+ * Delete the mapping row for a Paperclip issue by PK. Returns the number of rows
+ * removed (0 if none matched).
+ *
+ * Used by the self-heal path (GOL-1274): when a mirror is confirmed permanently
+ * gone (the Paperclip twin was hard-deleted → `ctx.issues.get` and the REST
+ * fallback both return not-found), its `github_sync_mapping` row is orphaned and
+ * would otherwise be re-found and counted `failed` by every hourly
+ * inbound-close-reconcile sweep forever. Pruning it lets the next sweep see the
+ * GitHub twin as `unmapped` (a no-op skip) instead of paging ops.
+ */
+export async function deleteByPaperclipIssueId(
+  db: MappingDb,
+  paperclipIssueId: string,
+): Promise<number> {
+  const res = await db.execute(
+    `DELETE FROM ${qualifiedTable(db)} WHERE paperclip_issue_id = $1`,
+    [paperclipIssueId],
+  );
+  return res.rowCount;
+}
+
+/**
  * Create or replace the mapping row for a Paperclip issue (upsert by PK).
  *
  * The `DO UPDATE SET` uses the bound parameters directly rather than `excluded.*`
