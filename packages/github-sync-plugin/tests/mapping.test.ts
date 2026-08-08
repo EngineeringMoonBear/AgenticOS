@@ -4,6 +4,7 @@ import {
   getByRepoNumber,
   bareRepoName,
   upsert,
+  deleteByPaperclipIssueId,
   type MappingDb,
   type MappingRow,
 } from "../src/mapping.js";
@@ -70,6 +71,10 @@ function makeFakeDb(): MappingDb & { rows: Map<string, MappingRow>; sql: string[
         });
         return { rowCount: 1 };
       }
+      if (/DELETE FROM/i.test(q) && /WHERE paperclip_issue_id = \$1/i.test(q)) {
+        const existed = rows.delete(String(params?.[0]));
+        return { rowCount: existed ? 1 : 0 };
+      }
       return { rowCount: 0 };
     },
   };
@@ -131,6 +136,30 @@ describe("mapping", () => {
     row = await getByPaperclipId(db, "pi-1");
     expect(row?.lastSyncedAt).toBe("2026-02-02T00:00:00Z");
     expect(db.rows.size).toBe(1);
+  });
+
+  it("deleteByPaperclipIssueId prunes an orphaned row and reports rows removed", async () => {
+    const db = makeFakeDb();
+    await upsert(db, {
+      paperclipIssueId: "pi-gone",
+      githubRepo: "grove-sites",
+      githubIssueNumber: 355,
+      lastSyncedAt: "2026-08-07T00:00:00Z",
+      origin: "github",
+    });
+    expect(db.rows.size).toBe(1);
+
+    const removed = await deleteByPaperclipIssueId(db, "pi-gone");
+    expect(removed).toBe(1);
+    expect(db.rows.size).toBe(0);
+    expect(await getByPaperclipId(db, "pi-gone")).toBeNull();
+    // Schema-qualified like every other statement (host contract).
+    expect(db.sql.some((q) => /DELETE FROM/i.test(q) && q.includes(`${NAMESPACE}.github_sync_mapping`))).toBe(true);
+  });
+
+  it("deleteByPaperclipIssueId is a no-op (0 rows) when nothing matches", async () => {
+    const db = makeFakeDb();
+    expect(await deleteByPaperclipIssueId(db, "missing")).toBe(0);
   });
 });
 

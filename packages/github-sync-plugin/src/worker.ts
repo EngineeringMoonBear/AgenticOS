@@ -3,7 +3,7 @@ import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import type { Issue, PluginContext, PluginEvent, PluginWebhookInput } from "@paperclipai/plugin-sdk";
 import { GitHubClient } from "./github-client.js";
 import { makeBrokerTokenProvider, staticTokenProvider } from "./broker.js";
-import { getByRepoNumber, upsert } from "./mapping.js";
+import { getByRepoNumber, upsert, deleteByPaperclipIssueId } from "./mapping.js";
 import {
   buildInboundDescription,
   buildMirrorOpsMessage,
@@ -647,8 +647,12 @@ async function handleCustomInbound(
  * webhook and the sweep share this ONE code path — same mapping lookup, same
  * `resolveMirrorClosureStatus` matrix, same loop guard, same write — so the
  * polling fallback can never diverge from the event-driven behaviour.
+ *
+ * `pruned` (GOL-1274) is the self-heal outcome: the mirror is confirmed
+ * permanently gone (twin hard-deleted), so the orphaned mapping is deleted rather
+ * than counted `failed` and retried forever.
  */
-type ClosureOutcome = "no-bridge" | "no-company" | "unmapped" | "unreadable" | "in-sync" | "propagated";
+type ClosureOutcome = "no-bridge" | "no-company" | "unmapped" | "unreadable" | "pruned" | "in-sync" | "propagated";
 
 async function handleAppClosure(
   ctx: PluginContext,
@@ -689,10 +693,24 @@ async function handleAppClosure(
     async (rest) => (await rest.getIssue(mapping.paperclipIssueId)) as Issue | null,
   );
   if (!issue) {
-    ctx.logger.warn("app webhook: mirror issue not readable; skipping closure", {
+    // Confirmed permanently gone, not a transient blip. `withRestFallback` returns
+    // null ONLY on a positive not-found: the in-scope `ctx.issues.get` returns null
+    // for a genuine 404, and the REST fallback returns null strictly on HTTP 404
+    // (a 5xx/timeout throws a PaperclipRestError, which propagates here and is tallied
+    // `failed`, not returned as null). So reaching this branch means the Paperclip
+    // twin was hard-deleted and its mapping row is orphaned — every hourly sweep would
+    // otherwise re-find it, read null, and count it `failed`, paging ops forever
+    // (GOL-1273). Self-heal by pruning the stale row; next sweep sees the GitHub twin
+    // as unmapped → a silent skip (GOL-1274).
+    const deleted = await deleteByPaperclipIssueId(ctx.db, mapping.paperclipIssueId);
+    ctx.logger.info("app webhook: mirror issue gone; pruned orphaned mapping (self-heal)", {
       issueId: mapping.paperclipIssueId,
+      repo: event.payload.repo,
+      number: event.payload.number,
+      action: event.action,
+      rowsDeleted: deleted,
     });
-    return "unreadable";
+    return "pruned";
   }
 
   const target = resolveMirrorClosureStatus(event.action, issue.status);
@@ -1713,7 +1731,11 @@ const plugin = definePlugin({
           logger: ctx.logger,
         });
         ctx.logger.info("inbound-close-reconcile complete", summary as unknown as Record<string, unknown>);
-        if (summary.propagated > 0 || summary.failed > 0) {
+        // Page on real work only: a propagate, an actionable failure (transient), OR a
+        // one-time self-heal prune (observable cleanup, fires once per orphan then the
+        // twin is unmapped — never a recurring page). Permanent deletions no longer land
+        // in `failed`, so `failed > 0` is now purely actionable (GOL-1274).
+        if (summary.propagated > 0 || summary.failed > 0 || summary.pruned > 0) {
           if (wantPing(cfg, "outcome"))
             await postOpsPing(ctx, cfg.opsWebhookUrl, buildInboundCloseReconcilePing(summary));
         }
