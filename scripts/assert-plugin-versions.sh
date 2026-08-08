@@ -10,8 +10,9 @@
 # loud failure, regardless of whether a manifest bump was detected.
 #
 # Usage: scripts/assert-plugin-versions.sh [<plugin> ...]
-#   plugin ∈ vault-plugin | openviking-plugin | github-plugin | github-sync-plugin
-#   (no args → assert all four)
+#   plugin ∈ vault-plugin | openviking-plugin | github-plugin |
+#            github-sync-plugin | discord-plugin
+#   (no args → assert all five)
 #
 # Env: see plugin-api-env.sh, plus REPO_DIR (default /opt/agenticos/repo).
 set -euo pipefail
